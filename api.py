@@ -82,11 +82,6 @@ def get_stock_stats(ticker: str) -> Optional[dict]:
     return _get(f"stocks/{ticker.upper()}/stats")
 
 
-def get_dividends(ticker: str) -> Optional[dict]:
-    """GET /dividends/{ticker} — retorna dividend_yield_ttm e ttm_per_share."""
-    return _get(f"dividends/{ticker.upper()}")
-
-
 def get_sectors() -> list[str]:
     """GET /companies/sectors — lista de setores disponíveis."""
     data = _get("companies/sectors")
@@ -114,18 +109,25 @@ def check_api_usage() -> Optional[dict]:
 
 
 # ────────────────────────────────────────────────────────────────
-# Função principal — busca todos os dados de um ticker (4 chamadas)
+# Função principal — busca todos os dados de um ticker (3 chamadas)
+# Todos os endpoints usados são gratuitos no plano Free da Bolsai.
+# Endpoints PRO NÃO utilizados: /dividends, /stocks/.../history,
+# /fundamentals/.../history, /financials, /screener, /macro.
 # ────────────────────────────────────────────────────────────────
 
 def get_all_stock_data(ticker: str) -> dict:
     """
-    Busca fundamentos + empresa + estatísticas + dividendos para um ticker.
-    Faz 4 chamadas à API. Retorna dict unificado ou dict com 'error'.
+    Busca fundamentos + empresa + estatísticas para um ticker.
+    Faz 3 chamadas à API (todas gratuitas). Retorna dict unificado
+    ou dict com 'error' em caso de falha.
+
+    Dividend Yield vem diretamente de /fundamentals (campo dividend_yield).
+    O endpoint /dividends é PRO e não é chamado.
     """
     t = ticker.strip().upper()
     result: dict = {"ticker": t, "error": None}
 
-    # 1 — Fundamentos (obrigatório; se 404 → ticker inválido)
+    # 1 — Fundamentos (obrigatório; 404 → ticker inválido)
     fund = get_fundamentals(t)
     if fund is None:
         result["error"] = f"Ticker '{t}' não encontrado na Bolsai."
@@ -134,73 +136,72 @@ def get_all_stock_data(ticker: str) -> dict:
     # 2 — Informações da empresa (setor, nome de pregão)
     company = get_company_info(t)
 
-    # 3 — Estatísticas de preço (variação, volume médio 52 semanas)
+    # 3 — Estatísticas de preço (variação diária, volume médio 52 semanas)
     stats = get_stock_stats(t)
-
-    # 4 — Dividendos (DY TTM, DPS TTM para calcular payout)
-    div = get_dividends(t)
 
     # ── Preço e identificação ──────────────────────────────────
     close_price = fund.get("close_price")
-    shares = fund.get("shares_outstanding")
+    shares      = fund.get("shares_outstanding")
 
-    # ── Liquidez: volume médio 52 semanas × preço (R$) ────────
-    avg_vol_shares = stats.get("avg_volume_52w") if stats else None
+    # ── Liquidez: volume médio 52 semanas × preço (proxy R$) ──
+    avg_vol_shares = (stats or {}).get("avg_volume_52w")
     liquidity_brl: Optional[float] = None
     if avg_vol_shares and close_price:
         liquidity_brl = avg_vol_shares * close_price
 
-    # ── Payout (%) ─────────────────────────────────────────────
-    # DPS TTM (R$/ação) × ações / lucro líquido (R$)
-    # net_income na API está em R$ mil → multiplicar por 1000
+    # ── Payout estimado a partir do DY (sem chamar /dividends) ─
+    # DY vem de /fundamentals como campo dividend_yield (%)
+    # DPS_TTM ≈ dividend_yield/100 × close_price
+    # net_income na API está em R$ mil → × 1000 para R$
     payout: Optional[float] = None
-    net_income_k = fund.get("net_income")  # R$ mil
-    ttm_dps = div.get("ttm_per_share") if div else None
-    if ttm_dps and shares and net_income_k and net_income_k > 0:
-        payout = (ttm_dps * shares) / (net_income_k * 1000) * 100
+    dy       = fund.get("dividend_yield")       # %
+    net_income_k = fund.get("net_income")       # R$ mil
+    if dy and close_price and shares and net_income_k and net_income_k > 0:
+        dps_ttm = (dy / 100.0) * close_price
+        payout  = (dps_ttm * shares) / (net_income_k * 1000) * 100
 
     result.update(
         {
             # Identificação
-            "ticker":          fund.get("ticker", t),
-            "corporate_name":  fund.get("corporate_name", ""),
-            "trade_name":      (company or {}).get("trade_name", ""),
-            "sector":          (company or {}).get("sector", ""),
-            "reference_date":  fund.get("reference_date"),
+            "ticker":             fund.get("ticker", t),
+            "corporate_name":     fund.get("corporate_name", ""),
+            "trade_name":         (company or {}).get("trade_name", ""),
+            "sector":             (company or {}).get("sector", ""),
+            "reference_date":     fund.get("reference_date"),
             # Preço
-            "close_price":      close_price,
-            "daily_change_pct": (stats or {}).get("daily_change_pct"),
-            "week_52_low":      (stats or {}).get("week_52_low"),
-            "week_52_high":     (stats or {}).get("week_52_high"),
-            "ytd_return_pct":   (stats or {}).get("ytd_return_pct"),
-            "market_cap":       fund.get("market_cap"),
+            "close_price":        close_price,
+            "daily_change_pct":   (stats or {}).get("daily_change_pct"),
+            "week_52_low":        (stats or {}).get("week_52_low"),
+            "week_52_high":       (stats or {}).get("week_52_high"),
+            "ytd_return_pct":     (stats or {}).get("ytd_return_pct"),
+            "market_cap":         fund.get("market_cap"),
             "shares_outstanding": shares,
-            # ── Indicadores com score ──────────────────────────
-            "net_debt_ebitda":  fund.get("net_debt_ebitda"),
-            "roe":              fund.get("roe"),
-            "ev_ebitda":        fund.get("ev_ebitda"),
-            "pl":               fund.get("pl"),
-            "ebitda_margin":    fund.get("ebitda_margin"),
-            "cagr_earnings_5y": fund.get("cagr_earnings_5y"),
-            "cagr_revenue_5y":  fund.get("cagr_revenue_5y"),
-            "p_fcf":            None,  # requer plano Pro (endpoint /financials)
-            "dividend_yield":   (div or {}).get("dividend_yield_ttm"),
-            "liquidity":        liquidity_brl,
+            # ── Indicadores com score (todos de /fundamentals) ─
+            "net_debt_ebitda":    fund.get("net_debt_ebitda"),
+            "roe":                fund.get("roe"),
+            "ev_ebitda":          fund.get("ev_ebitda"),
+            "pl":                 fund.get("pl"),
+            "ebitda_margin":      fund.get("ebitda_margin"),
+            "cagr_earnings_5y":   fund.get("cagr_earnings_5y"),
+            "cagr_revenue_5y":    fund.get("cagr_revenue_5y"),
+            "p_fcf":              None,          # PRO: requer /financials
+            "dividend_yield":     dy,            # vem de /fundamentals
+            "liquidity":          liquidity_brl,
             # ── Indicadores informativos (sem score) ───────────
-            "pvp":         fund.get("pvp"),
-            "payout":      payout,
-            "net_margin":  fund.get("net_margin"),
+            "pvp":          fund.get("pvp"),
+            "payout":       payout,              # estimado via DY × preço
+            "net_margin":   fund.get("net_margin"),
             "gross_margin": fund.get("gross_margin"),
-            "ebit_margin": fund.get("ebit_margin"),
-            "roa":         fund.get("roa"),
-            "roic":        fund.get("roic"),
-            "lpa":         fund.get("lpa"),
-            "vpa":         fund.get("vpa"),
-            "current_ratio": fund.get("current_ratio"),
-            "net_debt":    fund.get("net_debt"),    # R$ mil
-            "ebitda":      fund.get("ebitda"),      # R$ mil
-            "net_income":  fund.get("net_income"),  # R$ mil
-            "net_revenue": fund.get("net_revenue"), # R$ mil
+            "ebit_margin":  fund.get("ebit_margin"),
+            "roa":          fund.get("roa"),
+            "roic":         fund.get("roic"),
+            "lpa":          fund.get("lpa"),
+            "vpa":          fund.get("vpa"),
+            "current_ratio":fund.get("current_ratio"),
+            "net_debt":     fund.get("net_debt"),     # R$ mil
+            "ebitda":       fund.get("ebitda"),       # R$ mil
+            "net_income":   fund.get("net_income"),   # R$ mil
+            "net_revenue":  fund.get("net_revenue"),  # R$ mil
             "avg_volume_52w": avg_vol_shares,
         }
     )
