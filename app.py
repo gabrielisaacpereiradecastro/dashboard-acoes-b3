@@ -181,7 +181,15 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         log.append(f"⚠️ API retornou erro: {data['error']}")
         return data["error"]
 
+    # Mostrar quais campos chegaram do /fundamentals (ajuda a diagnosticar N/D)
+    fund_keys = sorted(k for k in data if data[k] is not None and k not in (
+        "ticker", "corporate_name", "trade_name", "sector", "reference_date",
+        "error", "avg_volume_52w",
+    ))
     log.append(f"✅ {t} carregado: preço={data.get('close_price')}, setor={data.get('sector')!r}")
+    log.append(f"📋 Campos disponíveis: {', '.join(fund_keys)}")
+    dy_val = data.get("dividend_yield")
+    log.append(f"📌 dividend_yield={dy_val!r}  |  cagr_earnings_5y={data.get('cagr_earnings_5y')!r}")
 
     st.session_state.acoes[t] = {
         "data": data,
@@ -242,7 +250,7 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             "Var.Dia":   _fmt_pct(s.get("daily_change_pct")),
         }
 
-        class_row = {"Ticker": "", "Empresa": "", "Setor": "", "Preço": "", "Var.Dia": ""}
+        class_row = {"Ticker": s.get("ticker", ""), "Empresa": "", "Setor": "", "Preço": "", "Var.Dia": ""}
 
         # Score
         score = s.get("score")
@@ -792,6 +800,22 @@ def main():
             on_select="rerun",
             selection_mode="single-row",
             height=min(42 + 35 * len(enriched), 600),
+            column_config={
+                "Score":         st.column_config.TextColumn("Score", width="medium"),
+                "Empresa":       st.column_config.TextColumn("Empresa", width="medium"),
+                "Setor":         st.column_config.TextColumn("Setor", width="medium"),
+                "Dív.Líq/EBITDA": st.column_config.TextColumn("Dív/EBITDA", width="small"),
+                "ROE":           st.column_config.TextColumn("ROE", width="small"),
+                "EV/EBITDA":     st.column_config.TextColumn("EV/EBITDA", width="small"),
+                "P/L":           st.column_config.TextColumn("P/L", width="small"),
+                "Mg. EBITDA":    st.column_config.TextColumn("Mg.EBITDA", width="small"),
+                "CAGR Lucro 5a": st.column_config.TextColumn("CAGR Lucro", width="small"),
+                "P/FCF":         st.column_config.TextColumn("P/FCF", width="small"),
+                "Div. Yield":    st.column_config.TextColumn("DY", width="small"),
+                "Liquidez":      st.column_config.TextColumn("Liquidez", width="small"),
+                "CAGR Rec. 5a":  st.column_config.TextColumn("CAGR Rec.", width="small"),
+                "P/VP":          st.column_config.TextColumn("P/VP", width="small"),
+            },
         )
 
         if event.selection and event.selection.rows:
