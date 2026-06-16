@@ -136,10 +136,14 @@ def _init_state():
         st.session_state.acoes = load_data()
     if "selected_ticker" not in st.session_state:
         st.session_state.selected_ticker = None
-    if "error_msg" not in st.session_state:
-        st.session_state.error_msg = None
-    if "success_msg" not in st.session_state:
-        st.session_state.success_msg = None
+    # Mensagens persistidas entre reruns para sobreviver ao st.rerun()
+    if "flash_errors" not in st.session_state:
+        st.session_state.flash_errors: list[str] = []
+    if "flash_success" not in st.session_state:
+        st.session_state.flash_success: str = ""
+    # Log de debug da última operação de fetch
+    if "debug_log" not in st.session_state:
+        st.session_state.debug_log: list[str] = []
 
 
 # ────────────────────────────────────────────────────────────────
@@ -147,16 +151,39 @@ def _init_state():
 # ────────────────────────────────────────────────────────────────
 
 def _fetch_ticker(ticker: str) -> Optional[str]:
-    """Busca dados e salva. Retorna mensagem de erro ou None."""
+    """
+    Busca dados de um ticker e salva no session_state/JSON.
+    Retorna string de erro ou None em caso de sucesso.
+    Registra log de debug em st.session_state.debug_log.
+    """
+    t = ticker.strip().upper()
+    log = st.session_state.debug_log
+
+    # Verificar se a chave está disponível
+    api_key = api._get_api_key()
+    if api_key:
+        log.append(f"✅ API Key encontrada ({api_key[:8]}…)")
+    else:
+        msg = "❌ API Key NÃO encontrada. Configure BOLSAI_API_KEY em Secrets."
+        log.append(msg)
+        return msg
+
+    log.append(f"📡 Chamando: GET {api.BASE_URL}/fundamentals/{t}")
+
     try:
-        data = api.get_all_stock_data(ticker)
+        data = api.get_all_stock_data(t)
     except Exception as e:
-        return str(e)
+        err = f"Exceção ao buscar {t}: {type(e).__name__}: {e}"
+        log.append(f"❌ {err}")
+        return err
 
     if data.get("error"):
+        log.append(f"⚠️ API retornou erro: {data['error']}")
         return data["error"]
 
-    st.session_state.acoes[ticker.upper()] = {
+    log.append(f"✅ {t} carregado: preço={data.get('close_price')}, setor={data.get('sector')!r}")
+
+    st.session_state.acoes[t] = {
         "data": data,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -166,6 +193,7 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
 
 def _update_all() -> list[str]:
     """Reatualiza todos os tickers salvos. Retorna lista de erros."""
+    st.session_state.debug_log = []
     erros = []
     tickers = list(st.session_state.acoes.keys())
     progress = st.progress(0, text="Atualizando dados…")
@@ -526,12 +554,37 @@ def _sidebar():
         st.caption("Análise fundamentalista de ações brasileiras")
         st.divider()
 
-        # Verificar API Key
-        if not os.environ.get("BOLSAI_API_KEY", "").strip():
+        # ── Status da API Key (corrigido: lê st.secrets) ───────
+        api_key = api._get_api_key()
+        if api_key:
+            st.success(f"API Key configurada ({api_key[:8]}…)", icon="🔑")
+        else:
             st.error(
-                "**BOLSAI_API_KEY não configurada.**\n\n"
-                "Defina a variável de ambiente ou o secret no Streamlit Cloud."
+                "**BOLSAI_API_KEY não encontrada.**\n\n"
+                "No Streamlit Cloud: vá em **Settings → Secrets** e adicione:\n"
+                "```\nBOLSAI_API_KEY = \"sk_sua_chave\"\n```",
+                icon="🚨",
             )
+
+        # ── Exibir mensagens flash (persistidas entre reruns) ───
+        # Estas são gravadas ANTES do st.rerun() e lidas no próximo ciclo
+        if st.session_state.flash_success:
+            st.success(st.session_state.flash_success)
+            st.session_state.flash_success = ""
+        for err in st.session_state.flash_errors:
+            st.error(err)
+        st.session_state.flash_errors = []
+
+        # ── Painel de debug (mostra log da última operação) ─────
+        if st.session_state.debug_log:
+            with st.expander("🔧 Debug — última operação", expanded=True):
+                for line in st.session_state.debug_log:
+                    st.markdown(f"`{line}`")
+                if st.button("Limpar log", key="clear_debug"):
+                    st.session_state.debug_log = []
+                    st.rerun()
+
+        st.divider()
 
         # ── Adicionar tickers ──────────────────────────────────
         st.markdown("### Adicionar Ações")
@@ -540,27 +593,44 @@ def _sidebar():
             placeholder="Ex: PETR4, VALE3, ITUB4",
             help="Separe múltiplos tickers por vírgula ou espaço.",
         )
+
         if st.button("➕ Adicionar e Buscar", use_container_width=True):
             tickers_raw = tickers_input.replace(",", " ").split()
             if not tickers_raw:
+                # Não chama st.rerun() aqui — o warning aparece normalmente
                 st.warning("Digite ao menos um ticker.")
             else:
-                erros = []
-                adicionados = []
-                with st.spinner("Buscando dados…"):
+                # Limpa log e mensagens anteriores
+                st.session_state.debug_log = []
+                st.session_state.flash_errors = []
+                st.session_state.flash_success = ""
+
+                erros: list[str] = []
+                adicionados: list[str] = []
+
+                with st.spinner("Buscando dados na API Bolsai…"):
                     for t in tickers_raw:
                         t = t.strip().upper()
                         if not t:
                             continue
-                        err = _fetch_ticker(t)
+                        try:
+                            err = _fetch_ticker(t)
+                        except Exception as exc:
+                            err = f"Exceção inesperada em {t}: {exc}"
+                            st.session_state.debug_log.append(f"❌ {err}")
+
                         if err:
                             erros.append(f"{t}: {err}")
                         else:
                             adicionados.append(t)
+
+                # ── Salvar mensagens no session_state ANTES do rerun ──
                 if adicionados:
-                    st.success(f"Adicionado(s): {', '.join(adicionados)}")
-                for e in erros:
-                    st.error(e)
+                    st.session_state.flash_success = (
+                        f"Adicionado(s) com sucesso: {', '.join(adicionados)}"
+                    )
+                st.session_state.flash_errors = erros
+                # rerun → sidebar re-renderiza e exibe as mensagens flash
                 st.rerun()
 
         st.divider()
@@ -568,7 +638,6 @@ def _sidebar():
         # ── Atualização ────────────────────────────────────────
         st.markdown("### Atualização")
 
-        # Data da atualização mais antiga entre os tickers salvos
         oldest_update = None
         for entry in st.session_state.acoes.values():
             ua = entry.get("updated_at")
@@ -602,11 +671,10 @@ def _sidebar():
                      disabled=not st.session_state.acoes):
             with st.spinner("Atualizando todos os tickers…"):
                 erros = _update_all()
-            if erros:
-                for e in erros:
-                    st.error(e)
-            else:
-                st.success("Todos os dados atualizados!")
+            # Persistir resultado antes do rerun
+            st.session_state.flash_errors = erros
+            if not erros:
+                st.session_state.flash_success = "Todos os dados atualizados com sucesso!"
             st.rerun()
 
         # ── Uso da API ─────────────────────────────────────────
@@ -637,10 +705,6 @@ def _sidebar():
 
                 col_a, col_b, col_c = st.columns([3, 2, 1])
                 with col_a:
-                    btn_label = (
-                        f"**{ticker}**  "
-                        f"<span style='color:{cor_score}'>{score_str}</span>"
-                    )
                     if st.button(ticker, key=f"sel_{ticker}", use_container_width=True):
                         st.session_state.selected_ticker = ticker
                 with col_b:

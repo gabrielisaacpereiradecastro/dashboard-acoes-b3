@@ -10,12 +10,30 @@ BASE_URL = "https://api.usebolsai.com/api/v1"
 _TIMEOUT = 15  # segundos
 
 
+def _get_api_key() -> str:
+    """
+    Lê a API Key priorizando st.secrets (Streamlit Cloud) e caindo
+    para os.environ como fallback (execução local).
+    """
+    # Tenta st.secrets primeiro (Streamlit Cloud / secrets.toml local)
+    try:
+        import streamlit as st  # importação lazy para não criar dependência circular
+        key = st.secrets.get("BOLSAI_API_KEY", "").strip()
+        if key:
+            return key
+    except Exception:
+        pass
+    # Fallback: variável de ambiente (local com export BOLSAI_API_KEY=...)
+    return os.environ.get("BOLSAI_API_KEY", "").strip()
+
+
 def _headers() -> dict:
-    key = os.environ.get("BOLSAI_API_KEY", "").strip()
+    key = _get_api_key()
     if not key:
         raise ValueError(
-            "Variável de ambiente BOLSAI_API_KEY não configurada. "
-            "Defina-a antes de iniciar o app."
+            "BOLSAI_API_KEY não encontrada. "
+            "Configure em Streamlit Cloud → Settings → Secrets "
+            "ou defina a variável de ambiente localmente."
         )
     return {"X-API-Key": key}
 
@@ -79,7 +97,7 @@ def get_sectors() -> list[str]:
 
 def check_api_usage() -> Optional[dict]:
     """GET /keys/usage — quota do dia."""
-    key = os.environ.get("BOLSAI_API_KEY", "").strip()
+    key = _get_api_key()
     if not key:
         return None
     try:
