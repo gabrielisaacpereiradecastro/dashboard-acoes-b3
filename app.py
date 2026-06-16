@@ -296,12 +296,15 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         for col in df.columns:
             if col not in colored_cols:
                 continue
+            col_in_class = col in class_df.columns
             for idx in df.index:
-                cls = class_df.at[idx, col] if col in class_df.columns else ""
-                if col == "Score":
-                    bg = score_bg.get(cls, "")
-                else:
-                    bg = BG_COLORS.get(cls, "")
+                cls = ""
+                if col_in_class and idx in class_df.index:
+                    try:
+                        cls = class_df.at[idx, col] or ""
+                    except (KeyError, ValueError):
+                        cls = ""
+                bg = score_bg.get(cls, "") if col == "Score" else BG_COLORS.get(cls, "")
                 if bg:
                     styles.at[idx, col] = (
                         f"background-color: {bg}; color: #ffffff; "
