@@ -47,7 +47,8 @@ def classify_net_debt_ebitda(value, sector: str) -> tuple[str, str]:
     display = f"{value:.2f}x"
 
     if value < 0:
-        return "Proibitivo", display
+        # Dívida líquida negativa = caixa líquido > dívida → melhor situação possível
+        return "Excelente", display
     elif value <= lim[0]:
         return "Excelente", display
     elif value <= lim[1]:
