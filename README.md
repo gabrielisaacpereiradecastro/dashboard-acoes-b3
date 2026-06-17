@@ -85,7 +85,7 @@ O app abrirá em `http://localhost:8501`.
 | Screener completo | ❌ | ✅ |
 | Dados históricos (DFP) | ❌ | ✅ |
 
-**Eficiência de requisições:** cada ticker consome **4 chamadas** (fundamentos + empresa + estatísticas + dividendos). Com 200 req/dia, é possível analisar até ~50 tickers por dia com uma atualização completa.
+**Eficiência de requisições:** cada ticker consome **3 chamadas** (fundamentos + empresa + estatísticas). O endpoint `/dividends` é PRO e não é utilizado. Com 200 req/dia é possível analisar até ~66 tickers por dia com uma atualização completa.
 
 ## Indicadores e pesos
 
@@ -98,7 +98,7 @@ O app abrirá em `http://localhost:8501`.
 | 5 | Margem EBITDA | 10% | Limites ajustados por setor |
 | 6 | CAGR Lucro 5 anos | 5% | N/D se lucro base negativo |
 | 7 | P/FCF | 5% | N/D no plano Free (requer DFC) |
-| 8 | Dividend Yield | 5% | |
+| 8 | Dividend Yield | 5% | N/D no plano Free (campo ausente em /fundamentals) |
 | 9 | Liquidez | 5% | Vol. médio 52 sem. × preço |
 | 10 | CAGR Receita 5 anos | 5% | |
 

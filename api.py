@@ -121,8 +121,9 @@ def get_all_stock_data(ticker: str) -> dict:
     Faz 3 chamadas à API (todas gratuitas). Retorna dict unificado
     ou dict com 'error' em caso de falha.
 
-    Dividend Yield vem diretamente de /fundamentals (campo dividend_yield).
-    O endpoint /dividends é PRO e não é chamado.
+    Faz 3 chamadas à API (fundamentos + empresa + estatísticas), todas gratuitas.
+    O endpoint /dividends é PRO e não é chamado. dividend_yield não existe em
+    /fundamentals no plano Free → DY e Payout sempre N/D.
     """
     t = ticker.strip().upper()
     result: dict = {"ticker": t, "error": None}
@@ -149,16 +150,10 @@ def get_all_stock_data(ticker: str) -> dict:
     if avg_vol_shares and close_price:
         liquidity_brl = avg_vol_shares * close_price
 
-    # ── Payout estimado a partir do DY (sem chamar /dividends) ─
-    # DY vem de /fundamentals como campo dividend_yield (%)
-    # DPS_TTM ≈ dividend_yield/100 × close_price
-    # net_income na API está em R$ mil → × 1000 para R$
+    # dividend_yield ausente em /fundamentals (plano Free) → confirmado inspecionando
+    # JSON bruto de múltiplos tickers. /dividends é PRO. Sem DPS TTM, payout
+    # também não pode ser calculado.
     payout: Optional[float] = None
-    dy       = fund.get("dividend_yield")       # %
-    net_income_k = fund.get("net_income")       # R$ mil
-    if dy and close_price and shares and net_income_k and net_income_k > 0:
-        dps_ttm = (dy / 100.0) * close_price
-        payout  = (dps_ttm * shares) / (net_income_k * 1000) * 100
 
     result.update(
         {
@@ -187,11 +182,11 @@ def get_all_stock_data(ticker: str) -> dict:
             "cagr_earnings_5y":   fund.get("cagr_earnings_5y"),
             "cagr_revenue_5y":    fund.get("cagr_revenue_5y"),
             "p_fcf":              None,          # PRO: requer /financials
-            "dividend_yield":     dy,            # vem de /fundamentals
+            "dividend_yield":     None,          # ausente em /fundamentals (plano Free)
             "liquidity":          liquidity_brl,
             # ── Indicadores informativos (sem score) ───────────
             "pvp":          fund.get("pvp"),
-            "payout":       payout,              # estimado via DY × preço
+            "payout":       None,                # indisponível sem DY (plano Free)
             "net_margin":   fund.get("net_margin"),
             "gross_margin": fund.get("gross_margin"),
             "ebit_margin":  fund.get("ebit_margin"),
