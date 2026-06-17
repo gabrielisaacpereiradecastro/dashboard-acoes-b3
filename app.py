@@ -144,6 +144,9 @@ def _init_state():
     # Log de debug da última operação de fetch
     if "debug_log" not in st.session_state:
         st.session_state.debug_log: list[str] = []
+    # JSON bruto de /fundamentals do último ticker buscado
+    if "debug_raw_fund" not in st.session_state:
+        st.session_state.debug_raw_fund: Optional[dict] = None
 
 
 # ────────────────────────────────────────────────────────────────
@@ -181,15 +184,20 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         log.append(f"⚠️ API retornou erro: {data['error']}")
         return data["error"]
 
-    # Mostrar quais campos chegaram do /fundamentals (ajuda a diagnosticar N/D)
-    fund_keys = sorted(k for k in data if data[k] is not None and k not in (
-        "ticker", "corporate_name", "trade_name", "sector", "reference_date",
-        "error", "avg_volume_52w",
-    ))
     log.append(f"✅ {t} carregado: preço={data.get('close_price')}, setor={data.get('sector')!r}")
-    log.append(f"📋 Campos disponíveis: {', '.join(fund_keys)}")
-    dy_val = data.get("dividend_yield")
-    log.append(f"📌 dividend_yield={dy_val!r}  |  cagr_earnings_5y={data.get('cagr_earnings_5y')!r}")
+
+    # Extrair e armazenar o JSON bruto de /fundamentals ANTES de salvar
+    raw_fund = data.pop("_raw_fund", {})
+    st.session_state.debug_raw_fund = raw_fund
+
+    # Log rápido dos campos de interesse
+    log.append(
+        f"📌 dividend_yield={raw_fund.get('dividend_yield')!r}"
+        f"  |  cagr_earnings_5y={raw_fund.get('cagr_earnings_5y')!r}"
+        f"  |  cagr_revenue_5y={raw_fund.get('cagr_revenue_5y')!r}"
+    )
+    log.append(f"📋 Total de campos retornados por /fundamentals: {len(raw_fund)}")
+    log.append("👇 JSON completo disponível no painel abaixo")
 
     st.session_state.acoes[t] = {
         "data": data,
@@ -586,13 +594,19 @@ def _sidebar():
             st.error(err)
         st.session_state.flash_errors = []
 
-        # ── Painel de debug (mostra log da última operação) ─────
+        # ── Painel de debug (mostra log + JSON bruto da última busca) ──
         if st.session_state.debug_log:
             with st.expander("🔧 Debug — última operação", expanded=True):
                 for line in st.session_state.debug_log:
                     st.markdown(f"`{line}`")
+
+                if st.session_state.debug_raw_fund:
+                    st.markdown("**JSON completo de /fundamentals/{ticker}:**")
+                    st.json(st.session_state.debug_raw_fund, expanded=True)
+
                 if st.button("Limpar log", key="clear_debug"):
                     st.session_state.debug_log = []
+                    st.session_state.debug_raw_fund = None
                     st.rerun()
 
         st.divider()

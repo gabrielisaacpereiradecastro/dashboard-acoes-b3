@@ -162,6 +162,8 @@ def get_all_stock_data(ticker: str) -> dict:
 
     result.update(
         {
+            # JSON bruto de /fundamentals — usado apenas para debug, removido antes de salvar
+            "_raw_fund": dict(fund),
             # Identificação
             "ticker":             fund.get("ticker", t),
             "corporate_name":     fund.get("corporate_name", ""),
