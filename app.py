@@ -5,7 +5,7 @@ Fonte de dados: API Bolsai (usebolsai.com)
 from __future__ import annotations
 
 import json
-import os
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -33,7 +33,6 @@ st.set_page_config(
 
 DATA_FILE = Path("acoes_salvas.json")
 
-# Ordem exata das colunas na tabela (indicadores com score)
 SCORED_COLS_ORDER = [
     "net_debt_ebitda",
     "roe",
@@ -46,6 +45,107 @@ SCORED_COLS_ORDER = [
     "liquidity",
     "cagr_revenue_5y",
 ]
+
+# Indicadores usados no gráfico radar (6 de maior peso)
+RADAR_INDICATORS = [
+    "net_debt_ebitda",
+    "roe",
+    "ev_ebitda",
+    "pl",
+    "ebitda_margin",
+    "liquidity",
+]
+
+# Pares (cor da linha, cor de preenchimento rgba) para até 4 ações no radar
+RADAR_COLORS = [
+    ("#4caf50", "rgba(76,175,80,0.20)"),
+    ("#2196f3", "rgba(33,150,243,0.20)"),
+    ("#ff9800", "rgba(255,152,0,0.20)"),
+    ("#e91e63", "rgba(233,30,99,0.20)"),
+]
+
+# ────────────────────────────────────────────────────────────────
+# Conteúdo dos popovers explicativos
+# ────────────────────────────────────────────────────────────────
+INDICATOR_INFO: dict[str, dict[str, str]] = {
+    "net_debt_ebitda": {
+        "o_que_mede": "Quantos anos de geração de caixa operacional seriam necessários para pagar toda a dívida líquida.",
+        "por_que_importa": "Empresa muito endividada fica vulnerável em crises e paga juros altos, sobrando menos para o acionista.",
+        "interpretacao": "Quanto menor, melhor. Valor negativo = caixa líquido (ótimo).",
+        "faixa_ideal": "≤ 0,5× Excelente · até 1,5× Bom · até 2,5× Razoável · até 3,5× Atenção · acima: Proibitivo",
+        "atencao": "Utilities e concessões suportam mais dívida por terem receita previsível — limite sobe para 3,5× Bom.",
+    },
+    "roe": {
+        "o_que_mede": "Quanto a empresa lucra para cada R$ 1 de patrimônio dos acionistas.",
+        "por_que_importa": "Mede a qualidade e eficiência do negócio — ROE alto e consistente geralmente cria valor no longo prazo.",
+        "interpretacao": "Quanto maior, melhor.",
+        "faixa_ideal": "≥ 25% Excelente · 15–25% Bom · 10–15% Razoável · 5–10% Atenção · abaixo: Proibitivo",
+        "atencao": "ROE pode ser inflado artificialmente por dívida alta — sempre cruzar com Dív/EBITDA.",
+    },
+    "ev_ebitda": {
+        "o_que_mede": "Quantas vezes o valor total da empresa (incluindo dívida) representa sua geração de caixa operacional anual.",
+        "por_que_importa": "Múltiplo de valuation robusto — ignora estrutura de capital e depreciação, permitindo comparar empresas alavancadas e não.",
+        "interpretacao": "Quanto menor, melhor.",
+        "faixa_ideal": "≤ 5× Excelente · 5–8× Bom · 8–12× Razoável · 12–16× Atenção · acima: Proibitivo",
+        "atencao": "Não usar para bancos — estrutura de capital é o negócio deles.",
+    },
+    "pl": {
+        "o_que_mede": "Quantos anos de lucro atual seriam necessários para recuperar o investimento.",
+        "por_que_importa": "Referência rápida de caro ou barato.",
+        "interpretacao": "Existe faixa ideal — muito baixo pode ser armadilha de valor, muito alto significa pagar caro pelo crescimento.",
+        "faixa_ideal": "5–10× Excelente · 10–15× Bom · 15–20× Razoável · 20–30× Atenção · acima ou negativo: Proibitivo",
+        "atencao": "P/L negativo significa prejuízo. P/L abaixo de 5 pode indicar empresa em declínio ou resultado não-recorrente.",
+    },
+    "ebitda_margin": {
+        "o_que_mede": "Percentual da receita que se converte em caixa operacional antes de juros, impostos e depreciação.",
+        "por_que_importa": "Mede a eficiência operacional pura do negócio, independente de estrutura de capital.",
+        "interpretacao": "Quanto maior, melhor.",
+        "faixa_ideal": "≥ 30% Excelente · 20–30% Bom · 12–20% Razoável · 6–12% Atenção · abaixo: Proibitivo",
+        "atencao": "Varejo tem margens estruturalmente menores — use comparação setorial.",
+    },
+    "cagr_earnings_5y": {
+        "o_que_mede": "Taxa de crescimento anual composta do lucro líquido nos últimos 5 anos.",
+        "por_que_importa": "Distingue empresa saudável de empresa em deterioração disfarçada — crescimento consistente é sinal de vitalidade.",
+        "interpretacao": "Quanto maior, melhor. Positivo é o mínimo aceitável.",
+        "faixa_ideal": "≥ 15% Excelente · 8–15% Bom · 0–8% Razoável · -10–0% Atenção · abaixo: Proibitivo",
+        "atencao": "Um ano com resultado extraordinário distorce o CAGR — verificar se o crescimento é consistente.",
+    },
+    "p_fcf": {
+        "o_que_mede": "Quanto o mercado paga pelo fluxo de caixa livre (lucro caixa real após investimentos).",
+        "por_que_importa": "FCL é muito mais difícil de manipular contabilmente que o lucro — empresa com lucro alto e FCL negativo é sinal de alerta.",
+        "interpretacao": "Quanto menor, melhor.",
+        "faixa_ideal": "≤ 8× Excelente · 8–15× Bom · 15–22× Razoável · 22–30× Atenção · acima: Proibitivo",
+        "atencao": "Disponível apenas no plano Pro da API Bolsai.",
+    },
+    "dividend_yield": {
+        "o_que_mede": "Percentual do preço atual que a empresa pagou em dividendos nos últimos 12 meses.",
+        "por_que_importa": "Dividendo consistente indica geração real de caixa e gestão alinhada com o acionista.",
+        "interpretacao": "Quanto maior, melhor — mas dividendo insustentável é pior que nenhum.",
+        "faixa_ideal": "≥ 8% Excelente · 5–8% Bom · 3–5% Razoável · 1–3% Atenção · abaixo: Proibitivo",
+        "atencao": "DY alto com payout acima de 80% e FCL negativo é sinal de dividendo insustentável.",
+    },
+    "liquidity": {
+        "o_que_mede": "Volume médio diário negociado em reais.",
+        "por_que_importa": "Liquidez baixa significa que você pode não conseguir vender quando quiser, ou vender a preço ruim.",
+        "interpretacao": "Quanto maior, melhor.",
+        "faixa_ideal": "> R$ 5M Excelente · R$ 3–5M Bom · R$ 1–3M Razoável · R$ 500k–1M Atenção · abaixo: Proibitivo",
+        "atencao": "Estimado via volume médio 52 semanas × preço atual — pode diferir do volume médio 21 dias.",
+    },
+    "cagr_revenue_5y": {
+        "o_que_mede": "Taxa de crescimento anual composta da receita líquida nos últimos 5 anos.",
+        "por_que_importa": "Receita crescendo é condição para lucro crescer no longo prazo — receita estagnada eventualmente comprime margens.",
+        "interpretacao": "Quanto maior, melhor.",
+        "faixa_ideal": "≥ 12% Excelente · 6–12% Bom · 0–6% Razoável · -5–0% Atenção · abaixo: Proibitivo",
+        "atencao": "Crescimento por aquisições pode mascarar deterioração orgânica.",
+    },
+    "pvp": {
+        "o_que_mede": "Quanto o mercado paga em relação ao valor contábil do patrimônio.",
+        "por_que_importa": "P/VP abaixo de 1 pode indicar desconto patrimonial — empresa vale menos na bolsa do que seus ativos contábeis.",
+        "interpretacao": "Existe faixa ideal — muito baixo pode sinalizar problema de qualidade dos ativos, muito alto exige ROE alto para justificar.",
+        "faixa_ideal": "1–2× costuma ser razoável para a maioria. Bancos bons negociam entre 1–2,5×.",
+        "atencao": "Indicador informativo — não entra no score.",
+    },
+}
 
 
 # ────────────────────────────────────────────────────────────────
@@ -97,7 +197,6 @@ def _fmt_mcap(v) -> str:
 
 
 def _staleness_color(updated_at_iso: Optional[str]) -> str:
-    """Retorna cor CSS baseada na idade dos dados."""
     if not updated_at_iso:
         return "#f44336"
     try:
@@ -136,15 +235,12 @@ def _init_state():
         st.session_state.acoes = load_data()
     if "selected_ticker" not in st.session_state:
         st.session_state.selected_ticker = None
-    # Mensagens persistidas entre reruns para sobreviver ao st.rerun()
     if "flash_errors" not in st.session_state:
         st.session_state.flash_errors: list[str] = []
     if "flash_success" not in st.session_state:
         st.session_state.flash_success: str = ""
-    # Log de debug da última operação de fetch
     if "debug_log" not in st.session_state:
         st.session_state.debug_log: list[str] = []
-    # JSON bruto de /fundamentals do último ticker buscado
     if "debug_raw_fund" not in st.session_state:
         st.session_state.debug_raw_fund: Optional[dict] = None
 
@@ -154,15 +250,9 @@ def _init_state():
 # ────────────────────────────────────────────────────────────────
 
 def _fetch_ticker(ticker: str) -> Optional[str]:
-    """
-    Busca dados de um ticker e salva no session_state/JSON.
-    Retorna string de erro ou None em caso de sucesso.
-    Registra log de debug em st.session_state.debug_log.
-    """
     t = ticker.strip().upper()
     log = st.session_state.debug_log
 
-    # Verificar se a chave está disponível
     api_key = api._get_api_key()
     if api_key:
         log.append(f"✅ API Key encontrada ({api_key[:8]}…)")
@@ -186,18 +276,15 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
 
     log.append(f"✅ {t} carregado: preço={data.get('close_price')}, setor={data.get('sector')!r}")
 
-    # Extrair e armazenar o JSON bruto de /fundamentals ANTES de salvar
     raw_fund = data.pop("_raw_fund", {})
     st.session_state.debug_raw_fund = raw_fund
 
-    # Log rápido dos campos de interesse
     log.append(
         f"📌 dividend_yield={raw_fund.get('dividend_yield')!r}"
         f"  |  cagr_earnings_5y={raw_fund.get('cagr_earnings_5y')!r}"
         f"  |  cagr_revenue_5y={raw_fund.get('cagr_revenue_5y')!r}"
     )
     log.append(f"📋 Total de campos retornados por /fundamentals: {len(raw_fund)}")
-    log.append("👇 JSON completo disponível no painel abaixo")
 
     st.session_state.acoes[t] = {
         "data": data,
@@ -208,7 +295,6 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
 
 
 def _update_all() -> list[str]:
-    """Reatualiza todos os tickers salvos. Retorna lista de erros."""
     st.session_state.debug_log = []
     erros = []
     tickers = list(st.session_state.acoes.keys())
@@ -227,7 +313,6 @@ def _update_all() -> list[str]:
 # ────────────────────────────────────────────────────────────────
 
 def _enrich(entry: dict) -> dict:
-    """Adiciona score, label e breakdown ao dict de dados da ação."""
     stock = entry["data"]
     s, label, breakdown = sc.calculate_score(stock)
     return {**stock, "score": s, "score_label": label, "breakdown": breakdown}
@@ -238,11 +323,6 @@ def _enrich(entry: dict) -> dict:
 # ────────────────────────────────────────────────────────────────
 
 def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Retorna (display_df, class_df).
-    display_df: valores formatados para exibição.
-    class_df: classificações para aplicar cores.
-    """
     rows_display = []
     rows_class = []
 
@@ -251,16 +331,14 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         classifications = sc.classify_all(s)
 
         display_row = {
-            "Ticker":    s.get("ticker", ""),
-            "Empresa":   s.get("trade_name") or s.get("corporate_name", ""),
-            "Setor":     sector,
-            "Preço":     _fmt_price(s.get("close_price")),
-            "Var.Dia":   _fmt_pct(s.get("daily_change_pct")),
+            "Ticker":  s.get("ticker", ""),
+            "Empresa": s.get("trade_name") or s.get("corporate_name", ""),
+            "Setor":   sector,
+            "Preço":   _fmt_price(s.get("close_price")),
+            "Var.Dia": _fmt_pct(s.get("daily_change_pct")),
         }
-
         class_row = {"Ticker": s.get("ticker", ""), "Empresa": "", "Setor": "", "Preço": "", "Var.Dia": ""}
 
-        # Score
         score = s.get("score")
         label = s.get("score_label", "")
         if score is None:
@@ -268,16 +346,14 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             class_row["Score"] = "NA"
         else:
             display_row["Score"] = f"{score:.0f} — {label}"
-            class_row["Score"] = label  # reused para cor
+            class_row["Score"] = label
 
-        # Indicadores com score
         for ind in SCORED_COLS_ORDER:
             col_name = INDICATOR_LABELS.get(ind, ind)
             cls, disp = classifications.get(ind, ("ND", "N/D"))
             display_row[col_name] = disp
             class_row[col_name] = cls
 
-        # P/VP informativo
         pvp = s.get("pvp")
         display_row["P/VP"] = f"{pvp:.2f}x" if pvp is not None else "—"
         class_row["P/VP"] = ""
@@ -285,26 +361,19 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         rows_display.append(display_row)
         rows_class.append(class_row)
 
-    display_df = pd.DataFrame(rows_display)
-    class_df = pd.DataFrame(rows_class)
-    return display_df, class_df
+    return pd.DataFrame(rows_display), pd.DataFrame(rows_class)
 
 
 def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
-    """Aplica cores de fundo às células dos indicadores."""
-
-    # Mapeamento de faixa de score para cor de fundo
     score_bg = {
-        "Excelente":     "#1b5e20",
-        "Bom":           "#2e7d32",
-        "Razoável":      "#7b5800",
-        "Atenção":       "#bf360c",
-        "Evitar":        "#7f0000",
+        "Excelente":      "#1b5e20",
+        "Bom":            "#2e7d32",
+        "Razoável":       "#7b5800",
+        "Atenção":        "#bf360c",
+        "Evitar":         "#7f0000",
         "Setor Bancário": "#37474f",
-        "NA":            "#37474f",
+        "NA":             "#37474f",
     }
-
-    # Colunas coloridas = Score + indicadores scored
     colored_cols = {"Score"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
     def styler_fn(df: pd.DataFrame) -> pd.DataFrame:
@@ -329,6 +398,144 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         return styles
 
     return display_df.style.apply(styler_fn, axis=None)
+
+
+# ────────────────────────────────────────────────────────────────
+# Gráfico de posicionamento no intervalo de 52 semanas
+# ────────────────────────────────────────────────────────────────
+
+def _price_range_chart(s: dict) -> Optional[go.Figure]:
+    low = s.get("week_52_low")
+    high = s.get("week_52_high")
+    current = s.get("close_price")
+    if not (low and high and current and high > low):
+        return None
+
+    ytd = s.get("ytd_return_pct") or 0
+    price_color = "#4caf50" if ytd >= 0 else "#f44336"
+
+    fig = go.Figure()
+
+    # Faixa cinza de fundo (low → high)
+    fig.add_trace(go.Bar(
+        x=[high - low],
+        y=[""],
+        base=[low],
+        orientation="h",
+        marker=dict(color="#2e3250", line=dict(width=0)),
+        showlegend=False,
+        hoverinfo="skip",
+        width=0.4,
+    ))
+
+    # Marcador do preço atual
+    fig.add_trace(go.Scatter(
+        x=[current],
+        y=[""],
+        mode="markers",
+        marker=dict(color=price_color, size=20, symbol="diamond",
+                    line=dict(color="#ffffff", width=2)),
+        name="Preço atual",
+        hovertemplate=f"<b>Preço atual</b><br>R$ {current:.2f}<extra></extra>",
+    ))
+
+    # Anotações de mínimo e máximo
+    fig.add_annotation(
+        x=low, y=0.05, yref="paper",
+        text=f"<b>Mín 52s</b><br>R$ {low:.2f}",
+        showarrow=False, font=dict(color="#9e9e9e", size=11),
+        xanchor="left",
+    )
+    fig.add_annotation(
+        x=high, y=0.05, yref="paper",
+        text=f"<b>Máx 52s</b><br>R$ {high:.2f}",
+        showarrow=False, font=dict(color="#9e9e9e", size=11),
+        xanchor="right",
+    )
+    fig.add_annotation(
+        x=current, y=1.0, yref="paper",
+        text=f"<b>R$ {current:.2f}</b>",
+        showarrow=True, arrowhead=2, arrowcolor=price_color,
+        font=dict(color=price_color, size=13),
+        ay=-30,
+    )
+
+    ytd_sign = "+" if ytd >= 0 else ""
+    fig.update_layout(
+        title=dict(
+            text=f"Intervalo de 52 Semanas  ·  YTD: {ytd_sign}{ytd:.1f}%",
+            font=dict(color="#e8eaf6", size=13),
+            x=0,
+        ),
+        xaxis=dict(
+            tickformat=",.2f",
+            tickprefix="R$ ",
+            color="#9e9e9e",
+            gridcolor="#2e3250",
+            showgrid=True,
+        ),
+        yaxis=dict(showticklabels=False, showgrid=False, range=[-0.5, 0.5]),
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#1e2130",
+        margin=dict(l=20, r=20, t=50, b=50),
+        height=180,
+        showlegend=False,
+    )
+    return fig
+
+
+# ────────────────────────────────────────────────────────────────
+# Gráfico radar
+# ────────────────────────────────────────────────────────────────
+
+def _radar_chart(stocks_data: list[dict], names: list[str]) -> go.Figure:
+    labels = [INDICATOR_LABELS.get(i, i) for i in RADAR_INDICATORS]
+    labels_closed = labels + [labels[0]]
+
+    fig = go.Figure()
+
+    for stock, name, (line_color, fill_color) in zip(stocks_data, names, RADAR_COLORS):
+        breakdown = stock.get("breakdown", {})
+        values = []
+        for ind in RADAR_INDICATORS:
+            bd = breakdown.get(ind, {})
+            pts = bd.get("points")
+            values.append(pts if pts is not None else 0)
+        values_closed = values + [values[0]]
+
+        fig.add_trace(go.Scatterpolar(
+            r=values_closed,
+            theta=labels_closed,
+            fill="toself",
+            name=name,
+            line=dict(color=line_color, width=2),
+            fillcolor=fill_color,
+            hovertemplate="<b>%{theta}</b><br>Pontuação: %{r}/100<extra>" + name + "</extra>",
+        ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                tickfont=dict(color="#9e9e9e", size=10),
+                gridcolor="#333344",
+                linecolor="#333344",
+            ),
+            angularaxis=dict(
+                tickfont=dict(color="#e8eaf6", size=11),
+                gridcolor="#333344",
+                linecolor="#333344",
+            ),
+            bgcolor="#1e2130",
+        ),
+        showlegend=len(names) > 1,
+        legend=dict(font=dict(color="#e8eaf6"), bgcolor="rgba(0,0,0,0)"),
+        paper_bgcolor="#0e1117",
+        margin=dict(l=40, r=40, t=40, b=40),
+        height=380,
+    )
+    return fig
 
 
 # ────────────────────────────────────────────────────────────────
@@ -359,7 +566,6 @@ def _show_detail(s: dict):
         preco = s.get("close_price")
         var = s.get("daily_change_pct")
         if preco is not None:
-            var_color = "#4caf50" if (var or 0) >= 0 else "#f44336"
             st.metric(
                 "Preço Atual",
                 _fmt_price(preco),
@@ -390,35 +596,24 @@ def _show_detail(s: dict):
             f"<h3 style='color:{score_cor}'>Score: {score:.0f}/100 — {label}</h3>",
             unsafe_allow_html=True,
         )
-
-        # Barra de progresso geral
         st.progress(int(score) if score else 0)
 
     st.divider()
 
-    # ── Gráfico de preço ────────────────────────────────────────
-    with st.expander("📈 Gráfico de Preço Histórico", expanded=False):
-        st.info(
-            "Histórico de preços requer o **plano Pro** da Bolsai "
-            "(endpoint `/stocks/{ticker}/history`). "
-            "Faça upgrade em usebolsai.com para visualizar o gráfico."
+    # ── Gráfico de preço (52 semanas) ──────────────────────────
+    fig_price = _price_range_chart(s)
+    if fig_price:
+        st.plotly_chart(fig_price, use_container_width=True, config={"displayModeBar": False})
+        st.caption(
+            "📌 Histórico de preços detalhado (1M/3M/6M/1A) requer plano Pro da Bolsai "
+            "(`/stocks/{ticker}/history`). O gráfico acima usa dados de 52 semanas do plano Free."
         )
+    else:
+        st.info("Dados de intervalo 52 semanas indisponíveis para esta ação.")
 
     # ── Indicadores com score ───────────────────────────────────
+    st.divider()
     st.subheader("Indicadores com Score")
-
-    DESCS = {
-        "net_debt_ebitda":  "Alavancagem: quanto tempo levaria para pagar a dívida líquida com o EBITDA.",
-        "roe":              "Retorno sobre o Patrimônio Líquido — eficiência na geração de lucro.",
-        "ev_ebitda":        "Múltiplo de valuation: valor da empresa vs. geração de caixa operacional.",
-        "pl":               "Preço / Lucro — quanto o mercado paga por cada R$ 1 de lucro.",
-        "ebitda_margin":    "Margem EBITDA — eficiência operacional (% da receita).",
-        "cagr_earnings_5y": "Taxa composta de crescimento anual do lucro líquido nos últimos 5 anos.",
-        "p_fcf":            "Preço / Fluxo de Caixa Livre (FCO − Capex). Requer plano Pro.",
-        "dividend_yield":   "Dividend Yield TTM — rendimento em dividendos nos últimos 12 meses.",
-        "liquidity":        "Volume médio diário estimado (vol. méd. 52 sem. × preço).",
-        "cagr_revenue_5y":  "Taxa composta de crescimento anual da receita líquida nos últimos 5 anos.",
-    }
 
     for ind in SCORED_COLS_ORDER:
         cls, disp = classifications.get(ind, ("ND", "N/D"))
@@ -428,15 +623,23 @@ def _show_detail(s: dict):
         bd = breakdown.get(ind, {})
         pts = bd.get("points")
         contrib = bd.get("contribution")
-
         bg = BG_COLORS.get(cls, "#37474f")
+        info = INDICATOR_INFO.get(ind, {})
 
         with st.container():
-            ca, cb, cc = st.columns([3, 2, 3])
+            ca, cb, cc, cd = st.columns([2.5, 0.3, 2, 3])
             with ca:
                 st.markdown(f"**{label_ind}** *(peso {peso*100:.0f}%)*")
-                st.caption(DESCS.get(ind, ""))
             with cb:
+                if info:
+                    with st.popover("❓"):
+                        st.markdown(f"**{label_ind}**")
+                        st.markdown(f"**O que mede:** {info.get('o_que_mede', '')}")
+                        st.markdown(f"**Por que importa:** {info.get('por_que_importa', '')}")
+                        st.markdown(f"**Interpretação:** {info.get('interpretacao', '')}")
+                        st.markdown(f"**Faixa ideal:** {info.get('faixa_ideal', '')}")
+                        st.caption(f"⚠ {info.get('atencao', '')}")
+            with cc:
                 st.markdown(
                     f"<div style='background:{bg};color:#fff;padding:6px 12px;"
                     f"border-radius:6px;text-align:center;font-weight:700;font-size:1.05rem'>"
@@ -444,12 +647,22 @@ def _show_detail(s: dict):
                     unsafe_allow_html=True,
                 )
             with cc:
+                pass  # espaçamento
+            with cd:
                 if pts is not None and contrib is not None:
                     st.caption(f"Pontuação: {pts}/100 → contribuição: {contrib:.1f} pts")
                     st.progress(int(pts))
                 elif cls in ("ND", "NA"):
                     st.caption("Não disponível — peso redistribuído entre demais indicadores")
         st.markdown("")
+
+    # ── Radar dos 6 indicadores principais ─────────────────────
+    if not bank:
+        st.divider()
+        st.subheader("Perfil Radar")
+        st.caption("Pontuação (0–100) nos 6 indicadores de maior peso.")
+        fig_radar = _radar_chart([s], [s.get("ticker", "")])
+        st.plotly_chart(fig_radar, use_container_width=True, config={"displayModeBar": False})
 
     # ── Indicadores informativos ────────────────────────────────
     st.divider()
@@ -461,13 +674,23 @@ def _show_detail(s: dict):
     roa = s.get("roa")
     roic = s.get("roic")
 
+    # P/VP com popover
     with st.container():
-        st.markdown("#### P/VP — Preço / Valor Patrimonial")
+        col_pvp, col_pvp_help = st.columns([8, 1])
+        with col_pvp:
+            st.markdown("#### P/VP — Preço / Valor Patrimonial")
+        with col_pvp_help:
+            info_pvp = INDICATOR_INFO.get("pvp", {})
+            if info_pvp:
+                with st.popover("❓"):
+                    st.markdown("**P/VP — Preço / Valor Patrimonial**")
+                    st.markdown(f"**O que mede:** {info_pvp.get('o_que_mede', '')}")
+                    st.markdown(f"**Por que importa:** {info_pvp.get('por_que_importa', '')}")
+                    st.markdown(f"**Interpretação:** {info_pvp.get('interpretacao', '')}")
+                    st.markdown(f"**Faixa ideal:** {info_pvp.get('faixa_ideal', '')}")
+                    st.caption(f"⚠ {info_pvp.get('atencao', '')}")
         if bank:
-            st.markdown(
-                "**Indicador principal para bancos.** "
-                "P/VP ideal entre **1,0× e 2,5×**."
-            )
+            st.markdown("**Indicador principal para bancos.** P/VP ideal entre **1,0× e 2,5×**.")
         if pvp is not None:
             st.markdown(f"**Valor:** {pvp:.2f}×")
             if pvp < 1.0:
@@ -481,21 +704,16 @@ def _show_detail(s: dict):
         st.markdown("#### Payout (%)")
         if payout is not None:
             st.markdown(f"**Valor:** {payout:.1f}%")
-            fcf = s.get("p_fcf")
             if payout > 80:
-                st.caption(
-                    "⚠️ Payout alto (> 80%). "
-                    + ("Atenção: FCO/Capex indisponíveis (requer plano Pro) — verifique FCL manualmente." if fcf is None else "")
-                )
+                st.caption("⚠️ Payout alto (> 80%). Verifique sustentabilidade com FCL.")
         else:
-            st.caption("N/D (calculado como DPS TTM × Ações / Lucro Líquido)")
+            st.caption("N/D (requer dados de dividendos — plano Pro)")
 
     with st.container():
         st.markdown("#### Governança")
         st.caption(
-            "Segmento de listagem e Tag Along não estão disponíveis no "
-            "plano gratuito da API Bolsai. Consulte o site da B3 ou o "
-            "Formulário de Referência (CVM) para essas informações."
+            "Segmento de listagem e Tag Along não estão disponíveis no plano gratuito. "
+            "Consulte o site da B3 ou o Formulário de Referência (CVM)."
         )
 
     if bank:
@@ -507,20 +725,20 @@ def _show_detail(s: dict):
                 "ou o site do Banco Central do Brasil."
             )
 
-    # ── Outros indicadores financeiros ─────────────────────────
+    # ── Outros indicadores ─────────────────────────────────────
     st.divider()
     with st.expander("📋 Outros indicadores", expanded=False):
         cols = st.columns(3)
         items = [
-            ("Margem Líquida",  f"{net_margin:.1f}%" if net_margin is not None else "N/D"),
-            ("ROA",             f"{roa:.1f}%" if roa is not None else "N/D"),
-            ("ROIC",            f"{roic:.1f}%" if roic is not None else "N/D"),
-            ("LPA",             f"R$ {s['lpa']:.2f}" if s.get("lpa") else "N/D"),
-            ("VPA",             f"R$ {s['vpa']:.2f}" if s.get("vpa") else "N/D"),
-            ("Liq. Corrente",   f"{s['current_ratio']:.2f}x" if s.get("current_ratio") else "N/D"),
-            ("EBITDA (R$ mi)",  f"{s['ebitda']/1000:.0f}" if s.get("ebitda") else "N/D"),
-            ("Rec. Líq. (R$ mi)", f"{s['net_revenue']/1000:.0f}" if s.get("net_revenue") else "N/D"),
-            ("Lucro Líq. (R$ mi)", f"{s['net_income']/1000:.0f}" if s.get("net_income") else "N/D"),
+            ("Margem Líquida",      f"{net_margin:.1f}%" if net_margin is not None else "N/D"),
+            ("ROA",                 f"{roa:.1f}%" if roa is not None else "N/D"),
+            ("ROIC",                f"{roic:.1f}%" if roic is not None else "N/D"),
+            ("LPA",                 f"R$ {s['lpa']:.2f}" if s.get("lpa") else "N/D"),
+            ("VPA",                 f"R$ {s['vpa']:.2f}" if s.get("vpa") else "N/D"),
+            ("Liq. Corrente",       f"{s['current_ratio']:.2f}x" if s.get("current_ratio") else "N/D"),
+            ("EBITDA (R$ mi)",      f"{s['ebitda']/1000:.0f}" if s.get("ebitda") else "N/D"),
+            ("Rec. Líq. (R$ mi)",   f"{s['net_revenue']/1000:.0f}" if s.get("net_revenue") else "N/D"),
+            ("Lucro Líq. (R$ mi)",  f"{s['net_income']/1000:.0f}" if s.get("net_income") else "N/D"),
         ]
         for i, (lbl, val) in enumerate(items):
             cols[i % 3].metric(lbl, val)
@@ -547,8 +765,8 @@ def _show_screener():
             pl_max  = st.slider("P/L máximo (x)",  0, 50, 20, disabled=disabled)
             dy_min  = st.slider("DY mínimo (%)",    0, 20,  3, disabled=disabled)
         with c2:
-            ev_max   = st.slider("EV/EBITDA máximo (x)", 0, 30, 12, disabled=disabled)
-            mg_min   = st.slider("Margem EBITDA mín. (%)", 0, 50, 10, disabled=disabled)
+            ev_max    = st.slider("EV/EBITDA máximo (x)", 0, 30, 12, disabled=disabled)
+            mg_min    = st.slider("Margem EBITDA mín. (%)", 0, 50, 10, disabled=disabled)
             score_min = st.slider("Score mínimo", 0, 100, 50, disabled=disabled)
         with c3:
             sector_filter = st.selectbox("Setor", ["Todos"], disabled=disabled)
@@ -573,7 +791,6 @@ def _sidebar():
         st.caption("Análise fundamentalista de ações brasileiras")
         st.divider()
 
-        # ── Status da API Key (corrigido: lê st.secrets) ───────
         api_key = api._get_api_key()
         if api_key:
             st.success(f"API Key configurada ({api_key[:8]}…)", icon="🔑")
@@ -585,29 +802,31 @@ def _sidebar():
                 icon="🚨",
             )
 
-        # ── Exibir mensagens flash (persistidas entre reruns) ───
-        # Estas são gravadas ANTES do st.rerun() e lidas no próximo ciclo
+        # ── Mensagens flash ────────────────────────────────────
         if st.session_state.flash_success:
-            st.success(st.session_state.flash_success)
+            _ph = st.empty()
+            _ph.success(st.session_state.flash_success)
             st.session_state.flash_success = ""
+            time.sleep(3)
+            _ph.empty()
         for err in st.session_state.flash_errors:
             st.error(err)
         st.session_state.flash_errors = []
 
-        # ── Painel de debug (mostra log + JSON bruto da última busca) ──
-        if st.session_state.debug_log:
-            with st.expander("🔧 Debug — última operação", expanded=True):
+        # ── Diagnóstico (colapsado por padrão) ────────────────
+        with st.expander("🔧 Diagnóstico", expanded=False):
+            if st.session_state.debug_log:
                 for line in st.session_state.debug_log:
                     st.markdown(f"`{line}`")
-
                 if st.session_state.debug_raw_fund:
                     st.markdown("**JSON completo de /fundamentals/{ticker}:**")
-                    st.json(st.session_state.debug_raw_fund, expanded=True)
-
+                    st.json(st.session_state.debug_raw_fund, expanded=False)
                 if st.button("Limpar log", key="clear_debug"):
                     st.session_state.debug_log = []
                     st.session_state.debug_raw_fund = None
                     st.rerun()
+            else:
+                st.caption("Nenhuma operação registrada.")
 
         st.divider()
 
@@ -622,10 +841,8 @@ def _sidebar():
         if st.button("➕ Adicionar e Buscar", use_container_width=True):
             tickers_raw = tickers_input.replace(",", " ").split()
             if not tickers_raw:
-                # Não chama st.rerun() aqui — o warning aparece normalmente
                 st.warning("Digite ao menos um ticker.")
             else:
-                # Limpa log e mensagens anteriores
                 st.session_state.debug_log = []
                 st.session_state.flash_errors = []
                 st.session_state.flash_success = ""
@@ -649,13 +866,11 @@ def _sidebar():
                         else:
                             adicionados.append(t)
 
-                # ── Salvar mensagens no session_state ANTES do rerun ──
                 if adicionados:
                     st.session_state.flash_success = (
                         f"Adicionado(s) com sucesso: {', '.join(adicionados)}"
                     )
                 st.session_state.flash_errors = erros
-                # rerun → sidebar re-renderiza e exibe as mensagens flash
                 st.rerun()
 
         st.divider()
@@ -696,7 +911,6 @@ def _sidebar():
                      disabled=not st.session_state.acoes):
             with st.spinner("Atualizando todos os tickers…"):
                 erros = _update_all()
-            # Persistir resultado antes do rerun
             st.session_state.flash_errors = erros
             if not erros:
                 st.session_state.flash_success = "Todos os dados atualizados com sucesso!"
@@ -755,7 +969,6 @@ def main():
     _init_state()
     _sidebar()
 
-    # ── Sem dados ──────────────────────────────────────────────
     if not st.session_state.acoes:
         st.markdown("## Bem-vindo ao Analisador Fundamentalista B3")
         st.markdown(
@@ -769,7 +982,6 @@ def main():
         )
         return
 
-    # ── Enriquecer com scores ──────────────────────────────────
     enriched: list[dict] = []
     for ticker, entry in st.session_state.acoes.items():
         try:
@@ -778,13 +990,11 @@ def main():
         except Exception as ex:
             st.warning(f"Erro ao processar {ticker}: {ex}")
 
-    # Ordenar por score (maior primeiro; bancos no final)
     enriched.sort(
         key=lambda x: (x.get("score") is not None, x.get("score") or -1),
         reverse=True,
     )
 
-    # ── Tabs ───────────────────────────────────────────────────
     tab_comp, tab_det, tab_scr = st.tabs(["📊 Comparativo", "🔍 Detalhe", "🔎 Screener"])
 
     # ────────────────────────────────────────────────────────────
@@ -798,11 +1008,8 @@ def main():
         )
 
         display_df, class_df = _build_table(enriched)
-
-        # Usar Ticker como índice para recuperar seleção
         tickers_ordered = display_df["Ticker"].tolist()
 
-        # Remover coluna Ticker do display (já está no índice implícito)
         display_df_show = display_df.set_index("Ticker")
         class_df_show = class_df.set_index("Ticker")
 
@@ -815,20 +1022,20 @@ def main():
             selection_mode="single-row",
             height=min(42 + 35 * len(enriched), 600),
             column_config={
-                "Score":         st.column_config.TextColumn("Score", width="medium"),
-                "Empresa":       st.column_config.TextColumn("Empresa", width="medium"),
-                "Setor":         st.column_config.TextColumn("Setor", width="medium"),
-                "Dív.Líq/EBITDA": st.column_config.TextColumn("Dív/EBITDA", width="small"),
-                "ROE":           st.column_config.TextColumn("ROE", width="small"),
-                "EV/EBITDA":     st.column_config.TextColumn("EV/EBITDA", width="small"),
-                "P/L":           st.column_config.TextColumn("P/L", width="small"),
-                "Mg. EBITDA":    st.column_config.TextColumn("Mg.EBITDA", width="small"),
-                "CAGR Lucro 5a": st.column_config.TextColumn("CAGR Lucro", width="small"),
-                "P/FCF":         st.column_config.TextColumn("P/FCF", width="small"),
-                "Div. Yield":    st.column_config.TextColumn("DY", width="small"),
-                "Liquidez":      st.column_config.TextColumn("Liquidez", width="small"),
-                "CAGR Rec. 5a":  st.column_config.TextColumn("CAGR Rec.", width="small"),
-                "P/VP":          st.column_config.TextColumn("P/VP", width="small"),
+                "Score":           st.column_config.TextColumn("Score", width="medium"),
+                "Empresa":         st.column_config.TextColumn("Empresa", width="medium"),
+                "Setor":           st.column_config.TextColumn("Setor", width="medium"),
+                "Dív.Líq/EBITDA":  st.column_config.TextColumn("Dív/EBITDA", width="small"),
+                "ROE":             st.column_config.TextColumn("ROE", width="small"),
+                "EV/EBITDA":       st.column_config.TextColumn("EV/EBITDA", width="small"),
+                "P/L":             st.column_config.TextColumn("P/L", width="small"),
+                "Mg. EBITDA":      st.column_config.TextColumn("Mg.EBITDA", width="small"),
+                "CAGR Lucro 5a":   st.column_config.TextColumn("CAGR Lucro", width="small"),
+                "P/FCF":           st.column_config.TextColumn("P/FCF", width="small"),
+                "Div. Yield":      st.column_config.TextColumn("DY", width="small"),
+                "Liquidez":        st.column_config.TextColumn("Liquidez", width="small"),
+                "CAGR Rec. 5a":    st.column_config.TextColumn("CAGR Rec.", width="small"),
+                "P/VP":            st.column_config.TextColumn("P/VP", width="small"),
             },
         )
 
@@ -841,19 +1048,62 @@ def main():
                     "Veja o detalhamento na aba **🔍 Detalhe**."
                 )
 
-        # Legenda de cores
-        with st.expander("🎨 Legenda de cores"):
-            cols = st.columns(5)
-            for i, (cls, em) in enumerate(
-                [("Excelente", "🟢"), ("Bom", "🟩"), ("Razoável", "🟡"),
-                 ("Atenção", "🟠"), ("Proibitivo", "🔴")]
-            ):
-                bg = BG_COLORS[cls]
-                cols[i].markdown(
-                    f"<div style='background:{bg};color:#fff;padding:4px 8px;"
-                    f"border-radius:4px;text-align:center'>{em} {cls}</div>",
-                    unsafe_allow_html=True,
-                )
+        # ── Exportar CSV ───────────────────────────────────────
+        col_leg, col_csv = st.columns([4, 1])
+        with col_leg:
+            with st.expander("🎨 Legenda de cores"):
+                cols = st.columns(5)
+                for i, (cls, em) in enumerate(
+                    [("Excelente", "🟢"), ("Bom", "🟩"), ("Razoável", "🟡"),
+                     ("Atenção", "🟠"), ("Proibitivo", "🔴")]
+                ):
+                    bg = BG_COLORS[cls]
+                    cols[i].markdown(
+                        f"<div style='background:{bg};color:#fff;padding:4px 8px;"
+                        f"border-radius:4px;text-align:center'>{em} {cls}</div>",
+                        unsafe_allow_html=True,
+                    )
+        with col_csv:
+            csv_bytes = display_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="⬇ Exportar CSV",
+                data=csv_bytes,
+                file_name="analise_b3.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+        # ── Comparação radar entre ações ───────────────────────
+        st.divider()
+        st.markdown("#### Comparação no Radar")
+        tickers_list = [e["ticker"] for e in enriched]
+        selected_compare = st.multiselect(
+            "Selecione 2 a 4 ações para comparar",
+            tickers_list,
+            max_selections=4,
+            placeholder="Escolha as ações…",
+        )
+
+        if len(selected_compare) >= 2:
+            if st.button("📡 Comparar no Radar", use_container_width=False):
+                st.session_state["radar_compare"] = selected_compare
+        elif len(selected_compare) == 1:
+            st.caption("Selecione ao menos 2 ações para comparar.")
+
+        if st.session_state.get("radar_compare"):
+            compare_tickers = st.session_state["radar_compare"]
+            # Filtrar apenas os que ainda estão na lista
+            compare_tickers = [t for t in compare_tickers if t in tickers_list]
+            if len(compare_tickers) >= 2:
+                stocks_compare = [next(e for e in enriched if e["ticker"] == t) for t in compare_tickers]
+                banks_in = [t for t in compare_tickers
+                            if sc.is_bank(next(e for e in enriched if e["ticker"] == t).get("sector", ""))]
+                if banks_in:
+                    st.caption(f"⚠ {', '.join(banks_in)}: setor bancário — pontuação zero no radar (score não calculado para bancos).")
+                fig_compare = _radar_chart(stocks_compare, compare_tickers)
+                st.plotly_chart(fig_compare, use_container_width=True, config={"displayModeBar": False})
+            else:
+                st.session_state["radar_compare"] = None
 
     # ────────────────────────────────────────────────────────────
     # Tab 2 — Detalhe
@@ -862,7 +1112,6 @@ def main():
         tickers_avail = [e["ticker"] for e in enriched]
         selected = st.session_state.selected_ticker
 
-        # Selectbox para escolher ação
         default_idx = 0
         if selected and selected in tickers_avail:
             default_idx = tickers_avail.index(selected)
