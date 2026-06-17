@@ -995,6 +995,33 @@ def main():
         reverse=True,
     )
 
+    # CSS global: estiliza botões de popover ❓ como círculos azuis
+    st.markdown("""
+<style>
+div[data-testid="stPopover"] button {
+    border: 1.5px solid #4a90d9 !important;
+    border-radius: 50% !important;
+    color: #4a90d9 !important;
+    font-size: 15px !important;
+    min-width: 30px !important;
+    width: 30px !important;
+    height: 30px !important;
+    min-height: 30px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: transparent !important;
+    line-height: 1 !important;
+}
+div[data-testid="stPopover"] button:hover {
+    background: #1565c0 !important;
+    border-color: #1565c0 !important;
+    color: #ffffff !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
     tab_comp, tab_det, tab_scr = st.tabs(["📊 Comparativo", "🔍 Detalhe", "🔎 Screener"])
 
     # ────────────────────────────────────────────────────────────
@@ -1002,6 +1029,16 @@ def main():
     # ────────────────────────────────────────────────────────────
     with tab_comp:
         st.markdown("### Tabela Comparativa")
+
+        # ── Multiselect para radar (acima da tabela) ───────────
+        tickers_list = [e["ticker"] for e in enriched]
+        selected_compare = st.multiselect(
+            "Selecione 2 a 4 ações para comparar no radar:",
+            tickers_list,
+            max_selections=4,
+            placeholder="Escolha as ações…",
+        )
+
         st.caption(
             "Clique em uma linha para ver o detalhamento completo na aba **Detalhe**. "
             "Colunas coloridas por classificação fundamentalista."
@@ -1048,7 +1085,7 @@ def main():
                     "Veja o detalhamento na aba **🔍 Detalhe**."
                 )
 
-        # ── Exportar CSV ───────────────────────────────────────
+        # ── Legenda + CSV ──────────────────────────────────────
         col_leg, col_csv = st.columns([4, 1])
         with col_leg:
             with st.expander("🎨 Legenda de cores"):
@@ -1073,37 +1110,30 @@ def main():
                 use_container_width=True,
             )
 
-        # ── Comparação radar entre ações ───────────────────────
-        st.divider()
-        st.markdown("#### Comparação no Radar")
-        tickers_list = [e["ticker"] for e in enriched]
-        selected_compare = st.multiselect(
-            "Selecione 2 a 4 ações para comparar",
-            tickers_list,
-            max_selections=4,
-            placeholder="Escolha as ações…",
-        )
-
+        # ── Radar comparativo (auto-render quando ≥ 2 selecionadas) ──
         if len(selected_compare) >= 2:
-            if st.button("📡 Comparar no Radar", use_container_width=False):
-                st.session_state["radar_compare"] = selected_compare
+            st.divider()
+            st.markdown("#### Radar Comparativo")
+            stocks_compare = [
+                next(e for e in enriched if e["ticker"] == t)
+                for t in selected_compare
+            ]
+            banks_in = [
+                t for t in selected_compare
+                if sc.is_bank(
+                    next(e for e in enriched if e["ticker"] == t).get("sector", "")
+                )
+            ]
+            if banks_in:
+                st.caption(
+                    f"⚠ {', '.join(banks_in)}: setor bancário — "
+                    "pontuação zero no radar (score não calculado para bancos)."
+                )
+            fig_compare = _radar_chart(stocks_compare, selected_compare)
+            st.plotly_chart(fig_compare, use_container_width=True,
+                            config={"displayModeBar": False})
         elif len(selected_compare) == 1:
-            st.caption("Selecione ao menos 2 ações para comparar.")
-
-        if st.session_state.get("radar_compare"):
-            compare_tickers = st.session_state["radar_compare"]
-            # Filtrar apenas os que ainda estão na lista
-            compare_tickers = [t for t in compare_tickers if t in tickers_list]
-            if len(compare_tickers) >= 2:
-                stocks_compare = [next(e for e in enriched if e["ticker"] == t) for t in compare_tickers]
-                banks_in = [t for t in compare_tickers
-                            if sc.is_bank(next(e for e in enriched if e["ticker"] == t).get("sector", ""))]
-                if banks_in:
-                    st.caption(f"⚠ {', '.join(banks_in)}: setor bancário — pontuação zero no radar (score não calculado para bancos).")
-                fig_compare = _radar_chart(stocks_compare, compare_tickers)
-                st.plotly_chart(fig_compare, use_container_width=True, config={"displayModeBar": False})
-            else:
-                st.session_state["radar_compare"] = None
+            st.caption("Selecione ao menos 2 ações para ver o radar comparativo.")
 
     # ────────────────────────────────────────────────────────────
     # Tab 2 — Detalhe
