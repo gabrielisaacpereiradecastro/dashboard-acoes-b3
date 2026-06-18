@@ -14,6 +14,7 @@ from typing import Optional
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import yfinance as yf
 
 import api
 import score as sc
@@ -734,24 +735,35 @@ def _fetch_macro() -> dict:
     except Exception:
         pass
     try:
-        bova_stats = api.get_stock_stats("BOVA11")
-        if bova_stats:
-            trade_date = bova_stats.get("trade_date", "")
-            if trade_date >= "2024-01-01":
-                result["ibov_price"] = bova_stats.get("close")
-                result["ibov_chg"] = bova_stats.get("daily_change_pct")
-                result["ibov_ytd"] = bova_stats.get("ytd_return_pct")
+        _bvsp = yf.Ticker("BOVA11.SA")
+        _fi = _bvsp.fast_info
+        _ibov_price = _fi.last_price
+        _ibov_prev = _fi.previous_close
+        if _ibov_price and _ibov_prev and _ibov_prev > 0:
+            result["ibov_price"] = round(float(_ibov_price), 2)
+            result["ibov_chg"] = round(float(_ibov_price / _ibov_prev - 1) * 100, 2)
+        _now = datetime.now()
+        _ytd = _bvsp.history(start=f"{_now.year}-01-02", interval="1d")
+        if not _ytd.empty and _ibov_price:
+            _ytd_first = float(_ytd["Close"].iloc[0])
+            if _ytd_first > 0:
+                result["ibov_ytd"] = round((float(_ibov_price) / _ytd_first - 1) * 100, 1)
     except Exception:
         pass
     try:
-        smll_stats = api.get_stock_stats("SMLL11")
-        if smll_stats:
-            trade_date = smll_stats.get("trade_date", "")
-            daily_chg = smll_stats.get("daily_change_pct") or 0
-            if trade_date >= "2024-01-01" and abs(daily_chg) <= 15:
-                result["smll_price"] = smll_stats.get("close")
-                result["smll_chg"] = daily_chg
-                result["smll_ytd"] = smll_stats.get("ytd_return_pct")
+        _smll = yf.Ticker("SMLL11.SA")
+        _fi = _smll.fast_info
+        _smll_price = _fi.last_price
+        _smll_prev = _fi.previous_close
+        if _smll_price and _smll_prev and _smll_prev > 0:
+            result["smll_price"] = round(float(_smll_price), 2)
+            result["smll_chg"] = round(float(_smll_price / _smll_prev - 1) * 100, 2)
+        _now = datetime.now()
+        _ytd = _smll.history(start=f"{_now.year}-01-02", interval="1d")
+        if not _ytd.empty and _smll_price:
+            _ytd_first = float(_ytd["Close"].iloc[0])
+            if _ytd_first > 0:
+                result["smll_ytd"] = round((float(_smll_price) / _ytd_first - 1) * 100, 1)
     except Exception:
         pass
     return result
@@ -1010,7 +1022,7 @@ def _show_lucro_cotacao_chart(ticker: str) -> None:
         ),
         height=280, margin=dict(l=0, r=60, t=40, b=0),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        xaxis=dict(showgrid=False, color="#9e9e9e", type="category"),
         yaxis=dict(title="Lucro (R$ mi)", color="#42a5f5",
                    showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
         yaxis2=dict(title="Cotação (R$)", color="#66bb6a",
@@ -1205,12 +1217,12 @@ def _show_detail(s: dict):
             if payout > 80:
                 st.caption("⚠️ Payout alto (> 80%). Verifique sustentabilidade com FCL.")
         else:
-            st.caption("N/D (requer dados de dividendos — plano Pro)")
+            st.caption("N/D — sem dados de dividendos ou LPA disponíveis para este ticker.")
 
     with st.container():
         st.markdown("#### Governança")
         st.caption(
-            "Segmento de listagem e Tag Along não estão disponíveis no plano gratuito. "
+            "Segmento de listagem e Tag Along não são fornecidos pela API Bolsai. "
             "Consulte o site da B3 ou o Formulário de Referência (CVM)."
         )
 

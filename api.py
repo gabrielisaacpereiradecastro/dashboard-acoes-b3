@@ -226,6 +226,43 @@ def get_all_stock_data(ticker: str) -> dict:
     if ttm_per_share and lpa_val and lpa_val > 0:
         payout = round(ttm_per_share / lpa_val * 100, 1)
 
+    # 6 — DRE (Pro): CAGR de lucro e receita calculado da série histórica
+    # Usa campo direto do /fundamentals se disponível; senão calcula via DRE
+    _cagr_earn: Optional[float] = fund.get("cagr_earnings_5y")
+    _cagr_rev: Optional[float] = fund.get("cagr_revenue_5y")
+    if _cagr_earn is None or _cagr_rev is None:
+        dre = get_financials(t, statement_type="DRE")
+        if dre:
+            _profit: dict = {}
+            _revenue: dict = {}
+            for _s in (dre.get("statements") or []):
+                _yr = (_s.get("reference_date") or "")[:4]
+                _v = _s.get("value")
+                _c = _s.get("account_code", "")
+                if not _yr or _v is None:
+                    continue
+                if _c == "3.11.01" and _yr not in _profit:
+                    _profit[_yr] = _v
+                elif _c == "3.11" and _yr not in _profit:
+                    _profit[_yr] = _v
+                if _c == "3.01" and _yr not in _revenue:
+                    _revenue[_yr] = abs(_v)
+
+            def _calc_cagr(data: dict) -> Optional[float]:
+                yrs = sorted(data.keys())
+                if len(yrs) < 2:
+                    return None
+                start_v, end_v = data[yrs[0]], data[yrs[-1]]
+                n = int(yrs[-1]) - int(yrs[0])
+                if n <= 0 or start_v <= 0 or end_v <= 0:
+                    return None
+                return round(((end_v / start_v) ** (1 / n) - 1) * 100, 1)
+
+            if _cagr_earn is None:
+                _cagr_earn = _calc_cagr(_profit)
+            if _cagr_rev is None:
+                _cagr_rev = _calc_cagr(_revenue)
+
     result.update(
         {
             # JSON bruto de /fundamentals — usado apenas para debug, removido antes de salvar
@@ -250,8 +287,8 @@ def get_all_stock_data(ticker: str) -> dict:
             "ev_ebitda":          fund.get("ev_ebitda"),
             "pl":                 fund.get("pl"),
             "ebitda_margin":      fund.get("ebitda_margin"),
-            "cagr_earnings_5y":   fund.get("cagr_earnings_5y"),
-            "cagr_revenue_5y":    fund.get("cagr_revenue_5y"),
+            "cagr_earnings_5y":   _cagr_earn,
+            "cagr_revenue_5y":    _cagr_rev,
             "p_fcf":              p_fcf,
             "dividend_yield":     dividend_yield_ttm,
             "liquidity":          liquidity_brl,
