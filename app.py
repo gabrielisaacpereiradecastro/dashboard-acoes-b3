@@ -5,6 +5,7 @@ Fonte de dados: API Bolsai (usebolsai.com)
 from __future__ import annotations
 
 import json
+import math
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -703,6 +704,324 @@ def _sector_insight(ind: str, sector: str) -> str:
 
 
 # ────────────────────────────────────────────────────────────────
+# Painel macro — dados macroeconômicos em tempo real (Pro)
+# ────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_macro() -> dict:
+    result: dict = {}
+    try:
+        s = api.get_macro_series("selic")
+        if s and s.get("data"):
+            daily = s["data"][0]["value"]
+            result["selic"] = round(((1 + daily / 100) ** 252 - 1) * 100, 2)
+    except Exception:
+        pass
+    try:
+        ip = api.get_macro_series("ipca")
+        if ip and ip.get("data"):
+            vals = [d["value"] for d in ip["data"][:12]]
+            result["ipca_12m"] = round((math.prod(1 + v / 100 for v in vals) - 1) * 100, 2)
+    except Exception:
+        pass
+    try:
+        usd = api.get_macro_series("usd_brl")
+        if usd and usd.get("data"):
+            pts = usd["data"]
+            result["usd_brl"] = pts[0]["value"]
+            if len(pts) >= 2:
+                result["usd_1d_chg"] = (pts[0]["value"] - pts[1]["value"]) / pts[1]["value"] * 100
+    except Exception:
+        pass
+    try:
+        bova_stats = api.get_stock_stats("BOVA11")
+        bova_fund = api.get_fundamentals("BOVA11")
+        if bova_stats:
+            result["ibov_chg"] = bova_stats.get("daily_change_pct")
+            result["ibov_ytd"] = bova_stats.get("ytd_return_pct")
+        if bova_fund:
+            result["ibov_price"] = bova_fund.get("close_price")
+            result["ibov_pl"] = bova_fund.get("pl")
+    except Exception:
+        pass
+    try:
+        smll_stats = api.get_stock_stats("SMLL11")
+        smll_fund = api.get_fundamentals("SMLL11")
+        if smll_stats:
+            result["smll_chg"] = smll_stats.get("daily_change_pct")
+            result["smll_ytd"] = smll_stats.get("ytd_return_pct")
+        if smll_fund:
+            result["smll_price"] = smll_fund.get("close_price")
+    except Exception:
+        pass
+    return result
+
+
+def _show_macro_panel() -> None:
+    macro = _fetch_macro()
+    col_hdr, col_btn = st.columns([11, 1])
+    with col_hdr:
+        st.markdown("**📈 Contexto de Mercado**")
+    with col_btn:
+        if st.button("🔄", help="Atualizar painel macro", key="macro_refresh"):
+            _fetch_macro.clear()
+            st.rerun()
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+    with c1:
+        st.markdown("**Ibovespa (BOVA11)**")
+        price = macro.get("ibov_price")
+        chg = macro.get("ibov_chg") or 0
+        chg_col = "#4caf50" if chg >= 0 else "#f44336"
+        if price:
+            st.markdown(
+                f"R$ {price:,.2f} "
+                f"<span style='color:{chg_col};font-size:0.85rem'>{chg:+.2f}%</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("Indisponível")
+        pl = macro.get("ibov_pl")
+        if pl:
+            if pl < 10:
+                bg, lbl = "#2e7d32", "Barato"
+            elif pl <= 14:
+                bg, lbl = "#7b5800", "Neutro"
+            else:
+                bg, lbl = "#7f0000", "Caro"
+            st.markdown(
+                f"P/L {pl:.1f}× "
+                f"<span style='background:{bg};color:#fff;padding:1px 5px;"
+                f"border-radius:3px;font-size:0.72rem'>{lbl}</span> "
+                f"<span style='font-size:0.72rem;color:#9e9e9e'>(média histórica ~12×)</span>",
+                unsafe_allow_html=True,
+            )
+
+    with c2:
+        st.markdown("**Small Caps (SMLL11)**")
+        sp = macro.get("smll_price")
+        sc_chg = macro.get("smll_chg") or 0
+        sc_col = "#4caf50" if sc_chg >= 0 else "#f44336"
+        if sp:
+            st.markdown(
+                f"R$ {sp:,.2f} "
+                f"<span style='color:{sc_col};font-size:0.85rem'>{sc_chg:+.2f}%</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("Indisponível")
+
+    with c3:
+        ibov_ytd = macro.get("ibov_ytd")
+        smll_ytd = macro.get("smll_ytd")
+        st.markdown("**Ibov vs Small (YTD)**")
+        if ibov_ytd is not None and smll_ytd is not None:
+            diff = smll_ytd - ibov_ytd
+            if diff > 2:
+                bg_badge, txt_badge = "#1b5e20", "Small Caps ↑"
+            elif diff < -2:
+                bg_badge, txt_badge = "#bf360c", "Ibov ↑"
+            else:
+                bg_badge, txt_badge = "#37474f", "Pareados"
+            st.markdown(
+                f"Ibov: <b>{ibov_ytd:+.1f}%</b> | SMLL: <b>{smll_ytd:+.1f}%</b><br>"
+                f"<span style='background:{bg_badge};color:#fff;padding:1px 6px;"
+                f"border-radius:3px;font-size:0.72rem'>{txt_badge}</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("Indisponível")
+
+    with c4:
+        st.markdown("**USD / BRL**")
+        usd = macro.get("usd_brl")
+        usd_chg = macro.get("usd_1d_chg") or 0
+        usd_col = "#f44336" if usd_chg > 0 else "#4caf50"
+        if usd:
+            st.markdown(
+                f"R$ {usd:.4f} "
+                f"<span style='color:{usd_col};font-size:0.85rem'>{usd_chg:+.2f}%</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("Indisponível")
+
+    with c5:
+        st.markdown("**Selic (a.a.)**")
+        selic = macro.get("selic")
+        if selic:
+            st.markdown(f"**{selic:.2f}%**")
+        else:
+            st.caption("Indisponível")
+
+    with c6:
+        st.markdown("**IPCA 12m**")
+        ipca = macro.get("ipca_12m")
+        selic = macro.get("selic") or 0
+        if ipca:
+            juro_real = ((1 + selic / 100) / (1 + ipca / 100) - 1) * 100
+            st.markdown(f"**{ipca:.2f}%**")
+            st.caption(f"Juro real: {juro_real:.1f}% a.a.")
+        else:
+            st.caption("Indisponível")
+
+    st.divider()
+
+
+# ────────────────────────────────────────────────────────────────
+# Histórico de preços (Pro)
+# ────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_price_history(ticker: str) -> Optional[pd.DataFrame]:
+    data = api.get_stock_history(ticker, limit=1260)
+    if not data or not data.get("prices"):
+        return None
+    df = pd.DataFrame(data["prices"])
+    df["trade_date"] = pd.to_datetime(df["trade_date"])
+    df = df.sort_values("trade_date").reset_index(drop=True)
+    df["ma50"] = df["adjusted_close"].rolling(50, min_periods=1).mean()
+    return df
+
+
+def _show_price_history_chart(s: dict) -> None:
+    ticker = s.get("ticker", "")
+    df = _fetch_price_history(ticker)
+
+    if df is None or df.empty:
+        # Fallback para gráfico de 52 semanas
+        fig = _price_range_chart(s)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.info("Dados de preço indisponíveis.")
+        return
+
+    periods = {"1M": 21, "3M": 63, "6M": 126, "1A": 252, "3A": 756, "5A": 1260}
+    sel = st.radio(
+        "Período:", list(periods.keys()), index=3, horizontal=True,
+        key=f"hist_period_{ticker}",
+    )
+    show_ma = st.checkbox("MM50", value=False, key=f"hist_ma_{ticker}")
+    df_plot = df.tail(periods[sel])
+
+    pct = (df_plot["adjusted_close"].iloc[-1] / df_plot["adjusted_close"].iloc[0] - 1) * 100
+    line_col = "#4caf50" if pct >= 0 else "#f44336"
+    fill_col = "rgba(76,175,80,0.08)" if pct >= 0 else "rgba(244,67,54,0.08)"
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df_plot["trade_date"], y=df_plot["adjusted_close"],
+        mode="lines", name="Preço ajustado",
+        line=dict(color=line_col, width=2),
+        fill="tozeroy", fillcolor=fill_col,
+        hovertemplate="<b>%{x|%d/%m/%Y}</b><br>R$ %{y:.2f}<extra></extra>",
+    ))
+    if show_ma:
+        fig.add_trace(go.Scatter(
+            x=df_plot["trade_date"], y=df_plot["ma50"],
+            mode="lines", name="MM50",
+            line=dict(color="#ff9800", width=1.5, dash="dot"),
+            hovertemplate="MM50: R$ %{y:.2f}<extra></extra>",
+        ))
+    fig.update_layout(
+        height=300, margin=dict(l=0, r=0, t=30, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e"),
+        showlegend=show_ma, legend=dict(bgcolor="rgba(0,0,0,0)"),
+        title=dict(text=f"{ticker} — {sel}: {pct:+.1f}%", font=dict(size=13, color="#e8eaf6")),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+# ────────────────────────────────────────────────────────────────
+# Gráfico Lucro vs Cotação (Pro)
+# ────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_lucro_cotacao(ticker: str) -> Optional[tuple]:
+    fin = api.get_financials(ticker, statement_type="DRE")
+    hist = api.get_stock_history(ticker, limit=1500)
+    if not fin or not hist:
+        return None
+
+    stmts = fin.get("statements", [])
+    lucro_by_year: dict = {}
+    for acc in ("3.11.01", "3.11", "3.09"):
+        for s in stmts:
+            if s["account_code"] == acc and s["value"] is not None:
+                yr = s["reference_date"][:4]
+                if yr not in lucro_by_year:
+                    lucro_by_year[yr] = s["value"] / 1e6  # R$ mi
+        if lucro_by_year:
+            break
+
+    prices = hist.get("prices", [])
+    if not prices:
+        return None
+    df_h = pd.DataFrame(prices)
+    df_h["trade_date"] = pd.to_datetime(df_h["trade_date"])
+    df_h = df_h.sort_values("trade_date")
+
+    price_by_year: dict = {}
+    now_year = datetime.now().year
+    for yr in range(now_year - 6, now_year + 1):
+        yr_data = df_h[df_h["trade_date"].dt.year == yr]
+        if not yr_data.empty:
+            price_by_year[str(yr)] = yr_data.iloc[-1]["adjusted_close"]
+
+    common = sorted(set(lucro_by_year) & set(price_by_year))
+    if len(common) < 2:
+        return None
+    years = common[-5:]
+    return years, [lucro_by_year[y] for y in years], [price_by_year[y] for y in years]
+
+
+def _show_lucro_cotacao_chart(ticker: str) -> None:
+    data = _fetch_lucro_cotacao(ticker)
+    if not data:
+        return
+    years, lucros, cotacoes = data
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=years, y=lucros, mode="lines+markers", name="Lucro Líquido (R$ mi)",
+        line=dict(color="#42a5f5", width=2),
+        marker=dict(size=7),
+        hovertemplate="<b>%{x}</b><br>Lucro: R$ %{y:.0f}M<extra></extra>",
+        yaxis="y1",
+    ))
+    fig.add_trace(go.Scatter(
+        x=years, y=cotacoes, mode="lines+markers", name="Cotação (R$)",
+        line=dict(color="#66bb6a", width=2),
+        marker=dict(size=7),
+        hovertemplate="<b>%{x}</b><br>Cotação: R$ %{y:.2f}<extra></extra>",
+        yaxis="y2",
+    ))
+    fig.update_layout(
+        title=dict(
+            text="Lucro vs Cotação — convergência de longo prazo",
+            font=dict(size=13, color="#e8eaf6"),
+        ),
+        height=280, margin=dict(l=0, r=60, t=40, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        yaxis=dict(title="Lucro (R$ mi)", color="#42a5f5",
+                   showgrid=True, gridcolor="rgba(255,255,255,0.05)"),
+        yaxis2=dict(title="Cotação (R$)", color="#66bb6a",
+                    overlaying="y", side="right", showgrid=False),
+        legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", y=-0.15),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.caption(
+        "Quando cotação cresce mais que lucro por anos seguidos, o valuation se torna mais exigente. "
+        "Convergência indica fundamentos sólidos sustentando a valorização."
+    )
+
+
+# ────────────────────────────────────────────────────────────────
 # Visão de detalhe de uma ação
 # ────────────────────────────────────────────────────────────────
 
@@ -764,16 +1083,8 @@ def _show_detail(s: dict):
 
     st.divider()
 
-    # ── Gráfico de preço (52 semanas) ──────────────────────────
-    fig_price = _price_range_chart(s)
-    if fig_price:
-        st.plotly_chart(fig_price, use_container_width=True, config={"displayModeBar": False})
-        st.caption(
-            "📌 Histórico de preços detalhado (1M/3M/6M/1A) requer plano Pro da Bolsai "
-            "(`/stocks/{ticker}/history`). O gráfico acima usa dados de 52 semanas do plano Free."
-        )
-    else:
-        st.info("Dados de intervalo 52 semanas indisponíveis para esta ação.")
+    # ── Gráfico de preço histórico ──────────────────────────────
+    _show_price_history_chart(s)
 
     # ── Indicadores com score ───────────────────────────────────
     st.divider()
@@ -832,6 +1143,13 @@ def _show_detail(s: dict):
         st.caption("Pontuação (0–100) nos 6 indicadores de maior peso.")
         fig_radar = _radar_chart([s], [s.get("ticker", "")])
         st.plotly_chart(fig_radar, use_container_width=True, config={"displayModeBar": False})
+
+    # ── Lucro vs Cotação ────────────────────────────────────────
+    _lucro_data = _fetch_lucro_cotacao(s.get("ticker", ""))
+    if _lucro_data:
+        st.divider()
+        st.subheader("Lucro vs Cotação")
+        _show_lucro_cotacao_chart(s.get("ticker", ""))
 
     # ── Indicadores informativos ────────────────────────────────
     st.divider()
@@ -1012,36 +1330,100 @@ def _comparison_table(selected_tickers: list[str], stocks: list[dict]) -> None:
 # ────────────────────────────────────────────────────────────────
 
 def _show_screener():
-    st.markdown("## 🔎 Screener")
-    st.info(
-        "O Screener filtra todas as ~264 ações da B3 em tempo real usando o "
-        "endpoint `/screener` da Bolsai. Este endpoint requer o **plano Pro** "
-        "(R$ 29/mês). Os filtros abaixo estão preparados — ative-os após o upgrade."
-    )
-
-    disabled = True
+    st.markdown("## 🔎 Screener — B3 Completo")
+    st.caption("Filtra todas as empresas listadas na B3 em tempo real via API Bolsai Pro.")
 
     with st.form("screener_form"):
         c1, c2, c3 = st.columns(3)
         with c1:
-            roe_min = st.slider("ROE mínimo (%)", 0, 50, 10, disabled=disabled)
-            pl_max  = st.slider("P/L máximo (x)",  0, 50, 20, disabled=disabled)
-            dy_min  = st.slider("DY mínimo (%)",    0, 20,  3, disabled=disabled)
+            roe_min = st.slider("ROE mínimo (%)", 0, 50, 10)
+            pl_max  = st.slider("P/L máximo (x)",  1, 60, 25)
+            nd_max  = st.slider("Dív/EBITDA máximo (x)", 0, 10, 3)
         with c2:
-            ev_max    = st.slider("EV/EBITDA máximo (x)", 0, 30, 12, disabled=disabled)
-            mg_min    = st.slider("Margem EBITDA mín. (%)", 0, 50, 10, disabled=disabled)
-            score_min = st.slider("Score mínimo", 0, 100, 50, disabled=disabled)
+            mg_min  = st.slider("Mg. EBITDA mínima (%)", 0, 60, 10)
+            ev_max  = st.slider("EV/EBITDA máximo (x)", 1, 30, 15)
+            score_min = st.slider("Score mínimo (calculado)", 0, 100, 0)
         with c3:
-            sector_filter = st.selectbox("Setor", ["Todos"], disabled=disabled)
+            st.caption("Aplica filtros fundamentalistas em todas as ações da B3. "
+                       "Máximo 20 resultados por busca.")
+        submitted = st.form_submit_button("🔍 Buscar na B3", use_container_width=True)
 
-        submitted = st.form_submit_button(
-            "🔍 Buscar na B3",
-            disabled=True,
-            help="Disponível no plano Pro da Bolsai",
+    if not submitted:
+        return
+
+    with st.spinner("Buscando ações na B3…"):
+        result = api.get_screener(
+            limit=20,
+            roe_min=roe_min if roe_min > 0 else None,
+            pl_max=pl_max if pl_max < 60 else None,
+            net_debt_ebitda_max=nd_max if nd_max < 10 else None,
+            ebitda_margin_min=mg_min if mg_min > 0 else None,
+            ev_ebitda_max=ev_max if ev_max < 30 else None,
         )
 
-    if submitted:
-        st.warning("Endpoint disponível apenas no plano Pro.")
+    if not result or not result.get("data"):
+        st.warning("Nenhuma ação encontrada com esses filtros.")
+        return
+
+    total = result.get("total", 0)
+
+    # Converte resultado do screener para formato do app e calcula score
+    enriched_scr: list[dict] = []
+    for raw in result["data"]:
+        t_remap = SECTOR_REMAP.get(raw.get("ticker", ""), raw.get("sector", ""))
+        stock = {
+            "ticker":           raw.get("ticker", ""),
+            "trade_name":       raw.get("corporate_name", ""),
+            "corporate_name":   raw.get("corporate_name", ""),
+            "sector":           t_remap,
+            "close_price":      raw.get("close_price"),
+            "daily_change_pct": None,
+            "reference_date":   raw.get("reference_date"),
+            "net_debt_ebitda":  raw.get("net_debt_ebitda"),
+            "roe":              raw.get("roe"),
+            "ev_ebitda":        raw.get("ev_ebitda"),
+            "pl":               raw.get("pl"),
+            "ebitda_margin":    raw.get("ebitda_margin"),
+            "cagr_earnings_5y": raw.get("cagr_earnings_5y"),
+            "cagr_revenue_5y":  raw.get("cagr_revenue_5y"),
+            "p_fcf":            None,
+            "dividend_yield":   raw.get("dividend_yield"),
+            "liquidity":        None,
+            "pvp":              raw.get("pvp"),
+            "net_margin":       raw.get("net_margin"),
+        }
+        scr_score, scr_label, scr_bd = sc.calculate_score(stock)
+        if score_min == 0 or (scr_score is not None and scr_score >= score_min):
+            enriched_scr.append({**stock, "score": scr_score, "score_label": scr_label, "breakdown": scr_bd})
+
+    st.info(
+        f"**{total}** ações encontradas na B3 com esses critérios. "
+        f"Exibindo {len(enriched_scr)} com score ≥ {score_min}."
+    )
+
+    if not enriched_scr:
+        return
+
+    display_df, class_df = _build_table(enriched_scr)
+    styled = _apply_styles(display_df.set_index("Ticker"), class_df.set_index("Ticker"))
+    st.dataframe(styled, use_container_width=True, height=min(42 + 35 * len(enriched_scr), 420))
+
+    col_add, _ = st.columns([1, 3])
+    with col_add:
+        if st.button("➕ Adicionar todas à lista", use_container_width=True, key="scr_add_all"):
+            added, erros = [], []
+            with st.spinner("Buscando dados completos…"):
+                for e in enriched_scr:
+                    t = e["ticker"]
+                    if t not in st.session_state.acoes:
+                        err = _fetch_ticker(t)
+                        if err:
+                            erros.append(f"{t}: {err}")
+                        else:
+                            added.append(t)
+            st.session_state.flash_success = f"Adicionadas: {', '.join(added)}" if added else ""
+            st.session_state.flash_errors = erros
+            st.rerun()
 
 
 # ────────────────────────────────────────────────────────────────
@@ -1135,6 +1517,49 @@ def _sidebar():
                     )
                 st.session_state.flash_errors = erros
                 st.rerun()
+
+        # ── Busca por setor ────────────────────────────────────
+        with st.expander("🏭 Buscar por Setor", expanded=False):
+            sectors_list = api.get_sectors()
+            sector_opts = ["— Selecione —"] + sorted(sectors_list)
+            chosen_sector = st.selectbox(
+                "Setor", sector_opts, key="sidebar_sector_sel",
+                label_visibility="collapsed",
+            )
+            if chosen_sector != "— Selecione —":
+                with st.spinner("Buscando empresas…"):
+                    sec_result = api.get_companies_by_sector(chosen_sector, limit=20)
+                if sec_result and sec_result.get("data"):
+                    cos = sec_result["data"]
+                    st.caption(f"{sec_result.get('total', len(cos))} empresas — mostrando {len(cos)}")
+                    to_add: list[str] = []
+                    for co in cos:
+                        tk = co.get("ticker_primary", "")
+                        nm = co.get("trade_name") or co.get("corporate_name", "")
+                        already = tk in st.session_state.acoes
+                        checked = st.checkbox(
+                            f"{tk} — {nm[:28]}",
+                            value=already,
+                            disabled=already,
+                            key=f"sec_cb_{tk}",
+                        )
+                        if checked and not already:
+                            to_add.append(tk)
+                    if to_add:
+                        if st.button("➕ Adicionar selecionadas", use_container_width=True, key="sec_add_btn"):
+                            added2, erros2 = [], []
+                            with st.spinner("Buscando dados…"):
+                                for tk in to_add:
+                                    err2 = _fetch_ticker(tk)
+                                    if err2:
+                                        erros2.append(f"{tk}: {err2}")
+                                    else:
+                                        added2.append(tk)
+                            st.session_state.flash_success = f"Adicionadas: {', '.join(added2)}" if added2 else ""
+                            st.session_state.flash_errors = erros2
+                            st.rerun()
+                else:
+                    st.caption("Nenhuma empresa encontrada para este setor.")
 
         st.divider()
 
@@ -1267,6 +1692,9 @@ footer {visibility: hidden;}
         key=lambda x: (x.get("score") is not None, x.get("score") or -1),
         reverse=True,
     )
+
+    # ── Painel macro ──────────────────────────────────────────
+    _show_macro_panel()
 
     # CSS global: popover ℹ️ sem container visual, tamanho legível
     st.markdown("""

@@ -111,10 +111,53 @@ def check_api_usage() -> Optional[dict]:
 
 
 # ────────────────────────────────────────────────────────────────
-# Função principal — busca todos os dados de um ticker (3 chamadas)
-# Todos os endpoints usados são gratuitos no plano Free da Bolsai.
-# Endpoints PRO NÃO utilizados: /dividends, /stocks/.../history,
-# /fundamentals/.../history, /financials, /screener, /macro.
+# Endpoints Pro
+# ────────────────────────────────────────────────────────────────
+
+def get_dividends(ticker: str) -> Optional[dict]:
+    """GET /dividends/{ticker} — Pro plan."""
+    return _get(f"dividends/{ticker.upper()}")
+
+
+def get_financials(ticker: str, statement_type: Optional[str] = None) -> Optional[dict]:
+    """GET /financials/{ticker} — Pro plan."""
+    params: dict = {}
+    if statement_type:
+        params["statement_type"] = statement_type
+    return _get(f"financials/{ticker.upper()}", params=params or None)
+
+
+def get_stock_history(ticker: str, limit: int = 1260) -> Optional[dict]:
+    """GET /stocks/{ticker}/history — Pro plan. Default 1260 ≈ 5 anos."""
+    return _get(f"stocks/{ticker.upper()}/history", params={"limit": limit})
+
+
+def get_macro_series(series: str) -> Optional[dict]:
+    """GET /macro/{series} — Pro plan.
+    Series: selic, selic_target, ipca, cdi, usd_brl, eur_brl
+    Selic: taxa diária em % (0.0534 ≈ 14.5% a.a. — annualizar com (1+v/100)^252-1).
+    IPCA: valor mensal em % (0.58 = 0.58% no mês).
+    """
+    return _get(f"macro/{series}")
+
+
+def get_screener(limit: int = 20, **filters) -> Optional[dict]:
+    """GET /screener — Pro plan.
+    Filtros aceitos: roe_min, pl_max, net_debt_ebitda_max, ebitda_margin_min, ev_ebitda_max.
+    """
+    params: dict = {"limit": limit}
+    params.update({k: v for k, v in filters.items() if v is not None})
+    return _get("screener", params=params)
+
+
+def get_companies_by_sector(sector: str, limit: int = 20) -> Optional[dict]:
+    """GET /companies?sector= — lista empresas por setor."""
+    return _get("companies", params={"sector": sector, "limit": limit})
+
+
+# ────────────────────────────────────────────────────────────────
+# Função principal — busca todos os dados de um ticker (5 chamadas Pro)
+# Plano Pro desbloqueia: /dividends, /financials (DFC_MI para P/FCF)
 # ────────────────────────────────────────────────────────────────
 
 def get_all_stock_data(ticker: str) -> dict:
@@ -152,10 +195,36 @@ def get_all_stock_data(ticker: str) -> dict:
     if avg_vol_shares and close_price:
         liquidity_brl = avg_vol_shares * close_price
 
-    # dividend_yield ausente em /fundamentals (plano Free) → confirmado inspecionando
-    # JSON bruto de múltiplos tickers. /dividends é PRO. Sem DPS TTM, payout
-    # também não pode ser calculado.
+    # 4 — Dividendos (Pro): DY TTM e dividendo por ação TTM
+    div = get_dividends(t)
+    dividend_yield_ttm: Optional[float] = None
+    ttm_per_share: Optional[float] = None
+    if div:
+        dividend_yield_ttm = div.get("dividend_yield_ttm")
+        ttm_per_share = div.get("ttm_per_share")
+
+    # 5 — DFC (Pro): P/FCF via Caixa Líquido Operacional e Capex
+    p_fcf: Optional[float] = None
+    fin = get_financials(t, statement_type="DFC_MI")
+    if fin:
+        stmts = fin.get("statements", [])
+        dates = sorted({s["reference_date"] for s in stmts}, reverse=True)
+        if dates:
+            latest = {s["account_code"]: s["value"] for s in stmts
+                      if s["reference_date"] == dates[0] and s["value"] is not None}
+            fco = latest.get("6.01")
+            capex = (latest.get("6.02.02") or 0) + (latest.get("6.02.03") or 0)
+            if fco is not None:
+                fcl_k = fco + capex  # valores negativos de capex já deduzem
+                mcap = fund.get("market_cap")
+                if fcl_k > 0 and mcap:
+                    p_fcf = mcap / (fcl_k * 1000)
+
+    # Payout: dividendo por ação TTM / LPA (sem precisar de net_income em unidade)
+    lpa_val = fund.get("lpa")
     payout: Optional[float] = None
+    if ttm_per_share and lpa_val and lpa_val > 0:
+        payout = round(ttm_per_share / lpa_val * 100, 1)
 
     result.update(
         {
@@ -183,12 +252,12 @@ def get_all_stock_data(ticker: str) -> dict:
             "ebitda_margin":      fund.get("ebitda_margin"),
             "cagr_earnings_5y":   fund.get("cagr_earnings_5y"),
             "cagr_revenue_5y":    fund.get("cagr_revenue_5y"),
-            "p_fcf":              None,          # PRO: requer /financials
-            "dividend_yield":     None,          # ausente em /fundamentals (plano Free)
+            "p_fcf":              p_fcf,
+            "dividend_yield":     dividend_yield_ttm,
             "liquidity":          liquidity_brl,
             # ── Indicadores informativos (sem score) ───────────
             "pvp":          fund.get("pvp"),
-            "payout":       None,                # indisponível sem DY (plano Free)
+            "payout":       payout,
             "net_margin":   fund.get("net_margin"),
             "gross_margin": fund.get("gross_margin"),
             "ebit_margin":  fund.get("ebit_margin"),
