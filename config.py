@@ -90,18 +90,31 @@ RETAIL_KEYWORDS = [
 
 # Remapeamento manual de setor por ticker (corrige classificações incorretas da B3)
 SECTOR_REMAP: dict[str, str] = {
+    # Saúde
     "SMFT3": "Saúde e Bem-Estar",
-    "SBFG3": "Varejo Esportivo",
     "PGMN3": "Farmácias e Drogarias",
     "DEXP3": "Farmácias e Drogarias",
     "RADL3": "Farmácias e Drogarias",
     "PNVL3": "Farmácias e Drogarias",
+    "SBFG3": "Varejo Esportivo",
     "FLRY3": "Saúde - Diagnósticos",
     "DASA3": "Saúde - Diagnósticos",
     "HAPV3": "Saúde - Planos e Hospitais",
+    # Metalurgia
     "GGBR4": "Metalurgia e Siderurgia",
     "CSNA3": "Metalurgia e Siderurgia",
     "USIM5": "Metalurgia e Siderurgia",
+    # Shoppings
+    "ALLOS3": "Shoppings e Centros Comerciais",
+    "MULT3":  "Shoppings e Centros Comerciais",
+    "IGTI11": "Shoppings e Centros Comerciais",
+    "BRML3":  "Shoppings e Centros Comerciais",
+    # Indústria
+    "WEGE3": "Indústria - Máquinas e Equipamentos",
+    # Locação de veículos
+    "RENT3": "Locação de Veículos",
+    "MOVI3": "Locação de Veículos",
+    "LCAM3": "Locação de Veículos",
 }
 
 # ────────────────────────────────────────────────────────────────

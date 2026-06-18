@@ -18,7 +18,7 @@ import api
 import score as sc
 from config import (
     BG_COLORS, COLOR_EMOJI, INDICATOR_LABELS, INDICATOR_WEIGHTS,
-    SCORE_COLORS,
+    SCORE_COLORS, SECTOR_REMAP,
 )
 
 # ────────────────────────────────────────────────────────────────
@@ -155,9 +155,14 @@ INDICATOR_INFO: dict[str, dict[str, str]] = {
 def load_data() -> dict:
     if DATA_FILE.exists():
         try:
-            return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+            data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
         except Exception:
             return {}
+        # Aplica SECTOR_REMAP nas ações já salvas para corrigir setores sem rebuscar
+        for ticker, entry in data.items():
+            if ticker in SECTOR_REMAP and isinstance(entry.get("data"), dict):
+                entry["data"]["sector"] = SECTOR_REMAP[ticker]
+        return data
     return {}
 
 
@@ -1224,6 +1229,16 @@ def _sidebar():
 # ────────────────────────────────────────────────────────────────
 
 def main():
+    st.markdown("""
+<style>
+#MainMenu {visibility: hidden;}
+header {visibility: hidden;}
+.stDeployButton {display: none;}
+[data-testid="stToolbar"] {display: none;}
+[data-testid="stDecoration"] {display: none;}
+footer {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
     _init_state()
     _sidebar()
 
