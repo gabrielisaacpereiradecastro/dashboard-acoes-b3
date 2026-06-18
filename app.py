@@ -545,53 +545,86 @@ def _radar_chart(stocks_data: list[dict], names: list[str]) -> go.Figure:
 
 _SECTOR_INSIGHTS: dict[str, dict[str, str]] = {
     "net_debt_ebitda": {
-        "bank":    "Bancos não usam este indicador — a dívida é o produto deles. Avalie pelo Índice de Basileia.",
-        "util":    "Empresas de energia e saneamento têm receita regulada e previsível, o que suporta mais alavancagem. Até 3,5x é considerado confortável no setor.",
-        "retail":  "Varejistas usam capital de giro intensivamente. Dívida líquida negativa é comum e indica boa gestão de caixa.",
-        "civil":   "Construtoras costumam ter dívida baixa pois financiam obras com recebíveis. Dív/EBITDA acima de 2x merece atenção extra no setor.",
-        "health":  "Empresas de saúde frequentemente se alavancam para aquisições. Até 2,5x é aceitável se o crescimento justificar.",
+        "bank":    "Não aplicável a bancos e financeiras — a dívida é o produto deles. Avalie pelo Índice de Basileia (mínimo regulatório 11%, confortável acima de 14%).",
+        "util":    "Empresas de energia e transmissão têm receita regulada e contratos de longo prazo, o que suporta mais alavancagem. Dív/EBITDA até 3,5x é confortável no setor.",
+        "retail":  "Varejistas usam capital de giro intensivamente. Dívida líquida negativa é comum e indica boa gestão de caixa operacional.",
+        "civil":   "Construtoras costumam ter dívida baixa pois financiam obras com recebíveis de clientes. Dív/EBITDA acima de 2x merece atenção extra no setor.",
+        "health":  "Empresas de saúde frequentemente se alavancam para aquisições de clínicas e hospitais. Até 2,5x é aceitável se o crescimento e margens justificarem.",
+        "edu":     "Empresas de educação com modelo de mensalidades têm fluxo de caixa previsível. Dív/EBITDA até 2x é confortável; acima de 3x merece atenção dado o risco regulatório do setor.",
+        "steel":   "Setor intensivo em capital com ciclos de commodity. Dívida deve ser analisada no contexto do ciclo — no pico parece baixa, no fundo parece alta.",
+        "agro":    "Agronegócio tem sazonalidade intensa e dependência de commodity. Dívida deve ser analisada no contexto do ciclo agrícola e câmbio.",
+        "textile": "Empresas de moda e vestuário têm sazonalidade intensa. Dívida até 2x é confortável; acima disso verificar gestão de estoques e ciclo de caixa.",
         "default": "Dívida líquida negativa significa mais caixa que dívida — situação excelente em qualquer setor.",
     },
     "roe": {
-        "bank":    "Bancos bem geridos no Brasil tipicamente têm ROE entre 18–25%. Abaixo de 15% indica ineficiência para o setor.",
-        "util":    "Setor regulado naturalmente tem ROE mais baixo (12–18%) mas previsível. ROE acima de 20% é excelente para o setor.",
-        "retail":  "Varejistas eficientes costumam ter ROE alto (20–40%) por usar muito capital de terceiros. Cruzar sempre com endividamento.",
-        "civil":   "Construtoras bem geridas têm ROE entre 15–25%. Acima de 30% pode indicar alavancagem excessiva.",
+        "bank":    "Bancos bem geridos no Brasil têm ROE entre 18–25%. Abaixo de 15% indica ineficiência. Itaú e Bradesco historicamente mantêm acima de 20%.",
+        "util":    "Setor regulado naturalmente tem ROE entre 12–20% pela previsibilidade da receita. ROE acima de 20% é excelente para o setor.",
+        "retail":  "Varejistas eficientes costumam ter ROE alto (20–40%) por usar muito capital de terceiros. Cruzar sempre com endividamento para verificar sustentabilidade.",
+        "civil":   "Construtoras bem geridas têm ROE entre 15–25%. Acima de 30% pode indicar alavancagem excessiva ou resultado não-recorrente.",
+        "health":  "Hospitais e operadoras bem geridos têm ROE entre 15–25%. Operadoras de planos de saúde podem ter ROE menor mas mais previsível.",
+        "edu":     "Educação bem gerida tem ROE entre 15–30%. Empresas com grande base de alunos e baixo churn costumam manter ROE alto de forma consistente.",
+        "steel":   "ROE de siderúrgicas é muito cíclico — pode variar de negativo a 30%+ ao longo do ciclo. Preferir média de 5–7 anos ao valor pontual.",
+        "agro":    "ROE de empresas agrícolas varia muito com preço de commodities e câmbio. Média de 5 anos é mais representativa que o valor pontual.",
+        "textile": "Marcas fortes de vestuário com ROE acima de 20% indicam poder de precificação e fidelização. Abaixo de 12% sugere commoditização ou gestão ineficiente.",
         "default": "ROE consistentemente acima de 15% por vários anos é o principal sinal de qualidade de um negócio.",
     },
     "ev_ebitda": {
-        "bank":    "Indicador não aplicável a bancos — estrutura de capital é o core do negócio.",
-        "util":    "Empresas reguladas tipicamente negociam entre 8–12x EV/EBITDA pela previsibilidade da receita. Abaixo de 8x é raro e pode ser oportunidade.",
+        "bank":    "Não aplicável a bancos — use P/VP como múltiplo principal. Bancos de qualidade negociam P/VP entre 1,5–2,5x.",
+        "util":    "Utilities brasileiras tipicamente negociam entre 7–12x pela previsibilidade do fluxo de caixa. Abaixo de 7x pode ser oportunidade rara.",
         "retail":  "Varejistas eficientes negociam entre 5–10x. Acima de 12x o mercado precifica crescimento que pode não se materializar.",
-        "civil":   "Construtoras com bom landbank e execução costumam negociar entre 4–8x.",
-        "health":  "Setor de saúde no Brasil historicamente negocia premium (10–16x) pela resiliência da demanda.",
+        "civil":   "Construtoras com bom landbank e execução costumam negociar entre 4–8x. O ciclo do setor impacta muito os múltiplos.",
+        "health":  "Saúde no Brasil historicamente negocia premium (10–16x) pela resiliência da demanda e consolidação do setor.",
+        "edu":     "Setor educacional no Brasil negocia entre 4–10x. Empresas com crescimento de matrículas acima de 10% ao ano podem justificar múltiplos maiores.",
+        "steel":   "Múltiplos de commodities são altamente cíclicos. EV/EBITDA abaixo de 4x no fundo do ciclo frequentemente é oportunidade; acima de 8x no pico é sinal de cautela.",
+        "agro":    "Empresas de agronegócio negociam entre 4–8x em ciclos normais. Muito sensíveis ao câmbio e preço internacional das commodities.",
         "default": "EV/EBITDA abaixo de 6x com ROE alto é combinação rara e valiosa no mercado brasileiro.",
     },
     "ebitda_margin": {
-        "util":    "Empresas reguladas devem ter Margem EBITDA acima de 35%. Abaixo disso indica ineficiência operacional no setor.",
-        "retail":  "Varejo tem margens estruturalmente menores (6–15%). Comparar sempre com pares do setor, não com empresas de outros setores.",
-        "civil":   "Margens entre 15–25% são típicas para construtoras. Acima de 25% indica excelência operacional ou mix de produtos premium.",
-        "health":  "Hospitais e clínicas costumam ter 15–25%. Operadoras de planos têm margens menores mas mais previsíveis.",
+        "util":    "Transmissoras e distribuidoras bem operadas devem ter Margem EBITDA acima de 35%. Abaixo disso indica ineficiência operacional ou pressão regulatória.",
+        "retail":  "Varejo tem margens estruturalmente menores (6–15%). Comparar sempre com pares do setor, não com empresas de outros segmentos.",
+        "civil":   "Margens entre 15–25% são típicas. Acima de 25% indica eficiência operacional acima da média ou mix de produtos premium (alto padrão).",
+        "health":  "Hospitais e clínicas costumam ter 15–25%. Operadoras de planos têm margens menores mas mais previsíveis. Farmácias têm margens mais baixas ainda (8–15%).",
+        "edu":     "Faculdades presenciais têm margem entre 20–35%. EAD pode ter margens acima de 40% pela escalabilidade do modelo.",
+        "steel":   "Siderúrgicas eficientes têm Margem EBITDA entre 15–30% no ciclo normal. Margens acima de 30% geralmente ocorrem no pico e não são sustentáveis.",
+        "agro":    "Processadoras de alimentos têm margens entre 10–20%. Produtores agrícolas puros podem ter margens maiores mas com alta volatilidade.",
+        "textile": "Empresas de moda com marca forte têm margens entre 15–25%. Empresas mais commoditizadas ficam entre 8–15%.",
         "tech":    "Empresas de software bem posicionadas têm margens acima de 30%. Abaixo de 20% indica concorrência intensa ou fase de investimento.",
         "default": "Margem EBITDA estável ou crescente ao longo dos anos é mais importante que o valor absoluto isolado.",
     },
     "pl": {
-        "bank":    "Bancos brasileiros de qualidade tipicamente negociam entre 8–12x P/L. Acima de 15x indica crescimento premium precificado.",
-        "util":    "Empresas reguladas costumam negociar entre 10–16x pela previsibilidade. Abaixo de 10x pode ser oportunidade.",
-        "retail":  "Varejistas crescendo rapidamente podem justificar P/L entre 15–25x. Acima disso o risco de execução aumenta muito.",
-        "civil":   "Construtoras ciclicamente negociam entre 5–12x. P/L abaixo de 8x com ROE alto frequentemente é oportunidade.",
+        "bank":    "Bancos brasileiros de qualidade negociam entre 8–12x P/L. Acima de 15x indica crescimento premium precificado. Abaixo de 7x pode indicar problema de qualidade de ativos.",
+        "util":    "Utilities costumam negociar entre 10–16x P/L pela estabilidade dos dividendos. São comparáveis a títulos de renda fixa de longo prazo.",
+        "retail":  "Varejistas crescendo rapidamente podem justificar P/L entre 15–25x. Acima disso o risco de execução e competição aumenta muito.",
+        "civil":   "Construtoras ciclicamente negociam entre 5–12x. P/L abaixo de 8x com ROE alto frequentemente representa oportunidade no setor.",
+        "health":  "Setor defensivo que justifica P/L entre 15–25x pela resiliência. Abaixo de 12x pode ser oportunidade se os fundamentos operacionais estiverem sólidos.",
+        "edu":     "P/L muito baixo em educação pode refletir resultado não-recorrente ou reconhecimento antecipado de receita. Verificar se o EBITDA confirma a rentabilidade.",
+        "steel":   "P/L de empresas cíclicas é enganoso — no pico do ciclo parece alto e no fundo parece baixo. Preferir EV/EBITDA normalizado.",
+        "agro":    "Assim como siderurgia, P/L de agronegócio é enganoso no ciclo. Preferir análise por EV/EBITDA normalizado e geração de caixa.",
+        "textile": "Setor cíclico com sazonalidade — analisar resultados anualizados, não trimestrais isolados.",
         "default": "P/L deve ser analisado junto com a taxa de crescimento. Uma empresa crescendo 20% ao ano com P/L de 20x pode ser mais barata que uma estagnada com P/L de 10x.",
     },
     "cagr_earnings_5y": {
+        "bank":    "Crescimento de carteira de crédito de 10–20% ao ano é saudável. Crescimento muito acima disso pode indicar deterioração da qualidade do crédito.",
         "util":    "Setor regulado cresce mais lentamente (5–10% ao ano) mas com altíssima previsibilidade. Crescimento acima de 12% é excepcional.",
         "retail":  "Varejistas em expansão de lojas frequentemente crescem lucro 15–25% ao ano. Verificar se crescimento é orgânico ou por aquisições.",
-        "civil":   "Crescimento de construtoras é muito cíclico — um CAGR positivo de 5 anos é mais significativo que em setores mais estáveis.",
+        "civil":   "Crescimento de construtoras é muito cíclico — um CAGR positivo de 5 anos é mais significativo que em setores mais estáveis. Verificar lançamentos e VSO.",
+        "health":  "Crescimento de 10–20% ao ano é viável dado o envelhecimento da população e subpenetração de planos de saúde no Brasil.",
+        "edu":     "Crescimento em educação é influenciado por expansão de matrículas e aquisições. Verificar crescimento orgânico separado de M&A.",
+        "steel":   "CAGR de receita em commodities é fortemente influenciado pelo preço da matéria-prima. Focar em crescimento de volume e eficiência de custo.",
+        "agro":    "Crescimento de receita fortemente influenciado por preço de commodity e câmbio. Focar em crescimento de volume e expansão de área plantada.",
+        "textile": "Crescimento sustentável vem de expansão de canais (digital + físico) e fortalecimento de marca. Verificar crescimento de mesmas lojas (SSS).",
         "default": "CAGR de lucro consistentemente acima da inflação (~5%) é o mínimo para preservação real de valor.",
     },
     "cagr_revenue_5y": {
+        "bank":    "Crescimento de carteira de crédito de 10–20% ao ano é saudável. Crescimento muito acima disso pode indicar deterioração da qualidade do crédito.",
         "util":    "Setor regulado cresce mais lentamente (5–10% ao ano) mas com altíssima previsibilidade. Crescimento acima de 12% é excepcional.",
-        "retail":  "Varejistas em expansão de lojas frequentemente crescem receita 15–25% ao ano. Verificar se crescimento é orgânico ou por aquisições.",
-        "civil":   "Crescimento de construtoras é muito cíclico — um CAGR positivo de 5 anos é mais significativo que em setores mais estáveis.",
+        "retail":  "Varejistas em expansão de lojas frequentemente crescem receita 15–25% ao ano. Crescimento de SSS (mesmas lojas) acima de 5% real é excelente.",
+        "civil":   "Crescimento de construtoras é muito cíclico — um CAGR positivo de 5 anos é mais significativo que em setores mais estáveis. Verificar VSO.",
+        "health":  "Crescimento de 10–20% ao ano é viável dado o envelhecimento da população e subpenetração de planos de saúde no Brasil.",
+        "edu":     "Crescimento em educação é influenciado por expansão de matrículas e aquisições. Verificar crescimento orgânico separado de M&A.",
+        "steel":   "Crescimento de receita em commodities é fortemente influenciado pelo preço da matéria-prima. Focar em crescimento de volume e eficiência de custo.",
+        "agro":    "Crescimento de receita fortemente influenciado por preço de commodity e câmbio. Focar em crescimento de volume e expansão de área plantada.",
+        "textile": "Crescimento sustentável vem de expansão de canais (digital + físico) e fortalecimento de marca. Verificar crescimento de mesmas lojas (SSS).",
         "default": "CAGR de receita consistentemente acima da inflação (~5%) é o mínimo para preservação real de valor.",
     },
     "liquidity": {
@@ -606,19 +639,28 @@ def _sector_insight(ind: str, sector: str) -> str:
     if not ind_map:
         return ""
     s = sector.lower()
-    is_bank    = any(k in s for k in ["banco", "financeiro", "financeira", "crédito", "bancári"])
-    is_util    = any(k in s for k in ["energia", "saneamento", "concessão", "transmissão", "distribuição", "gás", "água"])
-    is_retail  = any(k in s for k in ["varejo", "comércio varejista", "supermercado"])
-    is_civil   = any(k in s for k in ["construção", "construtora", "incorporadora", "imobiliário"])
-    is_health  = any(k in s for k in ["saúde", "hospital", "farmáci", "laboratório", "clínica"])
+    # Detecção de setor por substrings (case-insensitive, já normalizado acima)
+    is_bank    = any(k in s for k in ["banco", "financ", "crédit", "credit", "segur", "bancári"])
+    is_util    = any(k in s for k in ["energ", "saneamento", "concess", "transmiss", "distribui", "utilit", "gás", "agua", "água"])
+    is_retail  = any(k in s for k in ["varejo", "comércio", "comercio", "atacado", "supermercado"])
+    is_civil   = any(k in s for k in ["constru", "incorpor", "imobili"])
+    is_health  = any(k in s for k in ["saúde", "saude", "hospit", "médic", "medic", "farmac", "clínica", "clinica"])
+    is_edu     = any(k in s for k in ["educa"])
+    is_steel   = any(k in s for k in ["metal", "sider", "aço", "aco", "miner"])
+    is_agro    = any(k in s for k in ["agro", "açúcar", "acucar", "agricultur", "aliment"])
+    is_textile = any(k in s for k in ["têxtil", "textil", "vestuário", "vestuario"])
     is_tech    = any(k in s for k in ["tecnologia", "software", "internet", "telecomunicaç"])
 
-    if is_bank   and "bank"   in ind_map: return ind_map["bank"]
-    if is_util   and "util"   in ind_map: return ind_map["util"]
-    if is_retail and "retail" in ind_map: return ind_map["retail"]
-    if is_civil  and "civil"  in ind_map: return ind_map["civil"]
-    if is_health and "health" in ind_map: return ind_map["health"]
-    if is_tech   and "tech"   in ind_map: return ind_map["tech"]
+    if is_bank    and "bank"    in ind_map: return ind_map["bank"]
+    if is_util    and "util"    in ind_map: return ind_map["util"]
+    if is_retail  and "retail"  in ind_map: return ind_map["retail"]
+    if is_civil   and "civil"   in ind_map: return ind_map["civil"]
+    if is_health  and "health"  in ind_map: return ind_map["health"]
+    if is_edu     and "edu"     in ind_map: return ind_map["edu"]
+    if is_steel   and "steel"   in ind_map: return ind_map["steel"]
+    if is_agro    and "agro"    in ind_map: return ind_map["agro"]
+    if is_textile and "textile" in ind_map: return ind_map["textile"]
+    if is_tech    and "tech"    in ind_map: return ind_map["tech"]
     return ind_map.get("default", "")
 
 
