@@ -34,6 +34,11 @@ st.set_page_config(
 )
 
 DATA_FILE = Path("acoes_salvas.json")
+TZ_BSB = timezone(timedelta(hours=-3))
+LISTAS_PADRAO = ["⭐ Carteira", "👁 Watchlist", "🔍 Pesquisa"]
+
+def _now_bsb() -> datetime:
+    return datetime.now(TZ_BSB)
 
 SCORED_COLS_ORDER = [
     "net_debt_ebitda",
@@ -154,25 +159,41 @@ INDICATOR_INFO: dict[str, dict[str, str]] = {
 # Persistência
 # ────────────────────────────────────────────────────────────────
 
-def load_data() -> dict:
+def _load_file() -> dict:
+    """Lê o JSON do disco sem tocar no session_state."""
     if DATA_FILE.exists():
         try:
-            data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+            return json.loads(DATA_FILE.read_text(encoding="utf-8"))
         except Exception:
             return {}
-        # Aplica SECTOR_REMAP nas ações já salvas para corrigir setores sem rebuscar
-        for ticker, entry in data.items():
-            if ticker in SECTOR_REMAP and isinstance(entry.get("data"), dict):
-                entry["data"]["sector"] = SECTOR_REMAP[ticker]
-        return data
     return {}
 
 
-def save_data(data: dict) -> None:
+def _apply_sector_remap(lista: dict) -> None:
+    for ticker, entry in lista.items():
+        if ticker in SECTOR_REMAP and isinstance(entry.get("data"), dict):
+            entry["data"]["sector"] = SECTOR_REMAP[ticker]
+
+
+def load_data() -> dict:
+    """Retorna a lista atual (compat com código legado que lê notas do disco)."""
+    return st.session_state.get("acoes", {})
+
+
+def _save_all() -> None:
+    """Persiste todas as listas + filtros do screener no disco."""
+    todas = dict(st.session_state.get("todas_listas", {}))
+    filtros = dict(st.session_state.get("screener_filtros", {}))
     DATA_FILE.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
+        json.dumps({"listas": todas, "screener_filtros": filtros},
+                   ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def save_data(_data: dict = None) -> None:
+    """Compat: salva tudo via _save_all."""
+    _save_all()
 
 
 # ────────────────────────────────────────────────────────────────
@@ -254,8 +275,9 @@ def _fmt_updated(updated_at_iso: Optional[str]) -> str:
         return "Nunca atualizado"
     try:
         dt = datetime.fromisoformat(updated_at_iso)
-        if dt.tzinfo:
-            dt = dt.astimezone().replace(tzinfo=None)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.astimezone(TZ_BSB).replace(tzinfo=None)
         return dt.strftime("%d/%m/%Y às %H:%M")
     except Exception:
         return updated_at_iso
@@ -265,9 +287,48 @@ def _fmt_updated(updated_at_iso: Optional[str]) -> str:
 # Inicialização do session_state
 # ────────────────────────────────────────────────────────────────
 
+def _switch_list(nova_lista: str) -> None:
+    """Muda a lista ativa, sincronizando session_state."""
+    st.session_state.lista_atual = nova_lista
+    if nova_lista not in st.session_state.todas_listas:
+        st.session_state.todas_listas[nova_lista] = {}
+    st.session_state.acoes = st.session_state.todas_listas[nova_lista]
+    st.session_state.selected_ticker = None
+
+
 def _init_state():
+    if "todas_listas" not in st.session_state:
+        raw = _load_file()
+        if "listas" in raw:
+            todas = raw["listas"]
+            # garante que as listas padrão existam
+            for lp in LISTAS_PADRAO:
+                if lp not in todas:
+                    todas[lp] = {}
+        else:
+            # migra formato antigo — todos os tickers vão para "⭐ Carteira"
+            todas = {lp: {} for lp in LISTAS_PADRAO}
+            for ticker, entry in raw.items():
+                if isinstance(entry, dict) and "data" in entry:
+                    todas[LISTAS_PADRAO[0]][ticker] = entry
+        # aplica SECTOR_REMAP em todas as listas
+        for lista in todas.values():
+            _apply_sector_remap(lista)
+        st.session_state.todas_listas = todas
+
+    if "lista_atual" not in st.session_state:
+        listas_keys = list(st.session_state.todas_listas.keys())
+        st.session_state.lista_atual = listas_keys[0] if listas_keys else LISTAS_PADRAO[0]
+
     if "acoes" not in st.session_state:
-        st.session_state.acoes = load_data()
+        st.session_state.acoes = st.session_state.todas_listas.get(
+            st.session_state.lista_atual, {}
+        )
+
+    if "screener_filtros" not in st.session_state:
+        raw = _load_file()
+        st.session_state.screener_filtros = raw.get("screener_filtros", {})
+
     if "selected_ticker" not in st.session_state:
         st.session_state.selected_ticker = None
     if "flash_errors" not in st.session_state:
@@ -278,6 +339,8 @@ def _init_state():
         st.session_state.debug_log: list[str] = []
     if "debug_raw_fund" not in st.session_state:
         st.session_state.debug_raw_fund: Optional[dict] = None
+    if "show_nova_lista" not in st.session_state:
+        st.session_state.show_nova_lista = False
 
 
 # ────────────────────────────────────────────────────────────────
@@ -323,9 +386,10 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
 
     st.session_state.acoes[t] = {
         "data": data,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": _now_bsb().isoformat(),
     }
-    save_data(st.session_state.acoes)
+    st.session_state.todas_listas[st.session_state.lista_atual] = st.session_state.acoes
+    _save_all()
     return None
 
 
@@ -1241,8 +1305,7 @@ def _show_detail(s: dict):
     _ticker = s.get("ticker", "")
     _notas_key = f"notas_{_ticker}"
 
-    _saved_data = load_data()
-    _notas_entry = _saved_data.get(_ticker, {})
+    _notas_entry = st.session_state.acoes.get(_ticker, {})
     _notas_text = _notas_entry.get("notas", "")
     _notas_updated = _notas_entry.get("notas_updated_at", "")
 
@@ -1252,11 +1315,10 @@ def _show_detail(s: dict):
 
     def _save_notas(_key=_notas_key, _t=_ticker):
         new_text = st.session_state[_key]
-        d = load_data()
-        if _t in d:
-            d[_t]["notas"] = new_text
-            d[_t]["notas_updated_at"] = datetime.now(timezone.utc).isoformat()
-            save_data(d)
+        if _t in st.session_state.acoes:
+            st.session_state.acoes[_t]["notas"] = new_text
+            st.session_state.acoes[_t]["notas_updated_at"] = _now_bsb().isoformat()
+            _save_all()
 
     st.text_area(
         "Observações sobre esta ação:",
@@ -1267,8 +1329,11 @@ def _show_detail(s: dict):
     )
     if _notas_updated:
         try:
-            _dt = datetime.fromisoformat(_notas_updated).astimezone()
-            st.caption(f"Última edição: {_dt.strftime('%d/%m/%Y %H:%M')}")
+            _dt = datetime.fromisoformat(_notas_updated)
+            if _dt.tzinfo is None:
+                _dt = _dt.replace(tzinfo=timezone.utc)
+            _dt = _dt.astimezone(TZ_BSB).replace(tzinfo=None)
+            st.caption(f"Última edição: {_dt.strftime('%d/%m/%Y %H:%M')} (Brasília)")
         except Exception:
             st.caption(f"Última edição: {_notas_updated[:16]}")
 
@@ -1344,36 +1409,105 @@ def _comparison_table(selected_tickers: list[str], stocks: list[dict]) -> None:
 # Aba Screener
 # ────────────────────────────────────────────────────────────────
 
+_SCREENER_PRESETS: dict = {
+    "🏆 Fundamentalista": {"roe_min": 15, "pl_max": 15, "nd_max": 2, "mg_min": 12, "ev_max": 15, "score_min": 65, "excl_bancos": True},
+    "💰 Dividendos":      {"roe_min": 12, "pl_max": 20, "nd_max": 3, "mg_min": 10, "ev_max": 20, "score_min": 55, "excl_bancos": False},
+    "🚀 Crescimento":     {"roe_min": 18, "pl_max": 25, "nd_max": 2, "mg_min": 15, "ev_max": 20, "score_min": 60, "excl_bancos": True},
+}
+
+
+def _apply_scr_preset(params: dict) -> None:
+    st.session_state.scr_roe_min   = int(params.get("roe_min", 15))
+    st.session_state.scr_pl_max    = int(params.get("pl_max", 15))
+    st.session_state.scr_nd_max    = int(params.get("nd_max", 2))
+    st.session_state.scr_mg_min    = int(params.get("mg_min", 12))
+    st.session_state.scr_ev_max    = int(params.get("ev_max", 8))
+    st.session_state.scr_score_min = int(params.get("score_min", 60))
+    st.session_state.scr_excl_bancos = bool(params.get("excl_bancos", True))
+
+
 def _show_screener():
     st.markdown("## 🔎 Screener — B3 Completo")
     st.caption("Filtra todas as empresas listadas na B3 em tempo real via API Bolsai Pro.")
 
-    with st.form("screener_form"):
+    # ── Presets e filtros salvos ───────────────────────────────
+    col_presets, col_saved = st.columns([1, 1])
+
+    with col_presets:
+        st.markdown("**Presets:**")
+        for nome_preset, params_preset in _SCREENER_PRESETS.items():
+            if st.button(nome_preset, key=f"preset_{nome_preset}", use_container_width=True):
+                _apply_scr_preset(params_preset)
+                st.rerun()
+
+    with col_saved:
+        st.markdown("**Meus filtros salvos:**")
+        filtros_user = st.session_state.get("screener_filtros", {})
+        if filtros_user:
+            for nome_f, params_f in list(filtros_user.items()):
+                _col_ap, _col_rm = st.columns([4, 1])
+                with _col_ap:
+                    if st.button(nome_f, key=f"filtro_ap_{nome_f}", use_container_width=True):
+                        _apply_scr_preset(params_f)
+                        st.rerun()
+                with _col_rm:
+                    if st.button("🗑", key=f"filtro_rm_{nome_f}", help=f"Excluir '{nome_f}'"):
+                        del st.session_state.screener_filtros[nome_f]
+                        _save_all()
+                        st.rerun()
+        else:
+            st.caption("Nenhum filtro salvo ainda.")
+
+    st.divider()
+
+    # ── Painel de filtros ──────────────────────────────────────
+    with st.expander("⚙️ Ajustar filtros", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1:
-            roe_min = st.slider("ROE mínimo (%)", 0, 50, 10)
-            pl_max  = st.slider("P/L máximo (x)",  1, 60, 25)
-            nd_max  = st.slider("Dív/EBITDA máximo (x)", 0, 10, 3)
+            roe_min   = st.slider("ROE mínimo (%)",        0, 50,  15, key="scr_roe_min")
+            pl_max    = st.slider("P/L máximo (x)",         1, 50,  15, key="scr_pl_max")
+            nd_max    = st.slider("Dív/EBITDA máximo (x)", -2,  5,   2, key="scr_nd_max")
         with c2:
-            mg_min  = st.slider("Mg. EBITDA mínima (%)", 0, 60, 10)
-            ev_max  = st.slider("EV/EBITDA máximo (x)", 1, 30, 15)
-            score_min = st.slider("Score mínimo (calculado)", 0, 100, 0)
+            mg_min    = st.slider("Mg. EBITDA mínima (%)", 0, 50,  12, key="scr_mg_min")
+            ev_max    = st.slider("EV/EBITDA máximo (x)",  0, 20,   8, key="scr_ev_max")
+            score_min = st.slider("Score mínimo",          0, 100, 60, key="scr_score_min")
         with c3:
-            st.caption("Aplica filtros fundamentalistas em todas as ações da B3. "
-                       "Máximo 20 resultados por busca.")
-        submitted = st.form_submit_button("🔍 Buscar na B3", use_container_width=True)
+            excl_bancos = st.checkbox("Excluir bancos", value=True, key="scr_excl_bancos")
+            st.caption(
+                "Filtros enviados para a API Bolsai Pro. "
+                "Score mínimo e exclusão de bancos são aplicados localmente."
+            )
 
-    if not submitted:
+        # Salvar filtro atual
+        st.markdown("---")
+        _col_nome, _col_salvar = st.columns([3, 1])
+        with _col_nome:
+            _nome_filtro = st.text_input("Nome para salvar:", placeholder="ex: Minha estratégia",
+                                         key="scr_nome_filtro", label_visibility="collapsed")
+        with _col_salvar:
+            if st.button("💾 Salvar filtro", key="btn_salvar_filtro", use_container_width=True):
+                _nome = _nome_filtro.strip()
+                if _nome:
+                    st.session_state.screener_filtros[_nome] = {
+                        "roe_min": roe_min, "pl_max": pl_max, "nd_max": nd_max,
+                        "mg_min": mg_min, "ev_max": ev_max, "score_min": score_min,
+                        "excl_bancos": excl_bancos,
+                    }
+                    _save_all()
+                    st.success(f"Filtro '{_nome}' salvo!")
+
+    # ── Botão busca ────────────────────────────────────────────
+    if not st.button("🔍 Buscar na B3", use_container_width=True, key="btn_scr_buscar"):
         return
 
     with st.spinner("Buscando ações na B3…"):
         result = api.get_screener(
             limit=20,
             roe_min=roe_min if roe_min > 0 else None,
-            pl_max=pl_max if pl_max < 60 else None,
-            net_debt_ebitda_max=nd_max if nd_max < 10 else None,
+            pl_max=pl_max if pl_max < 50 else None,
+            net_debt_ebitda_max=nd_max if nd_max < 5 else None,
             ebitda_margin_min=mg_min if mg_min > 0 else None,
-            ev_ebitda_max=ev_max if ev_max < 30 else None,
+            ev_ebitda_max=ev_max if ev_max < 20 else None,
         )
 
     if not result or not result.get("data"):
@@ -1386,11 +1520,14 @@ def _show_screener():
     enriched_scr: list[dict] = []
     for raw in result["data"]:
         t_remap = SECTOR_REMAP.get(raw.get("ticker", ""), raw.get("sector", ""))
+        _sec = t_remap
+        if excl_bancos and sc.is_bank(_sec):
+            continue
         stock = {
             "ticker":           raw.get("ticker", ""),
             "trade_name":       raw.get("corporate_name", ""),
             "corporate_name":   raw.get("corporate_name", ""),
-            "sector":           t_remap,
+            "sector":           _sec,
             "close_price":      raw.get("close_price"),
             "daily_change_pct": None,
             "reference_date":   raw.get("reference_date"),
@@ -1412,8 +1549,9 @@ def _show_screener():
             enriched_scr.append({**stock, "score": scr_score, "score_label": scr_label, "breakdown": scr_bd})
 
     st.info(
-        f"**{total}** ações encontradas na B3 com esses critérios. "
-        f"Exibindo {len(enriched_scr)} com score ≥ {score_min}."
+        f"**{total}** ações analisadas pela Bolsai. "
+        f"Exibindo **{len(enriched_scr)}** com score ≥ {score_min}"
+        + (" (bancos excluídos)." if excl_bancos else ".")
     )
 
     if not enriched_scr:
@@ -1425,7 +1563,7 @@ def _show_screener():
 
     col_add, _ = st.columns([1, 3])
     with col_add:
-        if st.button("➕ Adicionar todas à lista", use_container_width=True, key="scr_add_all"):
+        if st.button("➕ Adicionar todas à lista atual", use_container_width=True, key="scr_add_all"):
             added, erros = [], []
             with st.spinner("Buscando dados completos…"):
                 for e in enriched_scr:
@@ -1436,7 +1574,7 @@ def _show_screener():
                             erros.append(f"{t}: {err}")
                         else:
                             added.append(t)
-            st.session_state.flash_success = f"Adicionadas: {', '.join(added)}" if added else ""
+            st.session_state.flash_success = f"Adicionadas à {st.session_state.lista_atual}: {', '.join(added)}" if added else ""
             st.session_state.flash_errors = erros
             st.rerun()
 
@@ -1449,18 +1587,37 @@ def _sidebar():
     with st.sidebar:
         st.markdown("# 📈 Análise B3")
         st.caption("Análise fundamentalista de ações brasileiras")
-        st.divider()
 
+        # ── Status da API (discreto) ───────────────────────────
         api_key = api._get_api_key()
         if api_key:
-            st.success(f"API Key configurada ({api_key[:8]}…)", icon="🔑")
+            st.markdown(
+                "<span style='color:#9e9e9e;font-size:0.8rem'>🔑 API conectada</span>",
+                unsafe_allow_html=True,
+            )
         else:
             st.error(
                 "**BOLSAI_API_KEY não encontrada.**\n\n"
-                "No Streamlit Cloud: vá em **Settings → Secrets** e adicione:\n"
-                "```\nBOLSAI_API_KEY = \"sk_sua_chave\"\n```",
+                "No Streamlit Cloud: **Settings → Secrets** → `BOLSAI_API_KEY = \"sk_…\"`",
                 icon="🚨",
             )
+
+        # ── Diagnóstico (apenas em DEBUG_MODE=true) ────────────
+        import os as _os
+        if _os.environ.get("DEBUG_MODE", "").lower() == "true":
+            with st.expander("🔧 Diagnóstico", expanded=False):
+                if st.session_state.debug_log:
+                    for line in st.session_state.debug_log:
+                        st.markdown(f"`{line}`")
+                    if st.session_state.debug_raw_fund:
+                        st.markdown("**JSON /fundamentals:**")
+                        st.json(st.session_state.debug_raw_fund, expanded=False)
+                    if st.button("Limpar log", key="clear_debug"):
+                        st.session_state.debug_log = []
+                        st.session_state.debug_raw_fund = None
+                        st.rerun()
+                else:
+                    st.caption("Nenhuma operação registrada.")
 
         # ── Mensagens flash ────────────────────────────────────
         if st.session_state.flash_success:
@@ -1473,20 +1630,61 @@ def _sidebar():
             st.error(err)
         st.session_state.flash_errors = []
 
-        # ── Diagnóstico (colapsado por padrão) ────────────────
-        with st.expander("🔧 Diagnóstico", expanded=False):
-            if st.session_state.debug_log:
-                for line in st.session_state.debug_log:
-                    st.markdown(f"`{line}`")
-                if st.session_state.debug_raw_fund:
-                    st.markdown("**JSON completo de /fundamentals/{ticker}:**")
-                    st.json(st.session_state.debug_raw_fund, expanded=False)
-                if st.button("Limpar log", key="clear_debug"):
-                    st.session_state.debug_log = []
-                    st.session_state.debug_raw_fund = None
+        st.divider()
+
+        # ── Seletor de lista ──────────────────────────────────
+        listas_keys = list(st.session_state.todas_listas.keys())
+        cur_idx = listas_keys.index(st.session_state.lista_atual) if st.session_state.lista_atual in listas_keys else 0
+
+        col_sel, col_nadd, col_ndel = st.columns([5, 1, 1])
+        with col_sel:
+            chosen_lista = st.selectbox(
+                "Lista", listas_keys, index=cur_idx,
+                key="sidebar_lista_sel", label_visibility="collapsed",
+            )
+        with col_nadd:
+            if st.button("＋", key="btn_nova_lista", help="Nova lista"):
+                st.session_state.show_nova_lista = not st.session_state.get("show_nova_lista", False)
+        with col_ndel:
+            _can_del = len(st.session_state.todas_listas) > 1
+            if st.button("🗑", key="btn_del_lista", help="Excluir lista atual", disabled=not _can_del):
+                _lista_del = st.session_state.lista_atual
+                del st.session_state.todas_listas[_lista_del]
+                _nova = list(st.session_state.todas_listas.keys())[0]
+                _switch_list(_nova)
+                _save_all()
+                st.rerun()
+
+        # Detecta mudança de lista pelo selectbox
+        if chosen_lista != st.session_state.lista_atual:
+            _switch_list(chosen_lista)
+            st.rerun()
+
+        # Formulário "Nova lista"
+        if st.session_state.get("show_nova_lista"):
+            _nome_input = st.text_input("Nome da nova lista:", key="nova_lista_nome_input",
+                                        placeholder="ex: Dividendos, Longo Prazo…")
+            _col_ok, _col_can = st.columns(2)
+            with _col_ok:
+                if st.button("✅ Criar", key="btn_criar_lista", use_container_width=True):
+                    _nome = _nome_input.strip()
+                    if _nome and _nome not in st.session_state.todas_listas:
+                        st.session_state.todas_listas[_nome] = {}
+                        _save_all()
+                        _switch_list(_nome)
+                    st.session_state.show_nova_lista = False
                     st.rerun()
-            else:
-                st.caption("Nenhuma operação registrada.")
+            with _col_can:
+                if st.button("✗ Cancelar", key="btn_cancel_lista", use_container_width=True):
+                    st.session_state.show_nova_lista = False
+                    st.rerun()
+
+        # Botão especial da lista "🔍 Pesquisa"
+        if st.session_state.lista_atual == "🔍 Pesquisa" and st.session_state.acoes:
+            if st.button("🧹 Limpar tudo da Pesquisa", use_container_width=True, key="btn_clear_pesq"):
+                st.session_state.acoes.clear()
+                _save_all()
+                st.rerun()
 
         st.divider()
 
@@ -1528,7 +1726,7 @@ def _sidebar():
 
                 if adicionados:
                     st.session_state.flash_success = (
-                        f"Adicionado(s) com sucesso: {', '.join(adicionados)}"
+                        f"Adicionado(s): {', '.join(adicionados)}"
                     )
                 st.session_state.flash_errors = erros
                 st.rerun()
@@ -1635,9 +1833,10 @@ def _sidebar():
         st.divider()
 
         # ── Lista de ações salvas ──────────────────────────────
-        st.markdown("### Ações Salvas")
+        _n = len(st.session_state.acoes)
+        st.markdown(f"### {st.session_state.lista_atual} ({_n})")
         if not st.session_state.acoes:
-            st.caption("Nenhuma ação salva. Adicione acima.")
+            st.caption("Nenhuma ação nesta lista. Adicione acima.")
         else:
             for ticker, entry in list(st.session_state.acoes.items()):
                 data = entry.get("data", {})
@@ -1658,7 +1857,7 @@ def _sidebar():
                 with col_c:
                     if st.button("✕", key=f"rm_{ticker}", help=f"Remover {ticker}"):
                         del st.session_state.acoes[ticker]
-                        save_data(st.session_state.acoes)
+                        _save_all()
                         if st.session_state.selected_ticker == ticker:
                             st.session_state.selected_ticker = None
                         st.rerun()
@@ -1739,7 +1938,7 @@ div[data-testid="stPopover"] button:hover {
 </style>
 """, unsafe_allow_html=True)
 
-    tab_comp, tab_det, tab_scr = st.tabs(["📊 Comparativo", "🔍 Detalhe", "🔎 Screener"])
+    tab_comp, tab_det, tab_scr, tab_fii = st.tabs(["📊 Comparativo", "🔍 Detalhe", "🔎 Screener", "🏢 FIIs"])
 
     # ────────────────────────────────────────────────────────────
     # Tab 1 — Comparativo
@@ -1884,6 +2083,27 @@ div[data-testid="stPopover"] button:hover {
     # ────────────────────────────────────────────────────────────
     with tab_scr:
         _show_screener()
+
+    # ────────────────────────────────────────────────────────────
+    # Tab 4 — FIIs (placeholder)
+    # ────────────────────────────────────────────────────────────
+    with tab_fii:
+        st.markdown("## 🏢 Análise de FIIs")
+        st.markdown("### Em breve — aguarde a próxima atualização")
+        st.markdown(
+            "A aba de Fundos de Investimento Imobiliário (FIIs) está em desenvolvimento. "
+            "Em breve estará disponível com os seguintes dados:"
+        )
+        st.markdown("""
+- **DY** — Dividend Yield TTM (12 meses)
+- **P/VP** — Preço sobre Valor Patrimonial
+- **Vacância** — taxa de vacância física e financeira
+- **Inadimplência** — percentual de inadimplentes na carteira
+- **Liquidez** — volume médio diário negociado
+- **Tipo de FII** — Papel, Tijolo, Híbrido, FOF, Desenvolvimento
+- **Segmento** — Lajes corporativas, Galpões logísticos, Shoppings, Residencial, etc.
+- **Comparativo entre FIIs** com tabela colorida e score especializado
+""")
 
 
 if __name__ == "__main__":
