@@ -735,23 +735,23 @@ def _fetch_macro() -> dict:
         pass
     try:
         bova_stats = api.get_stock_stats("BOVA11")
-        bova_fund = api.get_fundamentals("BOVA11")
         if bova_stats:
-            result["ibov_chg"] = bova_stats.get("daily_change_pct")
-            result["ibov_ytd"] = bova_stats.get("ytd_return_pct")
-        if bova_fund:
-            result["ibov_price"] = bova_fund.get("close_price")
-            result["ibov_pl"] = bova_fund.get("pl")
+            trade_date = bova_stats.get("trade_date", "")
+            if trade_date >= "2024-01-01":
+                result["ibov_price"] = bova_stats.get("close")
+                result["ibov_chg"] = bova_stats.get("daily_change_pct")
+                result["ibov_ytd"] = bova_stats.get("ytd_return_pct")
     except Exception:
         pass
     try:
         smll_stats = api.get_stock_stats("SMLL11")
-        smll_fund = api.get_fundamentals("SMLL11")
         if smll_stats:
-            result["smll_chg"] = smll_stats.get("daily_change_pct")
-            result["smll_ytd"] = smll_stats.get("ytd_return_pct")
-        if smll_fund:
-            result["smll_price"] = smll_fund.get("close_price")
+            trade_date = smll_stats.get("trade_date", "")
+            daily_chg = smll_stats.get("daily_change_pct") or 0
+            if trade_date >= "2024-01-01" and abs(daily_chg) <= 15:
+                result["smll_price"] = smll_stats.get("close")
+                result["smll_chg"] = daily_chg
+                result["smll_ytd"] = smll_stats.get("ytd_return_pct")
     except Exception:
         pass
     return result
@@ -875,14 +875,17 @@ def _show_macro_panel() -> None:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_price_history(ticker: str) -> Optional[pd.DataFrame]:
-    data = api.get_stock_history(ticker, limit=1260)
-    if not data or not data.get("prices"):
+    try:
+        data = api.get_stock_history(ticker, limit=1260)
+        if not data or not data.get("prices"):
+            return None
+        df = pd.DataFrame(data["prices"])
+        df["trade_date"] = pd.to_datetime(df["trade_date"])
+        df = df.sort_values("trade_date").reset_index(drop=True)
+        df["ma50"] = df["adjusted_close"].rolling(50, min_periods=1).mean()
+        return df
+    except Exception:
         return None
-    df = pd.DataFrame(data["prices"])
-    df["trade_date"] = pd.to_datetime(df["trade_date"])
-    df = df.sort_values("trade_date").reset_index(drop=True)
-    df["ma50"] = df["adjusted_close"].rolling(50, min_periods=1).mean()
-    return df
 
 
 def _show_price_history_chart(s: dict) -> None:
