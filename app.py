@@ -355,8 +355,9 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             class_row[col_name] = cls
 
         pvp = s.get("pvp")
-        display_row["P/VP"] = f"{pvp:.2f}x" if pvp is not None else "—"
-        class_row["P/VP"] = ""
+        cls_pvp, disp_pvp = sc.classify_pvp(pvp, sector)
+        display_row["P/VP"] = disp_pvp
+        class_row["P/VP"] = cls_pvp
 
         rows_display.append(display_row)
         rows_class.append(class_row)
@@ -374,7 +375,7 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         "Setor Bancário": "#37474f",
         "NA":             "#37474f",
     }
-    colored_cols = {"Score"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
+    colored_cols = {"Score", "P/VP"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
     def styler_fn(df: pd.DataFrame) -> pd.DataFrame:
         styles = pd.DataFrame("", index=df.index, columns=df.columns)
@@ -632,7 +633,7 @@ def _show_detail(s: dict):
                 st.markdown(f"**{label_ind}** *(peso {peso*100:.0f}%)*")
             with cb:
                 if info:
-                    with st.popover("❓"):
+                    with st.popover("ℹ"):
                         st.markdown(f"**{label_ind}**")
                         st.markdown(f"**O que mede:** {info.get('o_que_mede', '')}")
                         st.markdown(f"**Por que importa:** {info.get('por_que_importa', '')}")
@@ -691,12 +692,20 @@ def _show_detail(s: dict):
                     st.caption(f"⚠ {info_pvp.get('atencao', '')}")
         if bank:
             st.markdown("**Indicador principal para bancos.** P/VP ideal entre **1,0× e 2,5×**.")
+        cls_pvp, disp_pvp = sc.classify_pvp(pvp, sector)
+        bg_pvp = BG_COLORS.get(cls_pvp, "#37474f")
+        emoji_pvp = COLOR_EMOJI.get(cls_pvp, "⬜")
         if pvp is not None:
-            st.markdown(f"**Valor:** {pvp:.2f}×")
-            if pvp < 1.0:
-                st.caption("< 1,0 — possível desconto patrimonial (verifique qualidade dos ativos).")
+            st.markdown(
+                f"<div style='display:inline-block;background:{bg_pvp};color:#fff;"
+                f"padding:6px 14px;border-radius:6px;font-weight:700;font-size:1.05rem'>"
+                f"{emoji_pvp} {disp_pvp}</div>",
+                unsafe_allow_html=True,
+            )
+            if cls_pvp == "Desconto":
+                st.caption("🔵 Abaixo do valor patrimonial — pode indicar desconto real ou problema de qualidade dos ativos.")
             elif pvp > 3.0:
-                st.caption("> 3,0 — exige ROE muito alto para justificar o prêmio.")
+                st.caption("⚠ Exige ROE muito alto para justificar o prêmio.")
         else:
             st.caption("N/D")
 
@@ -742,6 +751,55 @@ def _show_detail(s: dict):
         ]
         for i, (lbl, val) in enumerate(items):
             cols[i % 3].metric(lbl, val)
+
+
+# ────────────────────────────────────────────────────────────────
+# Tabela comparativa lado a lado (HTML com cores)
+# ────────────────────────────────────────────────────────────────
+
+def _comparison_table(selected_tickers: list[str], stocks: list[dict]) -> None:
+    """Renderiza tabela indicador × ação com células coloridas por classificação."""
+    all_inds = list(SCORED_COLS_ORDER) + ["pvp"]
+
+    th = "padding:8px 10px;color:#e8eaf6;border-bottom:2px solid #333;background:#1a1d2e;font-weight:600"
+    html = "<div style='overflow-x:auto'>"
+    html += "<table style='width:100%;border-collapse:collapse;font-size:0.87rem'>"
+    html += "<thead><tr>"
+    html += f"<th style='{th};text-align:left'>Indicador</th>"
+    for t in selected_tickers:
+        html += f"<th style='{th};text-align:center'>{t}</th>"
+    html += "</tr></thead><tbody>"
+
+    for i, ind in enumerate(all_inds):
+        label_ind = INDICATOR_LABELS.get(ind, ind)
+        row_bg = "#0e1117" if i % 2 == 0 else "#131629"
+        html += f"<tr style='background:{row_bg}'>"
+        html += (
+            f"<td style='padding:6px 10px;color:#c8cce0;border-bottom:1px solid #1e2130;"
+            f"font-weight:500'>{label_ind}</td>"
+        )
+        for stock in stocks:
+            sector = stock.get("sector", "")
+            if ind == "pvp":
+                cls, disp = sc.classify_pvp(stock.get("pvp"), sector)
+            else:
+                cls, disp = sc.classify_all(stock).get(ind, ("ND", "N/D"))
+            bg = BG_COLORS.get(cls, "")
+            if bg:
+                cell_style = (
+                    f"background:{bg};color:#fff;font-weight:600;"
+                    f"text-align:center;padding:6px 10px;border-bottom:1px solid #1e2130"
+                )
+            else:
+                cell_style = (
+                    f"background:{row_bg};color:#666;"
+                    f"text-align:center;padding:6px 10px;border-bottom:1px solid #1e2130"
+                )
+            html += f"<td style='{cell_style}'>{disp}</td>"
+        html += "</tr>"
+
+    html += "</tbody></table></div>"
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -995,29 +1053,31 @@ def main():
         reverse=True,
     )
 
-    # CSS global: estiliza botões de popover ❓ como círculos azuis
+    # CSS global: popover ℹ parece texto cinza discreto, sem container visual
     st.markdown("""
 <style>
 div[data-testid="stPopover"] button {
-    border: 1.5px solid #4a90d9 !important;
-    border-radius: 50% !important;
-    color: #4a90d9 !important;
-    font-size: 15px !important;
-    min-width: 30px !important;
-    width: 30px !important;
-    height: 30px !important;
-    min-height: 30px !important;
-    padding: 0 !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
+    border: none !important;
+    border-radius: 0 !important;
+    color: #888888 !important;
+    font-size: 13px !important;
+    min-width: unset !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: unset !important;
+    padding: 0 3px !important;
     background: transparent !important;
-    line-height: 1 !important;
+    box-shadow: none !important;
+    font-weight: 400 !important;
+    cursor: pointer !important;
+    vertical-align: middle !important;
+    line-height: 1.5 !important;
 }
 div[data-testid="stPopover"] button:hover {
-    background: #1565c0 !important;
-    border-color: #1565c0 !important;
-    color: #ffffff !important;
+    background: transparent !important;
+    border: none !important;
+    color: #bbbbbb !important;
+    text-decoration: underline !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1132,6 +1192,8 @@ div[data-testid="stPopover"] button:hover {
             fig_compare = _radar_chart(stocks_compare, selected_compare)
             st.plotly_chart(fig_compare, use_container_width=True,
                             config={"displayModeBar": False})
+            st.markdown("##### Valores por indicador")
+            _comparison_table(selected_compare, stocks_compare)
         elif len(selected_compare) == 1:
             st.caption("Selecione ao menos 2 ações para ver o radar comparativo.")
 

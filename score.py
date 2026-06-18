@@ -199,6 +199,24 @@ def classify_cagr_revenue(value, sector: str) -> tuple[str, str]:
     else:                 return "Proibitivo", display
 
 
+def classify_pvp(value, sector: str) -> tuple[str, str]:
+    """P/VP — informativo (sem peso no score). Escala diferente para bancos."""
+    if value is None:
+        return "ND", "N/D"
+    display = f"{value:.2f}×"
+
+    if is_bank(sector):
+        if value <= 1.5:    return "Bom", display
+        elif value <= 2.5:  return "Razoável", display
+        else:               return "Proibitivo", display
+    else:
+        if value < 1.0:     return "Desconto", display   # neutro — pode ser desconto real ou problema
+        elif value <= 2.0:  return "Bom", display
+        elif value <= 3.0:  return "Razoável", display
+        elif value <= 5.0:  return "Atenção", display
+        else:               return "Proibitivo", display
+
+
 # Mapeamento ordenado: indicador → função de classificação
 CLASSIFIERS: dict = {
     "net_debt_ebitda":  classify_net_debt_ebitda,
