@@ -37,6 +37,7 @@ st.set_page_config(
 DATA_FILE = Path("acoes_salvas.json")
 TZ_BSB = timezone(timedelta(hours=-3))
 LISTAS_PADRAO = ["⭐ Carteira", "👁 Watchlist", "🔍 Pesquisa"]
+USUARIOS = ["Gabriel", "Bolivar", "Danilo"]
 
 def _now_bsb() -> datetime:
     return datetime.now(TZ_BSB)
@@ -170,6 +171,28 @@ def _load_file() -> dict:
     return {}
 
 
+def _load_usuario_data(usuario: str) -> dict:
+    """Retorna dados de um usuário: {"listas": {…}, "screener_filtros": {…}, "fiis_listas": {…}}"""
+    raw = _load_file()
+    if "usuarios" in raw:
+        return raw["usuarios"].get(usuario, {})
+    # Legado (sem chave 'usuarios'): migra dados existentes para Gabriel
+    if usuario == "Gabriel":
+        if "listas" in raw:
+            return {
+                "listas": raw["listas"],
+                "screener_filtros": raw.get("screener_filtros", {}),
+                "fiis_listas": raw.get("fiis_listas", {}),
+            }
+        # formato muito antigo: dict plano de tickers
+        listas: dict = {lp: {} for lp in LISTAS_PADRAO}
+        for ticker, entry in raw.items():
+            if isinstance(entry, dict) and "data" in entry:
+                listas[LISTAS_PADRAO[0]][ticker] = entry
+        return {"listas": listas, "screener_filtros": {}, "fiis_listas": {}}
+    return {}
+
+
 def _apply_sector_remap(lista: dict) -> None:
     for ticker, entry in lista.items():
         if ticker in SECTOR_REMAP and isinstance(entry.get("data"), dict):
@@ -182,12 +205,21 @@ def load_data() -> dict:
 
 
 def _save_all() -> None:
-    """Persiste todas as listas + filtros do screener no disco."""
-    todas = dict(st.session_state.get("todas_listas", {}))
-    filtros = dict(st.session_state.get("screener_filtros", {}))
+    """Persiste dados do usuário atual no JSON (estrutura multi-usuário)."""
+    usuario = st.session_state.get("usuario_atual")
+    if not usuario:
+        return
+    raw = _load_file()
+    # Migração: se ainda não tem estrutura multi-usuário, cria
+    if "usuarios" not in raw:
+        raw = {"usuarios": {u: {} for u in USUARIOS}}
+    raw["usuarios"][usuario] = {
+        "listas":           dict(st.session_state.get("todas_listas", {})),
+        "screener_filtros": dict(st.session_state.get("screener_filtros", {})),
+        "fiis_listas":      dict(st.session_state.get("fiis_listas", {})),
+    }
     DATA_FILE.write_text(
-        json.dumps({"listas": todas, "screener_filtros": filtros},
-                   ensure_ascii=False, indent=2),
+        json.dumps(raw, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -298,21 +330,17 @@ def _switch_list(nova_lista: str) -> None:
 
 
 def _init_state():
+    """Inicializa session_state a partir dos dados do usuário atual."""
+    usuario = st.session_state.get("usuario_atual")
+    if not usuario:
+        return  # Aguarda seleção de usuário
+
     if "todas_listas" not in st.session_state:
-        raw = _load_file()
-        if "listas" in raw:
-            todas = raw["listas"]
-            # garante que as listas padrão existam
-            for lp in LISTAS_PADRAO:
-                if lp not in todas:
-                    todas[lp] = {}
-        else:
-            # migra formato antigo — todos os tickers vão para "⭐ Carteira"
-            todas = {lp: {} for lp in LISTAS_PADRAO}
-            for ticker, entry in raw.items():
-                if isinstance(entry, dict) and "data" in entry:
-                    todas[LISTAS_PADRAO[0]][ticker] = entry
-        # aplica SECTOR_REMAP em todas as listas
+        u_data = _load_usuario_data(usuario)
+        todas = u_data.get("listas", {})
+        for lp in LISTAS_PADRAO:
+            if lp not in todas:
+                todas[lp] = {}
         for lista in todas.values():
             _apply_sector_remap(lista)
         st.session_state.todas_listas = todas
@@ -327,8 +355,19 @@ def _init_state():
         )
 
     if "screener_filtros" not in st.session_state:
-        raw = _load_file()
-        st.session_state.screener_filtros = raw.get("screener_filtros", {})
+        u_data = _load_usuario_data(usuario)
+        st.session_state.screener_filtros = u_data.get("screener_filtros", {})
+
+    if "fiis_listas" not in st.session_state:
+        u_data = _load_usuario_data(usuario)
+        fiis = u_data.get("fiis_listas", {})
+        if not fiis:
+            fiis = {"🏢 FIIs": {}}
+        st.session_state.fiis_listas = fiis
+
+    if "lista_fii_atual" not in st.session_state:
+        fii_keys = list(st.session_state.fiis_listas.keys())
+        st.session_state.lista_fii_atual = fii_keys[0] if fii_keys else "🏢 FIIs"
 
     if "selected_ticker" not in st.session_state:
         st.session_state.selected_ticker = None
@@ -342,10 +381,6 @@ def _init_state():
         st.session_state.debug_raw_fund: Optional[dict] = None
     if "confirm_del_lista" not in st.session_state:
         st.session_state.confirm_del_lista = False
-    if "fiis_listas" not in st.session_state:
-        st.session_state.fiis_listas = {"🏢 FIIs": {}}
-    if "lista_fii_atual" not in st.session_state:
-        st.session_state.lista_fii_atual = "🏢 FIIs"
     if "selected_fii" not in st.session_state:
         st.session_state.selected_fii = None
     if "confirm_del_fii_lista" not in st.session_state:
@@ -1609,11 +1644,51 @@ def _show_screener():
 
 
 # ────────────────────────────────────────────────────────────────
+# Tela de seleção de usuário
+# ────────────────────────────────────────────────────────────────
+
+def _tela_selecao_usuario() -> None:
+    """Exibida antes do app quando nenhum usuário está selecionado."""
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        st.markdown(
+            "<div style='text-align:center;padding:40px 0 20px'>"
+            "<span style='font-size:3rem'>📈</span>"
+            "<h2 style='margin:8px 0'>Análise Fundamentalista B3</h2>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("### 👤 Quem é você?")
+        st.markdown("Selecione seu perfil para acessar sua carteira personalizada.")
+        usuario = st.selectbox(
+            "Usuário", USUARIOS, key="sel_usuario_login",
+            label_visibility="collapsed",
+        )
+        st.markdown("")
+        if st.button("▶ Entrar", key="btn_entrar", type="primary", use_container_width=True):
+            st.session_state.usuario_atual = usuario
+            st.rerun()
+
+
+# ────────────────────────────────────────────────────────────────
 # Sidebar
 # ────────────────────────────────────────────────────────────────
 
 def _sidebar():
     with st.sidebar:
+        _u = st.session_state.get("usuario_atual", "")
+        col_u, col_troca = st.columns([3, 2])
+        col_u.markdown(f"**Olá, {_u} 👋**")
+        if col_troca.button("🔄 Trocar", key="btn_trocar_usuario", use_container_width=True, help="Trocar usuário"):
+            for _k in [
+                "usuario_atual", "todas_listas", "lista_atual", "acoes",
+                "screener_filtros", "selected_ticker", "fiis_listas",
+                "lista_fii_atual", "selected_fii", "confirm_del_lista",
+                "confirm_del_fii_lista",
+            ]:
+                st.session_state.pop(_k, None)
+            st.rerun()
+
         st.markdown("# 📈 Análise B3")
         st.caption("Análise fundamentalista de ações brasileiras")
 
@@ -2154,8 +2229,151 @@ def _show_fii_detail(fii: dict) -> None:
                         st.markdown(f"- **{nm}**{loc_str}{pct_str}")
 
 
-def _show_fii_tab() -> None:
-    st.markdown("## 🏢 Análise de FIIs")
+@st.cache_data(ttl=1800)
+def _fetch_fii_screener_batch(limit: int = 150) -> list[dict]:
+    """Busca lote de FIIs do screener Bolsai e normaliza para nosso formato."""
+    try:
+        resp = api.get_fii_screener(limit=limit)
+        items: list = []
+        if resp and isinstance(resp.get("data"), list):
+            items = resp["data"]
+        else:
+            resp2 = api.get_fii_list(limit=limit)
+            if resp2 and isinstance(resp2.get("fiis"), list):
+                items = resp2["fiis"]
+        result = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            result.append({
+                "ticker":          item.get("ticker") or "",
+                "name":            item.get("name") or "",
+                "fund_type":       item.get("fund_type") or "",
+                "segment":         item.get("segment") or "",
+                "close_price":     item.get("close_price"),
+                "pvp":             item.get("pvp"),
+                "dividend_yield":  item.get("dividend_yield_ttm") or item.get("dividend_yield"),
+                "vacancy_pct":     item.get("vacancy_pct"),
+                "delinquency_pct": item.get("delinquency_pct"),
+                "liquidity":       None,  # não disponível no batch
+            })
+        return result
+    except Exception:
+        return []
+
+
+def _show_fii_screener(fiis_lista_atual: dict) -> None:
+    """Screener de FIIs com filtros e tabela colorida."""
+    st.markdown("### 🔎 Screener de FIIs")
+    st.caption("Filtre FIIs da Bolsai e adicione os melhores à sua lista.")
+
+    with st.expander("⚙️ Filtros", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        dy_min    = c1.number_input("DY mínimo (%)",      min_value=0.0, max_value=30.0, value=0.0, step=0.5, key="fscr_dy_min")
+        pvp_max   = c2.number_input("P/VP máximo",        min_value=0.0, max_value=5.0,  value=2.0, step=0.05, key="fscr_pvp_max")
+        pvp_min   = c3.number_input("P/VP mínimo",        min_value=0.0, max_value=5.0,  value=0.0, step=0.05, key="fscr_pvp_min")
+        c4, c5, c6 = st.columns(3)
+        vac_max   = c4.number_input("Vacância máx. (%)",  min_value=0.0, max_value=100.0, value=30.0, step=1.0, key="fscr_vac_max")
+        ina_max   = c5.number_input("Inadimp. máx. (%)",  min_value=0.0, max_value=100.0, value=10.0, step=0.5, key="fscr_ina_max")
+        score_min = c6.number_input("Score mínimo",       min_value=0,   max_value=100,   value=0,    step=5,   key="fscr_score_min")
+        c7, c8 = st.columns([2, 2])
+        tipo_opcoes_scr = ["Todos"] + list(_FII_TYPE_LABELS.values())
+        tipo_scr = c7.selectbox("Tipo", tipo_opcoes_scr, key="fscr_tipo")
+        col_busca, col_limpa = c8.columns(2)
+        buscar = col_busca.button("🔍 Buscar", key="btn_fscr_buscar", use_container_width=True, type="primary")
+        limpar = col_limpa.button("♻ Limpar cache", key="btn_fscr_limpar", use_container_width=True)
+
+    if limpar:
+        _fetch_fii_screener_batch.clear()
+        st.rerun()
+
+    if not buscar and "fii_screener_results" not in st.session_state:
+        st.info("Configure os filtros e clique **Buscar** para consultar a Bolsai.")
+        return
+
+    if buscar:
+        with st.spinner("Consultando Bolsai…"):
+            all_fiis = _fetch_fii_screener_batch(150)
+        st.session_state["fii_screener_results"] = all_fiis
+
+    all_fiis = st.session_state.get("fii_screener_results", [])
+    if not all_fiis:
+        st.warning("Nenhum FII retornado pela API. Verifique a conexão ou tente novamente.")
+        return
+
+    # ── Filtragem local ───────────────────────────────────────────
+    filtered = []
+    for fii in all_fiis:
+        dy  = fii.get("dividend_yield")
+        pvp = fii.get("pvp")
+        vac = fii.get("vacancy_pct")
+        ina = fii.get("delinquency_pct")
+        score, score_lbl, _ = sf.calculate_fii_score(fii)
+
+        if dy_min > 0 and (dy is None or dy < dy_min):
+            continue
+        if pvp is not None:
+            if pvp > pvp_max:
+                continue
+            if pvp_min > 0 and pvp < pvp_min:
+                continue
+        if vac_max < 100 and vac is not None and vac > vac_max:
+            continue
+        if ina_max < 100 and ina is not None and ina > ina_max:
+            continue
+        if score_min > 0 and (score is None or score < score_min):
+            continue
+        if tipo_scr != "Todos":
+            ft = (fii.get("fund_type") or "").strip()
+            lbl = _FII_TYPE_LABELS.get(ft.lower(), ft.capitalize())
+            if lbl != tipo_scr:
+                continue
+        filtered.append(fii)
+
+    st.info(f"**{len(filtered)}** FIIs encontrados de **{len(all_fiis)}** consultados.")
+
+    if not filtered:
+        return
+
+    # ── Tabela de resultados ──────────────────────────────────────
+    st.markdown(
+        _fii_table_html(filtered),
+        unsafe_allow_html=True,
+    )
+
+    # ── Adicionar à lista atual ───────────────────────────────────
+    st.markdown("")
+    scr_tickers = [f["ticker"] for f in filtered if f.get("ticker")]
+    scr_sel = st.multiselect(
+        "Selecione FIIs para adicionar",
+        scr_tickers,
+        key="fscr_sel_add",
+        placeholder="Selecione um ou mais tickers…",
+    )
+    if st.button("➕ Adicionar selecionados à lista", key="btn_fscr_add", use_container_width=True, disabled=not scr_sel):
+        added, erros = [], []
+        with st.spinner("Buscando dados completos…"):
+            for _t in scr_sel:
+                if _t in fiis_lista_atual:
+                    continue
+                _d = _fetch_fii(_t)
+                if _d.get("error"):
+                    erros.append(f"{_t}: {_d['error']}")
+                else:
+                    fiis_lista_atual[_t] = _d
+                    added.append(_t)
+        _save_all()
+        if added:
+            st.success(f"Adicionados: {', '.join(added)}")
+        if erros:
+            for e in erros:
+                st.error(e)
+        if added:
+            st.rerun()
+
+
+def _show_fii_lista() -> None:
+    """Conteúdo da sub-aba 'Minha lista' dentro da aba FIIs."""
 
     # ── Seletor de lista FII ─────────────────────────────────────
     fii_listas_keys = list(st.session_state.fiis_listas.keys())
@@ -2241,20 +2459,18 @@ def _show_fii_tab() -> None:
                     st.rerun()
 
     # ── Filtro por tipo ───────────────────────────────────────────
-    _tipos_disponiveis = sorted({
-        (f.get("fund_type") or "N/D").capitalize()
-        for f in fiis_atuais.values()
-    })
+    def _tipo_label(fii: dict) -> str:
+        ft = (fii.get("fund_type") or "").strip()
+        return _FII_TYPE_LABELS.get(ft.lower(), ft.capitalize()) if ft else ""
+
+    _tipos_disponiveis = sorted({_tipo_label(f) for f in fiis_atuais.values() if _tipo_label(f)})
     _tipo_opcoes = ["Todos"] + _tipos_disponiveis
     _tipo_filtro = st.selectbox("Filtrar por tipo", _tipo_opcoes, key="fii_tipo_filtro")
 
     # Aplica filtro
     fiis_filtrados = list(fiis_atuais.values())
     if _tipo_filtro != "Todos":
-        fiis_filtrados = [
-            f for f in fiis_filtrados
-            if (f.get("fund_type") or "").lower() == _tipo_filtro.lower()
-        ]
+        fiis_filtrados = [f for f in fiis_filtrados if _tipo_label(f) == _tipo_filtro]
 
     if not fiis_atuais:
         st.info("Nenhum FII na lista. Adicione um ticker acima.")
@@ -2312,6 +2528,18 @@ def _show_fii_tab() -> None:
         _show_fii_detail(fiis_atuais[_det_chosen])
 
 
+def _show_fii_tab() -> None:
+    st.markdown("## 🏢 Análise de FIIs")
+    tab_lista, tab_scr_fii = st.tabs(["📋 Minha lista", "🔎 Screener"])
+    with tab_lista:
+        _show_fii_lista()
+    with tab_scr_fii:
+        fiis_atuais_scr: dict = st.session_state.fiis_listas.get(
+            st.session_state.lista_fii_atual, {}
+        )
+        _show_fii_screener(fiis_atuais_scr)
+
+
 # ────────────────────────────────────────────────────────────────
 # App principal
 # ────────────────────────────────────────────────────────────────
@@ -2327,6 +2555,10 @@ header {visibility: hidden;}
 footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
+    if "usuario_atual" not in st.session_state:
+        _tela_selecao_usuario()
+        return
+
     _init_state()
     _sidebar()
 
