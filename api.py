@@ -6,6 +6,8 @@ import os
 import requests
 from typing import Optional
 
+from config import SECTOR_REMAP
+
 BASE_URL = "https://api.usebolsai.com/api/v1"
 _TIMEOUT = 15  # segundos
 
@@ -163,7 +165,7 @@ def get_all_stock_data(ticker: str) -> dict:
             "ticker":             fund.get("ticker", t),
             "corporate_name":     fund.get("corporate_name", ""),
             "trade_name":         (company or {}).get("trade_name", ""),
-            "sector":             (company or {}).get("sector", ""),
+            "sector":             SECTOR_REMAP.get(t, (company or {}).get("sector", "")),
             "reference_date":     fund.get("reference_date"),
             # Preço
             "close_price":        close_price,

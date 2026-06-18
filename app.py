@@ -196,6 +196,34 @@ def _fmt_mcap(v) -> str:
     return f"R$ {v:,.0f}"
 
 
+def _fmt_quarter(date_str: str) -> str:
+    """Converte 'YYYY-MM-DD' para formato trimestral '1T26'."""
+    if not date_str:
+        return "—"
+    try:
+        d = datetime.fromisoformat(date_str[:10]).date()
+        q = (d.month - 1) // 3 + 1
+        return f"{q}T{str(d.year)[2:]}"
+    except Exception:
+        return date_str[:7]
+
+
+def _quarter_staleness(date_str: str) -> str:
+    """Retorna classificação de cor para idade do balanço: '' / 'Atenção' / 'Proibitivo'."""
+    if not date_str:
+        return ""
+    try:
+        d = datetime.fromisoformat(date_str[:10]).replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - d).days
+        if age_days > 365:
+            return "Proibitivo"
+        if age_days > 180:
+            return "Atenção"
+        return ""
+    except Exception:
+        return ""
+
+
 def _staleness_color(updated_at_iso: Optional[str]) -> str:
     if not updated_at_iso:
         return "#f44336"
@@ -330,14 +358,19 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         sector = s.get("sector", "")
         classifications = sc.classify_all(s)
 
+        ref_date = s.get("reference_date", "")
         display_row = {
-            "Ticker":  s.get("ticker", ""),
-            "Empresa": s.get("trade_name") or s.get("corporate_name", ""),
-            "Setor":   sector,
-            "Preço":   _fmt_price(s.get("close_price")),
-            "Var.Dia": _fmt_pct(s.get("daily_change_pct")),
+            "Ticker":   s.get("ticker", ""),
+            "Empresa":  s.get("trade_name") or s.get("corporate_name", ""),
+            "Setor":    sector,
+            "Balanço":  _fmt_quarter(ref_date),
+            "Preço":    _fmt_price(s.get("close_price")),
+            "Var.Dia":  _fmt_pct(s.get("daily_change_pct")),
         }
-        class_row = {"Ticker": s.get("ticker", ""), "Empresa": "", "Setor": "", "Preço": "", "Var.Dia": ""}
+        class_row = {
+            "Ticker": s.get("ticker", ""), "Empresa": "", "Setor": "",
+            "Balanço": _quarter_staleness(ref_date), "Preço": "", "Var.Dia": "",
+        }
 
         score = s.get("score")
         label = s.get("score_label", "")
@@ -375,7 +408,7 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         "Setor Bancário": "#37474f",
         "NA":             "#37474f",
     }
-    colored_cols = {"Score", "P/VP"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
+    colored_cols = {"Score", "P/VP", "Balanço"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
     def styler_fn(df: pd.DataFrame) -> pd.DataFrame:
         styles = pd.DataFrame("", index=df.index, columns=df.columns)
@@ -864,6 +897,43 @@ def _show_detail(s: dict):
                 "ou o site do Banco Central do Brasil."
             )
 
+    # ── Anotações do usuário ────────────────────────────────────
+    st.divider()
+    st.subheader("📝 Minhas Anotações")
+    _ticker = s.get("ticker", "")
+    _notas_key = f"notas_{_ticker}"
+
+    _saved_data = load_data()
+    _notas_entry = _saved_data.get(_ticker, {})
+    _notas_text = _notas_entry.get("notas", "")
+    _notas_updated = _notas_entry.get("notas_updated_at", "")
+
+    # Inicializa session_state com o valor salvo (apenas na primeira renderização do ticker)
+    if _notas_key not in st.session_state:
+        st.session_state[_notas_key] = _notas_text
+
+    def _save_notas(_key=_notas_key, _t=_ticker):
+        new_text = st.session_state[_key]
+        d = load_data()
+        if _t in d:
+            d[_t]["notas"] = new_text
+            d[_t]["notas_updated_at"] = datetime.now(timezone.utc).isoformat()
+            save_data(d)
+
+    st.text_area(
+        "Observações sobre esta ação:",
+        key=_notas_key,
+        on_change=_save_notas,
+        height=120,
+        placeholder="Escreva sua tese, lembretes ou observações sobre esta ação…",
+    )
+    if _notas_updated:
+        try:
+            _dt = datetime.fromisoformat(_notas_updated).astimezone()
+            st.caption(f"Última edição: {_dt.strftime('%d/%m/%Y %H:%M')}")
+        except Exception:
+            st.caption(f"Última edição: {_notas_updated[:16]}")
+
     # ── Outros indicadores ─────────────────────────────────────
     st.divider()
     with st.expander("📋 Outros indicadores", expanded=False):
@@ -1251,6 +1321,7 @@ div[data-testid="stPopover"] button:hover {
                 "Score":           st.column_config.TextColumn("Score", width="medium"),
                 "Empresa":         st.column_config.TextColumn("Empresa", width="medium"),
                 "Setor":           st.column_config.TextColumn("Setor", width="medium"),
+                "Balanço":         st.column_config.TextColumn("Balanço", width="small"),
                 "Dív.Líq/EBITDA":  st.column_config.TextColumn("Dív/EBITDA", width="small"),
                 "ROE":             st.column_config.TextColumn("ROE", width="small"),
                 "EV/EBITDA":       st.column_config.TextColumn("EV/EBITDA", width="small"),
