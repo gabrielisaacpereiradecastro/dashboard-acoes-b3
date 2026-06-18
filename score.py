@@ -102,7 +102,7 @@ def classify_pl(value, sector: str) -> tuple[str, str]:
         return "Proibitivo", "Prejuízo"
     display = f"{value:.2f}x"
 
-    if value < 5:         return "Atenção", display   # value trap
+    if value < 5:         return "Inconclusivo", f"⚠️ {display}"  # possível armadilha de valor
     elif value <= 10:     return "Excelente", display
     elif value <= 15:     return "Bom", display
     elif value <= 20:     return "Razoável", display
@@ -285,7 +285,7 @@ def calculate_score(stock: dict) -> tuple[float | None, str, dict]:
 
     for ind, (cls, disp) in classifications.items():
         w = INDICATOR_WEIGHTS[ind]
-        if cls in ("ND", "NA"):
+        if cls in ("ND", "NA", "Inconclusivo"):
             breakdown[ind] = {
                 "classification": cls,
                 "display": disp,

@@ -39,24 +39,26 @@ SCORE_LEVELS = [
 
 # Cores de fundo (CSS) para cada classificação — otimizadas para dark mode
 BG_COLORS = {
-    "Excelente":  "#1b5e20",
-    "Bom":        "#2e7d32",
-    "Razoável":   "#7b5800",
-    "Atenção":    "#bf360c",
-    "Proibitivo": "#7f0000",
-    "NA":         "#37474f",
-    "ND":         "#37474f",
+    "Excelente":    "#1b5e20",
+    "Bom":          "#2e7d32",
+    "Razoável":     "#7b5800",
+    "Atenção":      "#bf360c",
+    "Proibitivo":   "#7f0000",
+    "Inconclusivo": "#4a3800",
+    "NA":           "#37474f",
+    "ND":           "#37474f",
 }
 
 # Emoji de cor para exibição rápida
 COLOR_EMOJI = {
-    "Excelente":  "🟢",
-    "Bom":        "🟩",
-    "Razoável":   "🟡",
-    "Atenção":    "🟠",
-    "Proibitivo": "🔴",
-    "NA":         "⬜",
-    "ND":         "⬜",
+    "Excelente":    "🟢",
+    "Bom":          "🟩",
+    "Razoável":     "🟡",
+    "Atenção":      "🟠",
+    "Proibitivo":   "🔴",
+    "Inconclusivo": "⚠️",
+    "NA":           "⬜",
+    "ND":           "⬜",
 }
 
 # Cor do texto do Score por faixa (hex, para st.markdown)

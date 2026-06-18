@@ -18,6 +18,7 @@ import yfinance as yf
 
 import api
 import score as sc
+import score_fii as sf
 from config import (
     BG_COLORS, COLOR_EMOJI, INDICATOR_LABELS, INDICATOR_WEIGHTS,
     SCORE_COLORS, SECTOR_REMAP,
@@ -101,7 +102,7 @@ INDICATOR_INFO: dict[str, dict[str, str]] = {
         "por_que_importa": "Referência rápida de caro ou barato.",
         "interpretacao": "Existe faixa ideal — muito baixo pode ser armadilha de valor, muito alto significa pagar caro pelo crescimento.",
         "faixa_ideal": "5–10× Excelente · 10–15× Bom · 15–20× Razoável · 20–30× Atenção · acima ou negativo: Proibitivo",
-        "atencao": "P/L negativo significa prejuízo. P/L abaixo de 5 pode indicar empresa em declínio ou resultado não-recorrente.",
+        "atencao": "⚠️ P/L < 5× é marcado como **Inconclusivo** — pode ser armadilha de valor ou lucro não-recorrente. Confirme se o resultado é sustentável antes de concluir que a ação está barata. P/L negativo = prejuízo.",
     },
     "ebitda_margin": {
         "o_que_mede": "Percentual da receita que se converte em caixa operacional antes de juros, impostos e depreciação.",
@@ -339,8 +340,16 @@ def _init_state():
         st.session_state.debug_log: list[str] = []
     if "debug_raw_fund" not in st.session_state:
         st.session_state.debug_raw_fund: Optional[dict] = None
-    if "show_nova_lista" not in st.session_state:
-        st.session_state.show_nova_lista = False
+    if "confirm_del_lista" not in st.session_state:
+        st.session_state.confirm_del_lista = False
+    if "fiis_listas" not in st.session_state:
+        st.session_state.fiis_listas = {"🏢 FIIs": {}}
+    if "lista_fii_atual" not in st.session_state:
+        st.session_state.lista_fii_atual = "🏢 FIIs"
+    if "selected_fii" not in st.session_state:
+        st.session_state.selected_fii = None
+    if "confirm_del_fii_lista" not in st.session_state:
+        st.session_state.confirm_del_fii_lista = False
 
 
 # ────────────────────────────────────────────────────────────────
@@ -1338,11 +1347,24 @@ def _show_detail(s: dict):
             st.caption(f"Última edição: {_notas_updated[:16]}")
 
     # ── Outros indicadores ─────────────────────────────────────
+    _OUTROS_INFO: dict[str, str] = {
+        "ROA":                "**Return on Assets** — Lucro líquido / Ativo total. Mede a eficiência com que a empresa usa seus ativos para gerar lucro. Acima de 5% é satisfatório para a maioria dos setores.",
+        "ROIC":               "**Return on Invested Capital** — Lucro operacional após impostos / Capital investido. Indica se a empresa cria valor acima do custo de capital. ROIC > WACC = geração de valor.",
+        "Margem Líquida":     "**Net Margin** — Lucro líquido / Receita líquida. Percentual de cada real de receita que se converte em lucro após todas as despesas e impostos.",
+        "Margem Bruta":       "**Gross Margin** — (Receita − Custo dos produtos) / Receita. Indica o poder de precificação e a eficiência produtiva antes das despesas operacionais.",
+        "LPA":                "**Lucro por Ação** — Lucro líquido / número de ações. Base para calcular o P/L. Crescimento consistente do LPA sinaliza geração de valor para o acionista.",
+        "VPA":                "**Valor Patrimonial por Ação** — Patrimônio líquido / número de ações. Comparado ao preço de mercado (P/VP), indica se a ação negocia com prêmio ou desconto em relação ao balanço.",
+        "Liq. Corrente":      "**Current Ratio** — Ativo circulante / Passivo circulante. Acima de 1,5× indica boa folga de caixa para honrar obrigações de curto prazo. Abaixo de 1× é sinal de atenção.",
+        "EBITDA (R$ mi)":     "**EBITDA** — Lucro antes de juros, impostos, depreciação e amortização, em R$ milhões. Proxy do caixa operacional; base para indicadores como EV/EBITDA e Dív/EBITDA.",
+        "Rec. Líq. (R$ mi)":  "**Receita Líquida** — Faturamento após deduções fiscais e devoluções, em R$ milhões. Principal linha de crescimento; base para cálculo das margens.",
+        "Lucro Líq. (R$ mi)": "**Lucro Líquido** — Resultado final após todas as despesas, juros e impostos, em R$ milhões. Lucro negativo (prejuízo) classifica o P/L como Proibitivo.",
+    }
     st.divider()
     with st.expander("📋 Outros indicadores", expanded=False):
-        cols = st.columns(3)
+        _gross_margin = s.get("gross_margin")
         items = [
             ("Margem Líquida",      f"{net_margin:.1f}%" if net_margin is not None else "N/D"),
+            ("Margem Bruta",        f"{_gross_margin:.1f}%" if _gross_margin is not None else "N/D"),
             ("ROA",                 f"{roa:.1f}%" if roa is not None else "N/D"),
             ("ROIC",                f"{roic:.1f}%" if roic is not None else "N/D"),
             ("LPA",                 f"R$ {s['lpa']:.2f}" if s.get("lpa") else "N/D"),
@@ -1352,8 +1374,14 @@ def _show_detail(s: dict):
             ("Rec. Líq. (R$ mi)",   f"{s['net_revenue']/1000:.0f}" if s.get("net_revenue") else "N/D"),
             ("Lucro Líq. (R$ mi)",  f"{s['net_income']/1000:.0f}" if s.get("net_income") else "N/D"),
         ]
+        cols = st.columns(3)
         for i, (lbl, val) in enumerate(items):
-            cols[i % 3].metric(lbl, val)
+            with cols[i % 3]:
+                c_met, c_info = st.columns([4, 1])
+                c_met.metric(lbl, val)
+                if lbl in _OUTROS_INFO:
+                    with c_info.popover("ℹ️", use_container_width=True):
+                        st.markdown(_OUTROS_INFO[lbl])
 
 
 # ────────────────────────────────────────────────────────────────
@@ -1413,6 +1441,7 @@ _SCREENER_PRESETS: dict = {
     "🏆 Fundamentalista": {"roe_min": 15, "pl_max": 15, "nd_max": 2, "mg_min": 12, "ev_max": 15, "score_min": 65, "excl_bancos": True},
     "💰 Dividendos":      {"roe_min": 12, "pl_max": 20, "nd_max": 3, "mg_min": 10, "ev_max": 20, "score_min": 55, "excl_bancos": False},
     "🚀 Crescimento":     {"roe_min": 18, "pl_max": 25, "nd_max": 2, "mg_min": 15, "ev_max": 20, "score_min": 60, "excl_bancos": True},
+    "🎯 Elite ≥ 80":      {"roe_min": 0,  "pl_max": 50, "nd_max": 5, "mg_min":  0, "ev_max": 20, "score_min": 80, "excl_bancos": False},
 }
 
 
@@ -1636,48 +1665,62 @@ def _sidebar():
         listas_keys = list(st.session_state.todas_listas.keys())
         cur_idx = listas_keys.index(st.session_state.lista_atual) if st.session_state.lista_atual in listas_keys else 0
 
-        col_sel, col_nadd, col_ndel = st.columns([5, 1, 1])
-        with col_sel:
-            chosen_lista = st.selectbox(
-                "Lista", listas_keys, index=cur_idx,
-                key="sidebar_lista_sel", label_visibility="collapsed",
-            )
-        with col_nadd:
-            if st.button("＋", key="btn_nova_lista", help="Nova lista"):
-                st.session_state.show_nova_lista = not st.session_state.get("show_nova_lista", False)
-        with col_ndel:
-            _can_del = len(st.session_state.todas_listas) > 1
-            if st.button("🗑", key="btn_del_lista", help="Excluir lista atual", disabled=not _can_del):
-                _lista_del = st.session_state.lista_atual
-                del st.session_state.todas_listas[_lista_del]
-                _nova = list(st.session_state.todas_listas.keys())[0]
-                _switch_list(_nova)
-                _save_all()
-                st.rerun()
+        chosen_lista = st.selectbox(
+            "Lista", listas_keys, index=cur_idx,
+            key="sidebar_lista_sel", label_visibility="collapsed",
+        )
 
         # Detecta mudança de lista pelo selectbox
         if chosen_lista != st.session_state.lista_atual:
             _switch_list(chosen_lista)
             st.rerun()
 
-        # Formulário "Nova lista"
-        if st.session_state.get("show_nova_lista"):
-            _nome_input = st.text_input("Nome da nova lista:", key="nova_lista_nome_input",
-                                        placeholder="ex: Dividendos, Longo Prazo…")
-            _col_ok, _col_can = st.columns(2)
-            with _col_ok:
-                if st.button("✅ Criar", key="btn_criar_lista", use_container_width=True):
-                    _nome = _nome_input.strip()
-                    if _nome and _nome not in st.session_state.todas_listas:
-                        st.session_state.todas_listas[_nome] = {}
-                        _save_all()
-                        _switch_list(_nome)
-                    st.session_state.show_nova_lista = False
+        with st.expander("⚙️ Gerenciar listas"):
+            _nome_input = st.text_input(
+                "Nome da nova lista", key="nova_lista_nome_input",
+                placeholder="ex: Dividendos, Longo Prazo…",
+                label_visibility="collapsed",
+            )
+            if st.button("➕ Criar lista", key="btn_criar_lista", use_container_width=True):
+                _nome = _nome_input.strip()
+                if not _nome:
+                    st.warning("Digite um nome.")
+                elif _nome in st.session_state.todas_listas:
+                    st.warning("Já existe uma lista com esse nome.")
+                else:
+                    st.session_state.todas_listas[_nome] = {}
+                    _save_all()
+                    _switch_list(_nome)
                     st.rerun()
-            with _col_can:
-                if st.button("✗ Cancelar", key="btn_cancel_lista", use_container_width=True):
-                    st.session_state.show_nova_lista = False
-                    st.rerun()
+
+            st.divider()
+            _can_del = len(st.session_state.todas_listas) > 1
+            if not _can_del:
+                st.caption("Crie outra lista antes de excluir esta.")
+            else:
+                if not st.session_state.get("confirm_del_lista"):
+                    if st.button(
+                        f"🗑 Excluir lista atual  ({st.session_state.lista_atual})",
+                        key="btn_del_lista_ask", use_container_width=True,
+                    ):
+                        st.session_state.confirm_del_lista = True
+                        st.rerun()
+                else:
+                    st.warning(f"Excluir **{st.session_state.lista_atual}** e todas as ações nela?")
+                    _cd1, _cd2 = st.columns(2)
+                    with _cd1:
+                        if st.button("✅ Confirmar", key="btn_del_lista_ok", use_container_width=True):
+                            _lista_del = st.session_state.lista_atual
+                            del st.session_state.todas_listas[_lista_del]
+                            _nova = list(st.session_state.todas_listas.keys())[0]
+                            _switch_list(_nova)
+                            _save_all()
+                            st.session_state.confirm_del_lista = False
+                            st.rerun()
+                    with _cd2:
+                        if st.button("✗ Cancelar", key="btn_del_lista_cancel", use_container_width=True):
+                            st.session_state.confirm_del_lista = False
+                            st.rerun()
 
         # Botão especial da lista "🔍 Pesquisa"
         if st.session_state.lista_atual == "🔍 Pesquisa" and st.session_state.acoes:
@@ -1861,6 +1904,412 @@ def _sidebar():
                         if st.session_state.selected_ticker == ticker:
                             st.session_state.selected_ticker = None
                         st.rerun()
+
+
+# ────────────────────────────────────────────────────────────────
+# Aba FIIs
+# ────────────────────────────────────────────────────────────────
+
+_FII_TYPE_LABELS = {
+    "papel":        "📄 Papel",
+    "tijolo":       "🧱 Tijolo",
+    "hibrido":      "🔀 Híbrido",
+    "fof":          "🏗 FOF",
+    "desenvolvimento": "🏗 Desenvolvimento",
+}
+
+_FII_COL_HEADERS = [
+    "Ticker", "Nome", "Tipo", "Preço", "DY TTM", "P/VP",
+    "Vacância", "Inadimp.", "Liquidez", "Score",
+]
+
+_FII_SCORE_COLORS = {
+    "Excelente": "#1b5e20",
+    "Bom":       "#2e7d32",
+    "Razoável":  "#7b5800",
+    "Atenção":   "#bf360c",
+    "Evitar":    "#7f0000",
+}
+
+
+@st.cache_data(ttl=3600)
+def _fetch_fii(ticker: str) -> dict:
+    try:
+        return api.get_all_fii_data(ticker.strip().upper())
+    except Exception as e:
+        return {"ticker": ticker.upper(), "error": str(e)}
+
+
+def _fmt_fii_val(key: str, fii: dict):
+    """Formata o valor de exibição para a tabela de FIIs."""
+    v = fii.get(key)
+    if key == "close_price":
+        return f"R$ {v:.2f}" if v is not None else "N/D"
+    if key == "dividend_yield":
+        return f"{v:.1f}%" if v is not None else "N/D"
+    if key == "pvp":
+        return f"{v:.2f}x" if v is not None else "N/D"
+    if key in ("vacancy_pct", "delinquency_pct"):
+        return f"{v:.1f}%" if v is not None else "N/D"
+    if key == "liquidity":
+        if v is None:
+            return "N/D"
+        if v >= 1_000_000:
+            return f"R$ {v/1_000_000:.1f}M"
+        if v >= 1_000:
+            return f"R$ {v/1_000:.0f}k"
+        return f"R$ {v:.0f}"
+    return "N/D"
+
+
+def _fii_table_html(fiis_data: list[dict]) -> str:
+    """Renderiza tabela de FIIs com células coloridas por classificação."""
+    th = "padding:8px 10px;color:#e8eaf6;border-bottom:2px solid #333;background:#1a1d2e;font-weight:600"
+    html = "<div style='overflow-x:auto'>"
+    html += "<table style='width:100%;border-collapse:collapse;font-size:0.87rem'>"
+    html += "<thead><tr>"
+    for h in _FII_COL_HEADERS:
+        html += f"<th style='{th};text-align:center'>{h}</th>"
+    html += "</tr></thead><tbody>"
+
+    for i, fii in enumerate(fiis_data):
+        row_bg = "#0e1117" if i % 2 == 0 else "#131629"
+        score, score_lbl, breakdown = sf.calculate_fii_score(fii)
+        html += f"<tr style='background:{row_bg}'>"
+
+        # Ticker
+        html += f"<td style='padding:6px 10px;text-align:center;font-weight:700;color:#90caf9'>{fii.get('ticker','')}</td>"
+        # Nome (truncado)
+        nome = (fii.get("name") or "")[:30]
+        html += f"<td style='padding:6px 10px;color:#c8cce0'>{nome}</td>"
+        # Tipo
+        ft = (fii.get("fund_type") or "").lower()
+        tipo_lbl = _FII_TYPE_LABELS.get(ft, fii.get("fund_type") or "N/D")
+        html += f"<td style='padding:6px 10px;text-align:center;color:#c8cce0'>{tipo_lbl}</td>"
+
+        # Preço
+        price_disp = _fmt_fii_val("close_price", fii)
+        html += f"<td style='padding:6px 10px;text-align:center;color:#e8eaf6'>{price_disp}</td>"
+
+        # DY TTM
+        dy_cls, dy_disp = sf.classify_fii_dy(fii.get("dividend_yield"))
+        dy_bg = BG_COLORS.get(dy_cls, "#37474f")
+        html += f"<td style='padding:6px 10px;text-align:center;background:{dy_bg};border-radius:4px'>{dy_disp}</td>"
+
+        # P/VP
+        pvp_cls, pvp_disp = sf.classify_fii_pvp(fii.get("pvp"))
+        pvp_bg = BG_COLORS.get(pvp_cls, "#37474f")
+        html += f"<td style='padding:6px 10px;text-align:center;background:{pvp_bg};border-radius:4px'>{pvp_disp}</td>"
+
+        # Vacância
+        vac_cls, vac_disp = sf.classify_fii_vacancy(fii.get("vacancy_pct"))
+        vac_bg = BG_COLORS.get(vac_cls, "#37474f")
+        html += f"<td style='padding:6px 10px;text-align:center;background:{vac_bg};border-radius:4px'>{vac_disp}</td>"
+
+        # Inadimplência
+        ina_cls, ina_disp = sf.classify_fii_delinquency(fii.get("delinquency_pct"))
+        ina_bg = BG_COLORS.get(ina_cls, "#37474f")
+        html += f"<td style='padding:6px 10px;text-align:center;background:{ina_bg};border-radius:4px'>{ina_disp}</td>"
+
+        # Liquidez
+        liq_cls, liq_disp = sf.classify_fii_liquidity(fii.get("liquidity"))
+        liq_bg = BG_COLORS.get(liq_cls, "#37474f")
+        html += f"<td style='padding:6px 10px;text-align:center;background:{liq_bg};border-radius:4px'>{liq_disp}</td>"
+
+        # Score
+        score_bg = _FII_SCORE_COLORS.get(score_lbl, "#37474f")
+        score_str = f"{score:.0f}" if score is not None else "—"
+        html += (
+            f"<td style='padding:6px 10px;text-align:center;background:{score_bg};"
+            f"border-radius:4px;font-weight:700'>{score_str} <span style='font-size:0.75rem;font-weight:400'>({score_lbl})</span></td>"
+        )
+
+        html += "</tr>"
+
+    html += "</tbody></table></div>"
+    return html
+
+
+def _show_fii_detail(fii: dict) -> None:
+    score, score_lbl, breakdown = sf.calculate_fii_score(fii)
+    score_color = _FII_SCORE_COLORS.get(score_lbl, "#9e9e9e")
+
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        st.markdown(f"### {fii.get('ticker')} — {fii.get('name','')}")
+        ft = fii.get("fund_type") or ""
+        seg = fii.get("segment") or ""
+        st.caption(f"{_FII_TYPE_LABELS.get(ft.lower(), ft)}  •  {seg}")
+    with c2:
+        if score is not None:
+            st.markdown(
+                f"<div style='text-align:center;padding:12px;background:{score_color};"
+                f"border-radius:8px;margin-top:4px'>"
+                f"<div style='font-size:2rem;font-weight:700'>{score:.0f}</div>"
+                f"<div style='font-size:0.85rem'>{score_lbl}</div></div>",
+                unsafe_allow_html=True,
+            )
+
+    st.divider()
+
+    # Métricas principais
+    price = fii.get("close_price")
+    chg = fii.get("daily_change_pct")
+    cols_m = st.columns(5)
+    cols_m[0].metric("Preço", f"R$ {price:.2f}" if price else "N/D",
+                     delta=f"{chg:+.2f}%" if chg is not None else None)
+    dy = fii.get("dividend_yield")
+    cols_m[1].metric("DY TTM", f"{dy:.1f}%" if dy is not None else "N/D")
+    pvp = fii.get("pvp")
+    cols_m[2].metric("P/VP", f"{pvp:.2f}x" if pvp is not None else "N/D")
+    vac = fii.get("vacancy_pct")
+    cols_m[3].metric("Vacância", f"{vac:.1f}%" if vac is not None else "N/D")
+    ina = fii.get("delinquency_pct")
+    cols_m[4].metric("Inadimplência", f"{ina:.1f}%" if ina is not None else "N/D")
+
+    st.divider()
+
+    # Score breakdown
+    with st.expander("📊 Composição do Score", expanded=True):
+        _ind_labels = {
+            "dividend_yield": "DY TTM",
+            "pvp":            "P/VP",
+            "vacancy_pct":    "Vacância",
+            "liquidity":      "Liquidez",
+            "delinquency_pct": "Inadimplência",
+        }
+        _weights_pct = {k: f"{v*100:.0f}%" for k, v in sf.FII_WEIGHTS.items()}
+        for ind, bd in breakdown.items():
+            cls = bd["classification"]
+            bg = BG_COLORS.get(cls, "#37474f")
+            emoji = COLOR_EMOJI.get(cls, "⬜")
+            contrib = bd.get("contribution")
+            contrib_str = f"{contrib:.1f} pts" if contrib is not None else "—"
+            label_ind = _ind_labels.get(ind, ind)
+            st.markdown(
+                f"<div style='display:flex;align-items:center;gap:8px;margin:4px 0;"
+                f"padding:6px 10px;background:{bg};border-radius:6px'>"
+                f"<span style='font-size:1.1rem'>{emoji}</span>"
+                f"<span style='flex:1;font-weight:500'>{label_ind}</span>"
+                f"<span style='color:#ccc;font-size:0.8rem'>peso {_weights_pct[ind]}</span>"
+                f"<span style='margin-left:12px;font-weight:600'>{bd['display']}  "
+                f"<span style='font-size:0.75rem;opacity:0.8'>{contrib_str}</span></span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    # Dados complementares
+    with st.expander("🏢 Dados do fundo", expanded=False):
+        _nav = fii.get("net_asset_value")
+        _shares = fii.get("shares_outstanding")
+        _prop = fii.get("property_count")
+        _area = fii.get("total_area_sqm")
+        _adm = fii.get("administrator")
+        _mgmt = fii.get("management_type")
+        _inception = fii.get("inception_date")
+        _liq = fii.get("liquidity")
+
+        rows = [
+            ("Patrimônio Líquido",   f"R$ {_nav/1e6:.0f} mi" if _nav else "N/D"),
+            ("Cotas emitidas",       f"{_shares:,.0f}".replace(",", ".") if _shares else "N/D"),
+            ("Liquidez média (52s)", _fmt_fii_val("liquidity", fii)),
+            ("Nº de imóveis",        str(_prop) if _prop is not None else "N/D"),
+            ("Área total (m²)",      f"{_area:,.0f}".replace(",", ".") if _area else "N/D"),
+            ("Administrador",        _adm or "N/D"),
+            ("Gestão",               _mgmt or "N/D"),
+            ("Início",               _inception[:10] if _inception else "N/D"),
+        ]
+        for lbl, val in rows:
+            col_l, col_v = st.columns([2, 3])
+            col_l.markdown(f"**{lbl}**")
+            col_v.markdown(val)
+
+    # Composição de ativos
+    comp = fii.get("asset_composition")
+    if comp:
+        with st.expander("📂 Composição de ativos", expanded=False):
+            if isinstance(comp, list):
+                for item in comp:
+                    if isinstance(item, dict):
+                        nm = item.get("name") or item.get("asset") or str(item)
+                        pct = item.get("percentage") or item.get("pct") or item.get("weight")
+                        pct_str = f"{pct:.1f}%" if pct is not None else ""
+                        st.markdown(f"- **{nm}** {pct_str}")
+            elif isinstance(comp, dict):
+                for k, v in comp.items():
+                    st.markdown(f"- **{k}**: {v}")
+
+    # Top imóveis
+    top_props = fii.get("top_properties")
+    if top_props:
+        with st.expander("🏗 Principais imóveis", expanded=False):
+            if isinstance(top_props, list):
+                for item in top_props:
+                    if isinstance(item, dict):
+                        nm = item.get("name") or item.get("property") or str(item)
+                        loc = item.get("location") or item.get("city") or ""
+                        loc_str = f" — {loc}" if loc else ""
+                        pct = item.get("percentage") or item.get("pct")
+                        pct_str = f" ({pct:.1f}%)" if pct is not None else ""
+                        st.markdown(f"- **{nm}**{loc_str}{pct_str}")
+
+
+def _show_fii_tab() -> None:
+    st.markdown("## 🏢 Análise de FIIs")
+
+    # ── Seletor de lista FII ─────────────────────────────────────
+    fii_listas_keys = list(st.session_state.fiis_listas.keys())
+    cur_fii_idx = (
+        fii_listas_keys.index(st.session_state.lista_fii_atual)
+        if st.session_state.lista_fii_atual in fii_listas_keys else 0
+    )
+    chosen_fii_lista = st.selectbox(
+        "Lista FII", fii_listas_keys, index=cur_fii_idx, key="fii_lista_sel",
+    )
+    if chosen_fii_lista != st.session_state.lista_fii_atual:
+        st.session_state.lista_fii_atual = chosen_fii_lista
+        st.rerun()
+
+    with st.expander("⚙️ Gerenciar listas FII"):
+        _fii_nome_in = st.text_input(
+            "Nome da nova lista FII", key="nova_fii_lista_input",
+            placeholder="ex: FIIs Tijolo, Papel, Diversificado…",
+            label_visibility="collapsed",
+        )
+        if st.button("➕ Criar lista FII", key="btn_criar_fii_lista", use_container_width=True):
+            _fn = _fii_nome_in.strip()
+            if not _fn:
+                st.warning("Digite um nome.")
+            elif _fn in st.session_state.fiis_listas:
+                st.warning("Já existe uma lista com esse nome.")
+            else:
+                st.session_state.fiis_listas[_fn] = {}
+                st.session_state.lista_fii_atual = _fn
+                st.rerun()
+        st.divider()
+        _can_del_fii = len(st.session_state.fiis_listas) > 1
+        if not _can_del_fii:
+            st.caption("Crie outra lista antes de excluir esta.")
+        else:
+            if not st.session_state.get("confirm_del_fii_lista"):
+                if st.button(
+                    f"🗑 Excluir lista ({st.session_state.lista_fii_atual})",
+                    key="btn_del_fii_lista_ask", use_container_width=True,
+                ):
+                    st.session_state.confirm_del_fii_lista = True
+                    st.rerun()
+            else:
+                st.warning(f"Excluir **{st.session_state.lista_fii_atual}**?")
+                _dc1, _dc2 = st.columns(2)
+                with _dc1:
+                    if st.button("✅ Confirmar", key="btn_del_fii_ok", use_container_width=True):
+                        del st.session_state.fiis_listas[st.session_state.lista_fii_atual]
+                        st.session_state.lista_fii_atual = list(st.session_state.fiis_listas.keys())[0]
+                        st.session_state.confirm_del_fii_lista = False
+                        st.rerun()
+                with _dc2:
+                    if st.button("✗ Cancelar", key="btn_del_fii_cancel", use_container_width=True):
+                        st.session_state.confirm_del_fii_lista = False
+                        st.rerun()
+
+    fiis_atuais: dict = st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
+
+    st.divider()
+
+    # ── Adicionar FII ─────────────────────────────────────────────
+    col_in, col_btn = st.columns([4, 2])
+    with col_in:
+        fii_input = st.text_input(
+            "Ticker do FII", placeholder="Ex: HGLG11, KNRI11, MXRF11",
+            key="fii_ticker_input", label_visibility="collapsed",
+        )
+    with col_btn:
+        if st.button("➕ Adicionar FII", key="btn_add_fii", use_container_width=True):
+            _t = fii_input.strip().upper()
+            if not _t:
+                st.warning("Digite um ticker.")
+            elif _t in fiis_atuais:
+                st.info(f"{_t} já está na lista.")
+            else:
+                with st.spinner(f"Buscando {_t}…"):
+                    _fii_data = _fetch_fii(_t)
+                if _fii_data.get("error"):
+                    st.error(_fii_data["error"])
+                else:
+                    fiis_atuais[_t] = _fii_data
+                    st.success(f"{_t} adicionado.")
+                    st.rerun()
+
+    # ── Filtro por tipo ───────────────────────────────────────────
+    _tipos_disponiveis = sorted({
+        (f.get("fund_type") or "N/D").capitalize()
+        for f in fiis_atuais.values()
+    })
+    _tipo_opcoes = ["Todos"] + _tipos_disponiveis
+    _tipo_filtro = st.selectbox("Filtrar por tipo", _tipo_opcoes, key="fii_tipo_filtro")
+
+    # Aplica filtro
+    fiis_filtrados = list(fiis_atuais.values())
+    if _tipo_filtro != "Todos":
+        fiis_filtrados = [
+            f for f in fiis_filtrados
+            if (f.get("fund_type") or "").lower() == _tipo_filtro.lower()
+        ]
+
+    if not fiis_atuais:
+        st.info("Nenhum FII na lista. Adicione um ticker acima.")
+        return
+
+    # ── Botão remover ─────────────────────────────────────────────
+    col_rem, col_att = st.columns([3, 1])
+    with col_rem:
+        _fii_tickers = list(fiis_atuais.keys())
+        _rem_sel = st.selectbox("Remover FII", ["—"] + _fii_tickers, key="fii_remover_sel", label_visibility="collapsed")
+    with col_att:
+        if st.button("🗑 Remover", key="btn_rem_fii", use_container_width=True):
+            if _rem_sel != "—":
+                fiis_atuais.pop(_rem_sel, None)
+                if st.session_state.selected_fii == _rem_sel:
+                    st.session_state.selected_fii = None
+                st.rerun()
+        if st.button("🔄 Atualizar tudo", key="btn_att_fiis", use_container_width=True):
+            _fetch_fii.clear()
+            for _tt in list(fiis_atuais.keys()):
+                with st.spinner(f"Atualizando {_tt}…"):
+                    _nd = _fetch_fii(_tt)
+                if not _nd.get("error"):
+                    fiis_atuais[_tt] = _nd
+            st.rerun()
+
+    st.divider()
+
+    # ── Tabela ────────────────────────────────────────────────────
+    if fiis_filtrados:
+        st.markdown(
+            _fii_table_html(fiis_filtrados),
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info(f"Nenhum FII do tipo '{_tipo_filtro}' na lista.")
+
+    st.divider()
+
+    # ── Detalhe ───────────────────────────────────────────────────
+    st.markdown("### 🔍 Detalhe do FII")
+    _det_tickers = [f["ticker"] for f in fiis_atuais.values() if f.get("ticker")]
+    if not _det_tickers:
+        return
+    _det_default = 0
+    if st.session_state.selected_fii in _det_tickers:
+        _det_default = _det_tickers.index(st.session_state.selected_fii)
+    _det_chosen = st.selectbox(
+        "FII para detalhe", _det_tickers, index=_det_default,
+        key="fii_detalhe_sel",
+        format_func=lambda t: f"{t} — {fiis_atuais.get(t, {}).get('name', '')}",
+    )
+    st.session_state.selected_fii = _det_chosen
+    if _det_chosen:
+        _show_fii_detail(fiis_atuais[_det_chosen])
 
 
 # ────────────────────────────────────────────────────────────────
@@ -2085,25 +2534,10 @@ div[data-testid="stPopover"] button:hover {
         _show_screener()
 
     # ────────────────────────────────────────────────────────────
-    # Tab 4 — FIIs (placeholder)
+    # Tab 4 — FIIs
     # ────────────────────────────────────────────────────────────
     with tab_fii:
-        st.markdown("## 🏢 Análise de FIIs")
-        st.markdown("### Em breve — aguarde a próxima atualização")
-        st.markdown(
-            "A aba de Fundos de Investimento Imobiliário (FIIs) está em desenvolvimento. "
-            "Em breve estará disponível com os seguintes dados:"
-        )
-        st.markdown("""
-- **DY** — Dividend Yield TTM (12 meses)
-- **P/VP** — Preço sobre Valor Patrimonial
-- **Vacância** — taxa de vacância física e financeira
-- **Inadimplência** — percentual de inadimplentes na carteira
-- **Liquidez** — volume médio diário negociado
-- **Tipo de FII** — Papel, Tijolo, Híbrido, FOF, Desenvolvimento
-- **Segmento** — Lajes corporativas, Galpões logísticos, Shoppings, Residencial, etc.
-- **Comparativo entre FIIs** com tabela colorida e score especializado
-""")
+        _show_fii_tab()
 
 
 if __name__ == "__main__":

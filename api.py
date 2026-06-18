@@ -156,6 +156,75 @@ def get_companies_by_sector(sector: str, limit: int = 20) -> Optional[dict]:
 
 
 # ────────────────────────────────────────────────────────────────
+# FIIs (Pro)
+# ────────────────────────────────────────────────────────────────
+
+def get_fii(ticker: str) -> Optional[dict]:
+    """GET /fiis/{ticker} — dados completos de um FII."""
+    return _get(f"fiis/{ticker.upper()}")
+
+
+def get_fii_screener(limit: int = 20, **filters) -> Optional[dict]:
+    """GET /fiis/screener — screener de FIIs."""
+    params: dict = {"limit": limit}
+    params.update({k: v for k, v in filters.items() if v is not None})
+    return _get("fiis/screener", params=params)
+
+
+def get_fii_list(limit: int = 100, offset: int = 0) -> Optional[dict]:
+    """GET /fiis — lista paginada de FIIs."""
+    return _get("fiis", params={"limit": limit, "offset": offset})
+
+
+def get_all_fii_data(ticker: str) -> dict:
+    """Busca dados completos de um FII: /fiis/{ticker} + /stocks/{ticker}/stats."""
+    t = ticker.strip().upper()
+    result: dict = {"ticker": t, "error": None}
+
+    fii = get_fii(t)
+    if fii is None:
+        result["error"] = f"FII '{t}' não encontrado na Bolsai."
+        return result
+
+    stats = get_stock_stats(t)
+    close_price = fii.get("close_price") or (stats or {}).get("close")
+    avg_vol = (stats or {}).get("avg_volume_52w")
+    liquidity_brl: Optional[float] = None
+    if avg_vol and close_price:
+        liquidity_brl = avg_vol * close_price
+
+    result.update({
+        "ticker":            fii.get("ticker", t),
+        "name":              fii.get("name", ""),
+        "fund_type":         fii.get("fund_type") or "N/D",
+        "segment":           fii.get("segment", ""),
+        "close_price":       close_price,
+        "daily_change_pct":  (stats or {}).get("daily_change_pct"),
+        "week_52_low":       (stats or {}).get("week_52_low"),
+        "week_52_high":      (stats or {}).get("week_52_high"),
+        "pvp":               fii.get("pvp"),
+        "dividend_yield":    fii.get("dividend_yield_ttm"),
+        "vacancy_pct":       fii.get("vacancy_pct"),
+        "delinquency_pct":   fii.get("delinquency_pct"),
+        "leased_pct":        fii.get("leased_pct"),
+        "net_asset_value":   fii.get("net_asset_value"),
+        "shares_outstanding":fii.get("shares_outstanding"),
+        "total_shareholders":fii.get("total_shareholders"),
+        "administrator":     fii.get("administrator"),
+        "management_type":   fii.get("management_type"),
+        "inception_date":    fii.get("inception_date"),
+        "property_count":    fii.get("property_count"),
+        "total_area_sqm":    fii.get("total_area_sqm"),
+        "asset_composition": fii.get("asset_composition"),
+        "top_properties":    fii.get("top_properties"),
+        "reference_date":    fii.get("reference_date"),
+        "liquidity":         liquidity_brl,
+        "avg_volume_52w":    avg_vol,
+    })
+    return result
+
+
+# ────────────────────────────────────────────────────────────────
 # Função principal — busca todos os dados de um ticker (5 chamadas Pro)
 # Plano Pro desbloqueia: /dividends, /financials (DFC_MI para P/FCF)
 # ────────────────────────────────────────────────────────────────
