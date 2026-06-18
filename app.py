@@ -428,9 +428,13 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
     )
     log.append(f"📋 Total de campos retornados por /fundamentals: {len(raw_fund)}")
 
+    _prev = st.session_state.acoes.get(t, {})
     st.session_state.acoes[t] = {
-        "data": data,
+        "data":       data,
         "updated_at": _now_bsb().isoformat(),
+        "qtd":        _prev.get("qtd", 0),          # preserva quantidade existente
+        "notas":      _prev.get("notas", ""),
+        "notas_updated_at": _prev.get("notas_updated_at", ""),
     }
     st.session_state.todas_listas[st.session_state.lista_atual] = st.session_state.acoes
     _save_all()
@@ -2541,6 +2545,208 @@ def _show_fii_tab() -> None:
 
 
 # ────────────────────────────────────────────────────────────────
+# Análise de Portfólio (apenas lista ⭐ Carteira)
+# ────────────────────────────────────────────────────────────────
+
+_PORTFOLIO_COLORS = [
+    "#4fc3f7", "#81c784", "#ffb74d", "#f06292", "#ce93d8",
+    "#80cbc4", "#ffd54f", "#ff8a65", "#90caf9", "#a5d6a7",
+    "#ffe082", "#ef9a9a", "#b39ddb", "#80deea", "#bcaaa4",
+    "#ffab40", "#69f0ae", "#ea80fc", "#40c4ff", "#ccff90",
+]
+
+
+def _qty_editor(enriched: list[dict], acoes: dict) -> None:
+    """Exibe editor de quantidades e persiste alterações."""
+    with st.expander("📝 Quantidades em carteira", expanded=False):
+        qty_rows = [
+            {
+                "Ticker": e["ticker"],
+                "Quantidade": int(acoes.get(e["ticker"], {}).get("qtd", 0) or 0),
+            }
+            for e in enriched
+        ]
+        qty_df = pd.DataFrame(qty_rows)
+        edited = st.data_editor(
+            qty_df,
+            column_config={
+                "Ticker": st.column_config.TextColumn("Ticker", disabled=True, width="small"),
+                "Quantidade": st.column_config.NumberColumn(
+                    "Quantidade", min_value=0, max_value=10_000_000, step=1, width="medium"
+                ),
+            },
+            hide_index=True,
+            use_container_width=False,
+            key="qty_data_editor",
+        )
+        if st.button("💾 Salvar quantidades", key="btn_salvar_qtd", use_container_width=False):
+            changed = False
+            for _, row in edited.iterrows():
+                t = str(row["Ticker"])
+                new_qty = int(row["Quantidade"] or 0)
+                if t in acoes and acoes[t].get("qtd", 0) != new_qty:
+                    acoes[t]["qtd"] = new_qty
+                    changed = True
+            if changed:
+                _save_all()
+                st.success("Quantidades salvas.")
+                st.rerun()
+            else:
+                st.info("Nenhuma alteração detectada.")
+
+
+def _weighted_avg_portfolio(positions: list[dict], field: str) -> Optional[float]:
+    """Média ponderada de um campo, redistribuindo pesos de posições sem dado."""
+    valid = [(p["weight"], p[field]) for p in positions
+             if p.get(field) is not None and not (isinstance(p.get(field), float) and math.isnan(p[field]))]
+    if not valid:
+        return None
+    total_w = sum(w for w, _ in valid)
+    if total_w == 0:
+        return None
+    return sum(w * v for w, v in valid) / total_w
+
+
+def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
+    """Seção 📊 Análise da Carteira — visível apenas quando ⭐ Carteira com posições > 0."""
+    positions = []
+    for e in enriched:
+        t = e["ticker"]
+        qtd = int(acoes.get(t, {}).get("qtd", 0) or 0)
+        price = e.get("close_price")
+        if qtd > 0 and price:
+            positions.append({
+                "ticker": t,
+                "qtd":    qtd,
+                "price":  price,
+                "value":  qtd * price,
+                "sector": e.get("sector") or "Outros",
+                "dy":     e.get("dividend_yield"),
+                "pl":     e.get("pl") if (e.get("pl") or 0) > 0 else None,
+                "score":  e.get("score"),
+                "nd_ebitda": e.get("net_debt_ebitda"),
+                "weight": 0.0,
+            })
+
+    if not positions:
+        return
+
+    st.divider()
+    st.markdown("## 📊 Análise da Carteira")
+
+    total_valor = sum(p["value"] for p in positions)
+    for p in positions:
+        p["weight"] = p["value"] / total_valor
+
+    # ── Valor total + indicadores ponderados ──────────────────────
+    dy_pond   = _weighted_avg_portfolio(positions, "dy")
+    pl_pond   = _weighted_avg_portfolio(positions, "pl")
+    sc_pond   = _weighted_avg_portfolio(positions, "score")
+    nd_pond   = _weighted_avg_portfolio(positions, "nd_ebitda")
+
+    col_total, col_dy, col_pl, col_sc, col_nd = st.columns(5)
+    col_total.metric(
+        "💰 Valor Total",
+        f"R$ {total_valor:,.0f}".replace(",", "."),
+    )
+    col_dy.metric(
+        "DY Pond.",
+        f"{dy_pond:.1f}%" if dy_pond is not None else "N/D",
+        help="Dividend Yield médio ponderado pelo valor de cada posição",
+    )
+    col_pl.metric(
+        "P/L Pond.",
+        f"{pl_pond:.1f}x" if pl_pond is not None else "N/D",
+        help="P/L médio ponderado (exclui P/L negativo e inconclusivo)",
+    )
+    col_sc.metric(
+        "Score Pond.",
+        f"{sc_pond:.0f}" if sc_pond is not None else "N/D",
+        help="Score médio ponderado pelo valor de cada posição",
+    )
+    col_nd.metric(
+        "Dív/EBITDA Pond.",
+        f"{nd_pond:.2f}x" if nd_pond is not None else "N/D",
+        help="Dívida Líquida/EBITDA médio ponderado (excluindo N/A bancário e N/D)",
+    )
+
+    # ── Tabela de posições ────────────────────────────────────────
+    st.markdown("#### Posições")
+    pos_rows = sorted(positions, key=lambda p: p["weight"], reverse=True)
+    pos_data = [
+        {
+            "Ticker":         p["ticker"],
+            "Quantidade":     f"{p['qtd']:,}".replace(",", "."),
+            "Preço Atual":    f"R$ {p['price']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+            "Valor Total":    f"R$ {p['value']:,.0f}".replace(",", "."),
+            "% da Carteira":  f"{p['weight'] * 100:.1f}%",
+        }
+        for p in pos_rows
+    ]
+    pos_df = pd.DataFrame(pos_data)
+    st.dataframe(pos_df, hide_index=True, use_container_width=True,
+                 height=min(42 + 35 * len(pos_data), 400))
+
+    # ── Gráficos de pizza ─────────────────────────────────────────
+    col_p1, col_p2 = st.columns(2)
+
+    # Pizza por ação
+    with col_p1:
+        st.markdown("#### Por ação")
+        labels_tick = [p["ticker"] for p in pos_rows]
+        values_tick = [p["value"] for p in pos_rows]
+        colors_tick = [_PORTFOLIO_COLORS[i % len(_PORTFOLIO_COLORS)] for i in range(len(labels_tick))]
+        fig_tick = go.Figure(go.Pie(
+            labels=labels_tick,
+            values=values_tick,
+            marker=dict(colors=colors_tick, line=dict(color="#0e1117", width=1.5)),
+            textinfo="percent+label",
+            textfont=dict(size=12, color="#e8eaf6"),
+            hovertemplate="<b>%{label}</b><br>R$ %{value:,.0f}<br>%{percent}<extra></extra>",
+            hole=0.35,
+        ))
+        fig_tick.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(t=10, b=10, l=10, r=10),
+            showlegend=True,
+            legend=dict(font=dict(color="#c8cce0", size=11), bgcolor="rgba(0,0,0,0)"),
+            height=350,
+        )
+        st.plotly_chart(fig_tick, use_container_width=True, config={"displayModeBar": False})
+
+    # Pizza por setor
+    with col_p2:
+        st.markdown("#### Por setor")
+        setor_vals: dict[str, float] = {}
+        for p in positions:
+            setor = p["sector"] or "Outros"
+            setor_vals[setor] = setor_vals.get(setor, 0) + p["value"]
+        setor_sorted = sorted(setor_vals.items(), key=lambda x: x[1], reverse=True)
+        labels_set = [s for s, _ in setor_sorted]
+        values_set = [v for _, v in setor_sorted]
+        colors_set = [_PORTFOLIO_COLORS[(i * 3) % len(_PORTFOLIO_COLORS)] for i in range(len(labels_set))]
+        fig_set = go.Figure(go.Pie(
+            labels=labels_set,
+            values=values_set,
+            marker=dict(colors=colors_set, line=dict(color="#0e1117", width=1.5)),
+            textinfo="percent+label",
+            textfont=dict(size=11, color="#e8eaf6"),
+            hovertemplate="<b>%{label}</b><br>R$ %{value:,.0f}<br>%{percent}<extra></extra>",
+            hole=0.35,
+        ))
+        fig_set.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(t=10, b=10, l=10, r=10),
+            showlegend=True,
+            legend=dict(font=dict(color="#c8cce0", size=11), bgcolor="rgba(0,0,0,0)"),
+            height=350,
+        )
+        st.plotly_chart(fig_set, use_container_width=True, config={"displayModeBar": False})
+
+
+# ────────────────────────────────────────────────────────────────
 # App principal
 # ────────────────────────────────────────────────────────────────
 
@@ -2734,6 +2940,13 @@ div[data-testid="stPopover"] button:hover {
             _comparison_table(selected_compare, stocks_compare)
         elif len(selected_compare) == 1:
             st.caption("Selecione ao menos 2 ações para ver o radar comparativo.")
+
+        # ── Quantidades e análise de portfólio ────────────────────
+        _is_carteira = st.session_state.lista_atual == LISTAS_PADRAO[0]
+        if _is_carteira:
+            st.divider()
+            _qty_editor(enriched, st.session_state.acoes)
+            _show_portfolio_analysis(enriched, st.session_state.acoes)
 
     # ────────────────────────────────────────────────────────────
     # Tab 2 — Detalhe
