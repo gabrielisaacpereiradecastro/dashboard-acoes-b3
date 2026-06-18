@@ -210,8 +210,8 @@ def classify_pvp(value, sector: str) -> tuple[str, str]:
         elif value <= 2.5:  return "Razoável", display
         else:               return "Proibitivo", display
     else:
-        if value < 1.0:     return "Desconto", display   # neutro — pode ser desconto real ou problema
-        elif value <= 2.0:  return "Bom", display
+        if value < 1.0:     return "Bom", display       # abaixo do book — verde claro (neutro/positivo)
+        elif value <= 2.0:  return "Excelente", display
         elif value <= 3.0:  return "Razoável", display
         elif value <= 5.0:  return "Atenção", display
         else:               return "Proibitivo", display

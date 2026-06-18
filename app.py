@@ -540,6 +540,89 @@ def _radar_chart(stocks_data: list[dict], names: list[str]) -> go.Figure:
 
 
 # ────────────────────────────────────────────────────────────────
+# Insights contextuais por setor
+# ────────────────────────────────────────────────────────────────
+
+_SECTOR_INSIGHTS: dict[str, dict[str, str]] = {
+    "net_debt_ebitda": {
+        "bank":    "Bancos não usam este indicador — a dívida é o produto deles. Avalie pelo Índice de Basileia.",
+        "util":    "Empresas de energia e saneamento têm receita regulada e previsível, o que suporta mais alavancagem. Até 3,5x é considerado confortável no setor.",
+        "retail":  "Varejistas usam capital de giro intensivamente. Dívida líquida negativa é comum e indica boa gestão de caixa.",
+        "civil":   "Construtoras costumam ter dívida baixa pois financiam obras com recebíveis. Dív/EBITDA acima de 2x merece atenção extra no setor.",
+        "health":  "Empresas de saúde frequentemente se alavancam para aquisições. Até 2,5x é aceitável se o crescimento justificar.",
+        "default": "Dívida líquida negativa significa mais caixa que dívida — situação excelente em qualquer setor.",
+    },
+    "roe": {
+        "bank":    "Bancos bem geridos no Brasil tipicamente têm ROE entre 18–25%. Abaixo de 15% indica ineficiência para o setor.",
+        "util":    "Setor regulado naturalmente tem ROE mais baixo (12–18%) mas previsível. ROE acima de 20% é excelente para o setor.",
+        "retail":  "Varejistas eficientes costumam ter ROE alto (20–40%) por usar muito capital de terceiros. Cruzar sempre com endividamento.",
+        "civil":   "Construtoras bem geridas têm ROE entre 15–25%. Acima de 30% pode indicar alavancagem excessiva.",
+        "default": "ROE consistentemente acima de 15% por vários anos é o principal sinal de qualidade de um negócio.",
+    },
+    "ev_ebitda": {
+        "bank":    "Indicador não aplicável a bancos — estrutura de capital é o core do negócio.",
+        "util":    "Empresas reguladas tipicamente negociam entre 8–12x EV/EBITDA pela previsibilidade da receita. Abaixo de 8x é raro e pode ser oportunidade.",
+        "retail":  "Varejistas eficientes negociam entre 5–10x. Acima de 12x o mercado precifica crescimento que pode não se materializar.",
+        "civil":   "Construtoras com bom landbank e execução costumam negociar entre 4–8x.",
+        "health":  "Setor de saúde no Brasil historicamente negocia premium (10–16x) pela resiliência da demanda.",
+        "default": "EV/EBITDA abaixo de 6x com ROE alto é combinação rara e valiosa no mercado brasileiro.",
+    },
+    "ebitda_margin": {
+        "util":    "Empresas reguladas devem ter Margem EBITDA acima de 35%. Abaixo disso indica ineficiência operacional no setor.",
+        "retail":  "Varejo tem margens estruturalmente menores (6–15%). Comparar sempre com pares do setor, não com empresas de outros setores.",
+        "civil":   "Margens entre 15–25% são típicas para construtoras. Acima de 25% indica excelência operacional ou mix de produtos premium.",
+        "health":  "Hospitais e clínicas costumam ter 15–25%. Operadoras de planos têm margens menores mas mais previsíveis.",
+        "tech":    "Empresas de software bem posicionadas têm margens acima de 30%. Abaixo de 20% indica concorrência intensa ou fase de investimento.",
+        "default": "Margem EBITDA estável ou crescente ao longo dos anos é mais importante que o valor absoluto isolado.",
+    },
+    "pl": {
+        "bank":    "Bancos brasileiros de qualidade tipicamente negociam entre 8–12x P/L. Acima de 15x indica crescimento premium precificado.",
+        "util":    "Empresas reguladas costumam negociar entre 10–16x pela previsibilidade. Abaixo de 10x pode ser oportunidade.",
+        "retail":  "Varejistas crescendo rapidamente podem justificar P/L entre 15–25x. Acima disso o risco de execução aumenta muito.",
+        "civil":   "Construtoras ciclicamente negociam entre 5–12x. P/L abaixo de 8x com ROE alto frequentemente é oportunidade.",
+        "default": "P/L deve ser analisado junto com a taxa de crescimento. Uma empresa crescendo 20% ao ano com P/L de 20x pode ser mais barata que uma estagnada com P/L de 10x.",
+    },
+    "cagr_earnings_5y": {
+        "util":    "Setor regulado cresce mais lentamente (5–10% ao ano) mas com altíssima previsibilidade. Crescimento acima de 12% é excepcional.",
+        "retail":  "Varejistas em expansão de lojas frequentemente crescem lucro 15–25% ao ano. Verificar se crescimento é orgânico ou por aquisições.",
+        "civil":   "Crescimento de construtoras é muito cíclico — um CAGR positivo de 5 anos é mais significativo que em setores mais estáveis.",
+        "default": "CAGR de lucro consistentemente acima da inflação (~5%) é o mínimo para preservação real de valor.",
+    },
+    "cagr_revenue_5y": {
+        "util":    "Setor regulado cresce mais lentamente (5–10% ao ano) mas com altíssima previsibilidade. Crescimento acima de 12% é excepcional.",
+        "retail":  "Varejistas em expansão de lojas frequentemente crescem receita 15–25% ao ano. Verificar se crescimento é orgânico ou por aquisições.",
+        "civil":   "Crescimento de construtoras é muito cíclico — um CAGR positivo de 5 anos é mais significativo que em setores mais estáveis.",
+        "default": "CAGR de receita consistentemente acima da inflação (~5%) é o mínimo para preservação real de valor.",
+    },
+    "liquidity": {
+        "default": "Volume abaixo de R$ 1M/dia limita o tamanho da posição que você pode montar ou desmontar sem impactar o preço. Para posições acima de R$ 50k, prefira ações com volume acima de R$ 5M/dia.",
+    },
+}
+
+
+def _sector_insight(ind: str, sector: str) -> str:
+    """Retorna insight setorial para o popover do indicador, ou '' se não mapeado."""
+    ind_map = _SECTOR_INSIGHTS.get(ind)
+    if not ind_map:
+        return ""
+    s = sector.lower()
+    is_bank    = any(k in s for k in ["banco", "financeiro", "financeira", "crédito", "bancári"])
+    is_util    = any(k in s for k in ["energia", "saneamento", "concessão", "transmissão", "distribuição", "gás", "água"])
+    is_retail  = any(k in s for k in ["varejo", "comércio varejista", "supermercado"])
+    is_civil   = any(k in s for k in ["construção", "construtora", "incorporadora", "imobiliário"])
+    is_health  = any(k in s for k in ["saúde", "hospital", "farmáci", "laboratório", "clínica"])
+    is_tech    = any(k in s for k in ["tecnologia", "software", "internet", "telecomunicaç"])
+
+    if is_bank   and "bank"   in ind_map: return ind_map["bank"]
+    if is_util   and "util"   in ind_map: return ind_map["util"]
+    if is_retail and "retail" in ind_map: return ind_map["retail"]
+    if is_civil  and "civil"  in ind_map: return ind_map["civil"]
+    if is_health and "health" in ind_map: return ind_map["health"]
+    if is_tech   and "tech"   in ind_map: return ind_map["tech"]
+    return ind_map.get("default", "")
+
+
+# ────────────────────────────────────────────────────────────────
 # Visão de detalhe de uma ação
 # ────────────────────────────────────────────────────────────────
 
@@ -628,28 +711,33 @@ def _show_detail(s: dict):
         info = INDICATOR_INFO.get(ind, {})
 
         with st.container():
-            ca, cb, cc, cd = st.columns([2.5, 0.3, 2, 3])
+            # Layout: [nome] [ℹ️] [(peso X%)] [valor colorido] [pontuação]
+            ca, cb, cc, cd, ce = st.columns([2.0, 0.28, 1.1, 2, 3])
             with ca:
-                st.markdown(f"**{label_ind}** *(peso {peso*100:.0f}%)*")
+                st.markdown(f"**{label_ind}**")
             with cb:
                 if info:
-                    with st.popover("ℹ"):
+                    with st.popover("ℹ️"):
                         st.markdown(f"**{label_ind}**")
                         st.markdown(f"**O que mede:** {info.get('o_que_mede', '')}")
                         st.markdown(f"**Por que importa:** {info.get('por_que_importa', '')}")
                         st.markdown(f"**Interpretação:** {info.get('interpretacao', '')}")
                         st.markdown(f"**Faixa ideal:** {info.get('faixa_ideal', '')}")
                         st.caption(f"⚠ {info.get('atencao', '')}")
+                        insight = _sector_insight(ind, sector)
+                        if insight:
+                            st.divider()
+                            st.markdown(f"📊 **Contexto setorial:** {insight}")
             with cc:
+                st.markdown(f"*(peso {peso*100:.0f}%)*")
+            with cd:
                 st.markdown(
                     f"<div style='background:{bg};color:#fff;padding:6px 12px;"
                     f"border-radius:6px;text-align:center;font-weight:700;font-size:1.05rem'>"
                     f"{emoji} {disp}</div>",
                     unsafe_allow_html=True,
                 )
-            with cc:
-                pass  # espaçamento
-            with cd:
+            with ce:
                 if pts is not None and contrib is not None:
                     st.caption(f"Pontuação: {pts}/100 → contribuição: {contrib:.1f} pts")
                     st.progress(int(pts))
@@ -702,8 +790,8 @@ def _show_detail(s: dict):
                 f"{emoji_pvp} {disp_pvp}</div>",
                 unsafe_allow_html=True,
             )
-            if cls_pvp == "Desconto":
-                st.caption("🔵 Abaixo do valor patrimonial — pode indicar desconto real ou problema de qualidade dos ativos.")
+            if pvp < 1.0:
+                st.caption("Abaixo do valor patrimonial — pode ser desconto real ou sinalizar problema de qualidade dos ativos.")
             elif pvp > 3.0:
                 st.caption("⚠ Exige ROE muito alto para justificar o prêmio.")
         else:
@@ -1053,31 +1141,30 @@ def main():
         reverse=True,
     )
 
-    # CSS global: popover ℹ parece texto cinza discreto, sem container visual
+    # CSS global: popover ℹ️ sem container visual, tamanho legível
     st.markdown("""
 <style>
 div[data-testid="stPopover"] button {
     border: none !important;
     border-radius: 0 !important;
-    color: #888888 !important;
-    font-size: 13px !important;
+    font-size: 16px !important;
     min-width: unset !important;
     width: auto !important;
     height: auto !important;
     min-height: unset !important;
-    padding: 0 3px !important;
+    padding: 0 2px !important;
     background: transparent !important;
     box-shadow: none !important;
     font-weight: 400 !important;
     cursor: pointer !important;
     vertical-align: middle !important;
-    line-height: 1.5 !important;
+    line-height: 1.4 !important;
+    opacity: 0.85;
 }
 div[data-testid="stPopover"] button:hover {
     background: transparent !important;
     border: none !important;
-    color: #bbbbbb !important;
-    text-decoration: underline !important;
+    opacity: 1.0 !important;
 }
 </style>
 """, unsafe_allow_html=True)

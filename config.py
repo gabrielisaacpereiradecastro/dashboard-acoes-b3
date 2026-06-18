@@ -44,7 +44,6 @@ BG_COLORS = {
     "Razoável":   "#7b5800",
     "Atenção":    "#bf360c",
     "Proibitivo": "#7f0000",
-    "Desconto":   "#1565c0",  # P/VP < 1 — desconto patrimonial (neutro, não necessariamente bom)
     "NA":         "#37474f",
     "ND":         "#37474f",
 }
@@ -56,7 +55,6 @@ COLOR_EMOJI = {
     "Razoável":   "🟡",
     "Atenção":    "🟠",
     "Proibitivo": "🔴",
-    "Desconto":   "🔵",
     "NA":         "⬜",
     "ND":         "⬜",
 }
