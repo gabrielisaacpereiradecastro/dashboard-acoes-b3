@@ -2895,13 +2895,14 @@ def main():
 <style>
 #MainMenu {visibility: hidden;}
 .stDeployButton {display: none;}
-[data-testid="stToolbar"] {display: none;}
 [data-testid="stDecoration"] {display: none;}
 footer {visibility: hidden;}
-/* Em desktop: esconde o header inteiro (sidebar já está expandida, toggle desnecessário).
-   Em mobile: mantém o header visível para que o botão de abrir sidebar apareça. */
+/* Desktop: esconde header e toolbar por inteiro (sidebar já abre expandida).
+   Mobile: mantém ambos visíveis — stExpandSidebarButton vive dentro de stToolbar
+   e é o único meio de abrir a sidebar quando ela começa colapsada. */
 @media (min-width: 768px) {
     header {visibility: hidden;}
+    [data-testid="stToolbar"] {display: none;}
 }
 </style>
 """, unsafe_allow_html=True)
