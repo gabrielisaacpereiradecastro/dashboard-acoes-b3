@@ -2660,16 +2660,17 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         price = e.get("close_price")
         if qtd > 0 and price:
             positions.append({
-                "ticker": t,
-                "qtd":    qtd,
-                "price":  price,
-                "value":  qtd * price,
-                "sector": e.get("sector") or "Outros",
-                "dy":     e.get("dividend_yield"),
-                "pl":     e.get("pl") if (e.get("pl") or 0) > 0 else None,
-                "score":  e.get("score"),
-                "nd_ebitda": e.get("net_debt_ebitda"),
-                "weight": 0.0,
+                "ticker":          t,
+                "qtd":             qtd,
+                "price":           price,
+                "value":           qtd * price,
+                "sector":          e.get("sector") or "Outros",
+                "dy":              e.get("dividend_yield"),
+                "pl":              e.get("pl") if (e.get("pl") or 0) > 0 else None,
+                "score":           e.get("score"),
+                "nd_ebitda":       e.get("net_debt_ebitda"),
+                "daily_change_pct": e.get("daily_change_pct"),
+                "weight":          0.0,
             })
 
     if not positions:
@@ -2682,17 +2683,66 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     for p in positions:
         p["weight"] = p["value"] / total_valor
 
-    # ── Valor total + indicadores ponderados ──────────────────────
+    # ── Variação ponderada do dia ──────────────────────────────────
+    valid_var = [
+        (p["daily_change_pct"], p["weight"])
+        for p in positions
+        if p.get("daily_change_pct") is not None
+    ]
+    if valid_var:
+        total_w_var = sum(w for _, w in valid_var)
+        var_pond_pct: Optional[float] = (
+            sum(v * w for v, w in valid_var) / total_w_var if total_w_var > 0 else None
+        )
+    else:
+        var_pond_pct = None
+
+    # ── Valor total + variação (linha de destaque) ─────────────────
+    col_total, col_var = st.columns(2)
+    col_total.metric(
+        "💰 Valor Total",
+        f"R$ {total_valor:,.0f}".replace(",", "."),
+    )
+    with col_var:
+        if var_pond_pct is not None:
+            valor_ontem   = total_valor / (1 + var_pond_pct / 100)
+            var_reais     = total_valor - valor_ontem
+            var_color     = "#4caf50" if var_pond_pct >= 0 else "#ef5350"
+            icon          = "📈" if var_pond_pct >= 0 else "📉"
+            sign_pct      = "+" if var_pond_pct >= 0 else ""
+            sign_r        = "+" if var_reais >= 0 else "-"
+            reais_abs_fmt = (
+                f"R$ {abs(var_reais):,.2f}"
+                .replace(",", "X").replace(".", ",").replace("X", ".")
+            )
+            st.markdown(
+                f"""
+<div style="padding:10px 0 4px 0">
+  <div style="font-size:0.8rem;color:#9ea3b0;margin-bottom:6px">
+    {icon} Variação Hoje
+  </div>
+  <div style="font-size:1.75rem;font-weight:700;color:{var_color};line-height:1.1">
+    {sign_pct}{var_pond_pct:.2f}%
+  </div>
+  <div style="font-size:0.95rem;color:{var_color};margin-top:4px">
+    {sign_r}{reais_abs_fmt}
+  </div>
+</div>""",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.metric("📅 Variação Hoje", "N/D",
+                      help="Variação diária indisponível para todas as posições")
+
+    st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
+
+    # ── Indicadores ponderados ────────────────────────────────────
     dy_pond   = _weighted_avg_portfolio(positions, "dy")
     pl_pond   = _weighted_avg_portfolio(positions, "pl")
     sc_pond   = _weighted_avg_portfolio(positions, "score")
     nd_pond   = _weighted_avg_portfolio(positions, "nd_ebitda")
 
-    col_total, col_dy, col_pl, col_sc, col_nd = st.columns(5)
-    col_total.metric(
-        "💰 Valor Total",
-        f"R$ {total_valor:,.0f}".replace(",", "."),
-    )
+    col_dy, col_pl, col_sc, col_nd = st.columns(4)
     col_dy.metric(
         "DY Pond.",
         f"{dy_pond:.1f}%" if dy_pond is not None else "N/D",
