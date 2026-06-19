@@ -2894,11 +2894,15 @@ def main():
     st.markdown("""
 <style>
 #MainMenu {visibility: hidden;}
-header {visibility: hidden;}
 .stDeployButton {display: none;}
 [data-testid="stToolbar"] {display: none;}
 [data-testid="stDecoration"] {display: none;}
 footer {visibility: hidden;}
+/* Em desktop: esconde o header inteiro (sidebar já está expandida, toggle desnecessário).
+   Em mobile: mantém o header visível para que o botão de abrir sidebar apareça. */
+@media (min-width: 768px) {
+    header {visibility: hidden;}
+}
 </style>
 """, unsafe_allow_html=True)
     if "usuario_atual" not in st.session_state:
