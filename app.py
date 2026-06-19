@@ -517,7 +517,20 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.DataFrame(rows_display), pd.DataFrame(rows_class)
 
 
+def _dedup_enriched(stocks: list[dict]) -> list[dict]:
+    """Remove entradas com ticker vazio ou duplicado (mantém primeira ocorrência)."""
+    seen: set = set()
+    result = []
+    for s in stocks:
+        t = s.get("ticker") or ""
+        if t and t not in seen:  # ignora ticker vazio — causaria índice não-único
+            seen.add(t)
+            result.append(s)
+    return result
+
+
 def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
+    """Aplica cores às colunas classificadas. Robusto a índice/colunas não-únicos."""
     score_bg = {
         "Excelente":      "#1b5e20",
         "Bom":            "#2e7d32",
@@ -529,7 +542,12 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
     }
     colored_cols = {"Score", "P/VP", "Balanço"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
-    # Alinha class_df ao display_df para garantir shape idêntico antes de qualquer lookup
+    # Pandas >= 2.x: _update_ctx lança KeyError se index ou columns não forem únicos.
+    # Retorna sem cores em vez de travar o app.
+    if not display_df.index.is_unique or not display_df.columns.is_unique:
+        return display_df.style
+
+    # Alinha class_df ao display_df (colunas extras recebem "" → sem cor)
     class_aligned = class_df.reindex(
         index=display_df.index,
         columns=display_df.columns,
@@ -541,23 +559,25 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
     for col in display_df.columns:
         if col not in colored_cols:
             continue
-        col_in_class = col in class_aligned.columns
         is_score = col == "Score"
 
-        # Closure explícita captura as variáveis corretas por valor
-        def _col_style(series: pd.Series, _col=col, _in_class=col_in_class, _is_score=is_score) -> pd.Series:
-            out = pd.Series("", index=series.index)
+        # Default-args capturam os valores por cópia (evita bug de closure em loop)
+        def _col_style(
+            series: pd.Series,
+            _col: str = col,
+            _is_score: bool = is_score,
+        ) -> pd.Series:
+            out = pd.Series("", index=series.index, dtype=object)
             for idx in series.index:
                 cls = ""
-                if _in_class:
-                    try:
-                        val = class_aligned.at[idx, _col]
-                        cls = str(val) if val else ""
-                    except Exception:
-                        cls = ""
+                try:
+                    raw_cls = class_aligned.at[idx, _col]
+                    cls = str(raw_cls) if raw_cls else ""
+                except Exception:
+                    cls = ""
                 bg = score_bg.get(cls, "") if _is_score else BG_COLORS.get(cls, "")
                 if bg:
-                    out[idx] = (
+                    out.at[idx] = (
                         f"background-color:{bg};color:#ffffff;"
                         "font-weight:600;text-align:center"
                     )
@@ -566,7 +586,7 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         try:
             styler = styler.apply(_col_style, axis=0, subset=[col])
         except Exception:
-            pass  # coluna ausente ou outro edge-case — ignora sem quebrar
+            pass  # coluna ausente ou edge-case residual — ignora
 
     return styler
 
@@ -1643,6 +1663,7 @@ def _show_screener():
     if not enriched_scr:
         return
 
+    enriched_scr = _dedup_enriched(enriched_scr)
     display_df, class_df = _build_table(enriched_scr)
     styled = _apply_styles(display_df.set_index("Ticker"), class_df.set_index("Ticker"))
     st.dataframe(styled, use_container_width=True, height=min(42 + 35 * len(enriched_scr), 420))
@@ -2865,6 +2886,7 @@ div[data-testid="stPopover"] button:hover {
             "Colunas coloridas por classificação fundamentalista."
         )
 
+        enriched = _dedup_enriched(enriched)
         display_df, class_df = _build_table(enriched)
         tickers_ordered = display_df["Ticker"].tolist()
 
