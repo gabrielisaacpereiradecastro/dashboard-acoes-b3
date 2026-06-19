@@ -529,28 +529,46 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
     }
     colored_cols = {"Score", "P/VP", "Balanço"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
-    def styler_fn(df: pd.DataFrame) -> pd.DataFrame:
-        styles = pd.DataFrame("", index=df.index, columns=df.columns)
-        for col in df.columns:
-            if col not in colored_cols:
-                continue
-            col_in_class = col in class_df.columns
-            for idx in df.index:
-                cls = ""
-                if col_in_class and idx in class_df.index:
-                    try:
-                        cls = class_df.at[idx, col] or ""
-                    except (KeyError, ValueError):
-                        cls = ""
-                bg = score_bg.get(cls, "") if col == "Score" else BG_COLORS.get(cls, "")
-                if bg:
-                    styles.at[idx, col] = (
-                        f"background-color: {bg}; color: #ffffff; "
-                        "font-weight: 600; text-align: center"
-                    )
-        return styles
+    # Alinha class_df ao display_df para garantir shape idêntico antes de qualquer lookup
+    class_aligned = class_df.reindex(
+        index=display_df.index,
+        columns=display_df.columns,
+        fill_value="",
+    ).fillna("")
 
-    return display_df.style.apply(styler_fn, axis=None)
+    styler = display_df.style
+
+    for col in display_df.columns:
+        if col not in colored_cols:
+            continue
+        col_in_class = col in class_aligned.columns
+        is_score = col == "Score"
+
+        # Closure explícita captura as variáveis corretas por valor
+        def _col_style(series: pd.Series, _col=col, _in_class=col_in_class, _is_score=is_score) -> pd.Series:
+            out = pd.Series("", index=series.index)
+            for idx in series.index:
+                cls = ""
+                if _in_class:
+                    try:
+                        val = class_aligned.at[idx, _col]
+                        cls = str(val) if val else ""
+                    except Exception:
+                        cls = ""
+                bg = score_bg.get(cls, "") if _is_score else BG_COLORS.get(cls, "")
+                if bg:
+                    out[idx] = (
+                        f"background-color:{bg};color:#ffffff;"
+                        "font-weight:600;text-align:center"
+                    )
+            return out
+
+        try:
+            styler = styler.apply(_col_style, axis=0, subset=[col])
+        except Exception:
+            pass  # coluna ausente ou outro edge-case — ignora sem quebrar
+
+    return styler
 
 
 # ────────────────────────────────────────────────────────────────
