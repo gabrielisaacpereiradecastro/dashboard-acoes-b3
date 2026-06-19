@@ -428,6 +428,11 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
     )
     log.append(f"📋 Total de campos retornados por /fundamentals: {len(raw_fund)}")
 
+    # Força o ticker armazenado a ser o que o usuário digitou.
+    # A Bolsai pode retornar fund["ticker"] = "ITUB4" mesmo para a query "ITUB3" —
+    # usar esse valor causaria exibição errada na lista.
+    data["ticker"] = t
+
     _prev = st.session_state.acoes.get(t, {})
     st.session_state.acoes[t] = {
         "data":       data,
@@ -2726,22 +2731,66 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     st.dataframe(pos_df, hide_index=True, use_container_width=True,
                  height=min(42 + 35 * len(pos_data), 400))
 
-    # ── Gráficos de pizza ─────────────────────────────────────────
+    # ── Gráficos de rosca ─────────────────────────────────────────
+    def _group_small(
+        items: list[tuple[str, float]],
+        threshold_pct: float = 3.0,
+        outros_word: str = "itens",
+    ) -> tuple[list[str], list[float], list[str]]:
+        """
+        Agrupa entradas < threshold_pct% em um único slice "Outros (N itens)".
+        Retorna (labels, values, customdata) onde customdata é a quebra
+        individual dos agrupados para exibição no tooltip.
+        """
+        total = sum(v for _, v in items)
+        if total == 0:
+            return [], [], []
+        main = [(lbl, val) for lbl, val in items if val / total * 100 >= threshold_pct]
+        small = [(lbl, val) for lbl, val in items if val / total * 100 < threshold_pct]
+
+        labels: list[str] = [lbl for lbl, _ in main]
+        values: list[float] = [val for _, val in main]
+        hovers: list[str] = [""] * len(main)
+
+        if small:
+            outros_lbl = f"Outros ({len(small)} {outros_word})"
+            outros_val = sum(v for _, v in small)
+            breakdown = "<br>".join(
+                f"  · {lbl}: {val / total * 100:.1f}%"
+                for lbl, val in sorted(small, key=lambda x: -x[1])
+            )
+            labels.append(outros_lbl)
+            values.append(outros_val)
+            hovers.append(breakdown)
+
+        return labels, values, hovers
+
+    _HOVER_TPL = (
+        "<b>%{label}</b><br>"
+        "R$ %{value:,.0f}<br>"
+        "%{percent}"
+        "%{customdata}<extra></extra>"
+    )
+
     col_p1, col_p2 = st.columns(2)
 
-    # Pizza por ação
+    # Rosca por ação
     with col_p1:
         st.markdown("#### Por ação")
-        labels_tick = [p["ticker"] for p in pos_rows]
-        values_tick = [p["value"] for p in pos_rows]
+        tick_items = [(p["ticker"], p["value"]) for p in pos_rows]
+        labels_tick, values_tick, hovers_tick = _group_small(
+            tick_items, threshold_pct=3.0, outros_word="ações"
+        )
+        # Formata customdata: linha extra no hover só quando há breakdown
+        cd_tick = [f"<br>{h}" if h else "" for h in hovers_tick]
         colors_tick = [_PORTFOLIO_COLORS[i % len(_PORTFOLIO_COLORS)] for i in range(len(labels_tick))]
         fig_tick = go.Figure(go.Pie(
             labels=labels_tick,
             values=values_tick,
+            customdata=cd_tick,
             marker=dict(colors=colors_tick, line=dict(color="#0e1117", width=1.5)),
-            textinfo="percent+label",
-            textfont=dict(size=12, color="#e8eaf6"),
-            hovertemplate="<b>%{label}</b><br>R$ %{value:,.0f}<br>%{percent}<extra></extra>",
+            textinfo="none",        # legenda lateral já mostra tudo — sem texto nas fatias
+            hovertemplate=_HOVER_TPL,
             hole=0.35,
         ))
         fig_tick.update_layout(
@@ -2754,24 +2803,26 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         )
         st.plotly_chart(fig_tick, use_container_width=True, config={"displayModeBar": False})
 
-    # Pizza por setor
+    # Rosca por setor
     with col_p2:
         st.markdown("#### Por setor")
         setor_vals: dict[str, float] = {}
         for p in positions:
             setor = p["sector"] or "Outros"
             setor_vals[setor] = setor_vals.get(setor, 0) + p["value"]
-        setor_sorted = sorted(setor_vals.items(), key=lambda x: x[1], reverse=True)
-        labels_set = [s for s, _ in setor_sorted]
-        values_set = [v for _, v in setor_sorted]
+        setor_items = sorted(setor_vals.items(), key=lambda x: x[1], reverse=True)
+        labels_set, values_set, hovers_set = _group_small(
+            setor_items, threshold_pct=3.0, outros_word="setores"
+        )
+        cd_set = [f"<br>{h}" if h else "" for h in hovers_set]
         colors_set = [_PORTFOLIO_COLORS[(i * 3) % len(_PORTFOLIO_COLORS)] for i in range(len(labels_set))]
         fig_set = go.Figure(go.Pie(
             labels=labels_set,
             values=values_set,
+            customdata=cd_set,
             marker=dict(colors=colors_set, line=dict(color="#0e1117", width=1.5)),
-            textinfo="percent+label",
-            textfont=dict(size=11, color="#e8eaf6"),
-            hovertemplate="<b>%{label}</b><br>R$ %{value:,.0f}<br>%{percent}<extra></extra>",
+            textinfo="none",        # legenda lateral já mostra tudo — sem texto nas fatias
+            hovertemplate=_HOVER_TPL,
             hole=0.35,
         ))
         fig_set.update_layout(
