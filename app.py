@@ -19,6 +19,7 @@ import yfinance as yf
 import api
 import score as sc
 import score_fii as sf
+from score import classify_psr as _classify_psr, classify_interest_coverage as _classify_interest_coverage
 from config import (
     BG_COLORS, COLOR_EMOJI, INDICATOR_LABELS, INDICATOR_WEIGHTS,
     SCORE_COLORS, SECTOR_REMAP,
@@ -542,7 +543,7 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         display_row["P/VP"] = disp_pvp
         class_row["P/VP"] = cls_pvp
 
-        cls_psr, disp_psr = sc.classify_psr(s.get("psr"), sector)
+        cls_psr, disp_psr = _classify_psr(s.get("psr"), sector)
         display_row["PSR"] = disp_psr
         class_row["PSR"] = cls_psr
 
@@ -1624,7 +1625,7 @@ def _show_detail(s: dict):
                     st.markdown(f"**Interpretação:** {info_psr.get('interpretacao', '')}")
                     st.markdown(f"**Faixa ideal:** {info_psr.get('faixa_ideal', '')}")
                     st.caption(f"⚠ {info_psr.get('atencao', '')}")
-        cls_psr, disp_psr = sc.classify_psr(s.get("psr"), sector)
+        cls_psr, disp_psr = _classify_psr(s.get("psr"), sector)
         bg_psr   = BG_COLORS.get(cls_psr, "#37474f")
         emoji_psr = COLOR_EMOJI.get(cls_psr, "⬜")
         if s.get("psr") is not None:
@@ -1769,7 +1770,7 @@ def _show_detail(s: dict):
     with st.expander("📋 Outros indicadores", expanded=False):
         _gross_margin = s.get("gross_margin")
         _int_cov = s.get("interest_coverage")
-        cls_cov, disp_cov = sc.classify_interest_coverage(_int_cov, sector)
+        cls_cov, disp_cov = _classify_interest_coverage(_int_cov, sector)
         items = [
             ("Margem Líquida",      f"{net_margin:.1f}%" if net_margin is not None else "N/D"),
             ("Margem Bruta",        f"{_gross_margin:.1f}%" if _gross_margin is not None else "N/D"),
@@ -1835,7 +1836,7 @@ def _comparison_table(selected_tickers: list[str], stocks: list[dict]) -> None:
             if ind == "pvp":
                 cls, disp = sc.classify_pvp(stock.get("pvp"), sector)
             elif ind == "psr":
-                cls, disp = sc.classify_psr(stock.get("psr"), sector)
+                cls, disp = _classify_psr(stock.get("psr"), sector)
             else:
                 cls, disp = sc.classify_all(stock).get(ind, ("ND", "N/D"))
             bg = BG_COLORS.get(cls, "")
