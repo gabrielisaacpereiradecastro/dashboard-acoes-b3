@@ -272,8 +272,9 @@ def get_all_stock_data(ticker: str) -> dict:
         dividend_yield_ttm = div.get("dividend_yield_ttm")
         ttm_per_share = div.get("ttm_per_share")
 
-    # 5 — DFC (Pro): P/FCF via Caixa Líquido Operacional e Capex
+    # 5 — DFC (Pro): P/FCF e FCL via Caixa Líquido Operacional e Capex
     p_fcf: Optional[float] = None
+    _fcl_k: Optional[float] = None  # FCL em R$ mil (armazenado para DCF)
     fin = get_financials(t, statement_type="DFC_MI")
     if fin:
         stmts = fin.get("statements", [])
@@ -284,10 +285,10 @@ def get_all_stock_data(ticker: str) -> dict:
             fco = latest.get("6.01")
             capex = (latest.get("6.02.02") or 0) + (latest.get("6.02.03") or 0)
             if fco is not None:
-                fcl_k = fco + capex  # valores negativos de capex já deduzem
+                _fcl_k = fco + capex  # R$ mil; negativo = FCL negativo (válido para DCF)
                 mcap = fund.get("market_cap")
-                if fcl_k > 0 and mcap:
-                    p_fcf = mcap / (fcl_k * 1000)
+                if _fcl_k > 0 and mcap:
+                    p_fcf = mcap / (_fcl_k * 1000)
 
     # Payout: dividendo por ação TTM / LPA (sem precisar de net_income em unidade)
     lpa_val = fund.get("lpa")
@@ -295,15 +296,23 @@ def get_all_stock_data(ticker: str) -> dict:
     if ttm_per_share and lpa_val and lpa_val > 0:
         payout = round(ttm_per_share / lpa_val * 100, 1)
 
-    # 6 — DRE (Pro): CAGR de lucro e receita calculado da série histórica
-    # Usa campo direto do /fundamentals se disponível; senão calcula via DRE
+    # 6 — DRE (Pro): CAGR + EBIT + Despesas Financeiras (Cobertura de Juros)
     _cagr_earn: Optional[float] = fund.get("cagr_earnings_5y")
     _cagr_rev: Optional[float] = fund.get("cagr_revenue_5y")
-    if _cagr_earn is None or _cagr_rev is None:
+    # EBIT: tenta do campo direto do /fundamentals; fallback via margem EBIT × receita
+    _ebit_mil: Optional[float] = fund.get("ebit")
+    if _ebit_mil is None and fund.get("ebit_margin") is not None and fund.get("net_revenue"):
+        _ebit_mil = fund["ebit_margin"] / 100 * fund["net_revenue"]  # R$ mil
+    # Despesas financeiras: tenta do campo direto (Bolsai Pro pode fornecer)
+    _fin_exp_mil: Optional[float] = fund.get("financial_expenses")
+
+    if _cagr_earn is None or _cagr_rev is None or _ebit_mil is None or _fin_exp_mil is None:
         dre = get_financials(t, statement_type="DRE")
         if dre:
             _profit: dict = {}
             _revenue: dict = {}
+            _ebit_dre: dict = {}
+            _fin_exp_dre: dict = {}
             for _s in (dre.get("statements") or []):
                 _yr = (_s.get("reference_date") or "")[:4]
                 _v = _s.get("value")
@@ -316,6 +325,10 @@ def get_all_stock_data(ticker: str) -> dict:
                     _profit[_yr] = _v
                 if _c == "3.01" and _yr not in _revenue:
                     _revenue[_yr] = abs(_v)
+                if _c == "3.05" and _yr not in _ebit_dre:
+                    _ebit_dre[_yr] = _v   # EBIT (CVM 3.05)
+                if _c == "3.06.02" and _yr not in _fin_exp_dre:
+                    _fin_exp_dre[_yr] = _v  # Despesas Financeiras (CVM 3.06.02, negativo)
 
             def _calc_cagr(data: dict) -> Optional[float]:
                 yrs = sorted(data.keys())
@@ -331,6 +344,22 @@ def get_all_stock_data(ticker: str) -> dict:
                 _cagr_earn = _calc_cagr(_profit)
             if _cagr_rev is None:
                 _cagr_rev = _calc_cagr(_revenue)
+            if _ebit_mil is None and _ebit_dre:
+                _ebit_mil = _ebit_dre[max(_ebit_dre)]
+            if _fin_exp_mil is None and _fin_exp_dre:
+                _fin_exp_mil = _fin_exp_dre[max(_fin_exp_dre)]
+
+    # PSR = Market Cap / Receita Líquida Anual
+    _psr: Optional[float] = None
+    _mc = fund.get("market_cap")
+    _nr = fund.get("net_revenue")  # R$ mil
+    if _mc and _nr and _nr > 0:
+        _psr = _mc / (_nr * 1000)  # ambos em R$
+
+    # Cobertura de Juros = EBIT / |Despesas Financeiras|
+    _interest_coverage: Optional[float] = None
+    if _ebit_mil is not None and _fin_exp_mil is not None and _fin_exp_mil != 0:
+        _interest_coverage = _ebit_mil / abs(_fin_exp_mil)
 
     result.update(
         {
@@ -375,8 +404,12 @@ def get_all_stock_data(ticker: str) -> dict:
             "net_debt":     fund.get("net_debt"),     # R$ mil
             "ebitda":       fund.get("ebitda"),       # R$ mil
             "net_income":   fund.get("net_income"),   # R$ mil
-            "net_revenue":  fund.get("net_revenue"),  # R$ mil
-            "avg_volume_52w": avg_vol_shares,
+            "net_revenue":      fund.get("net_revenue"),  # R$ mil
+            "avg_volume_52w":   avg_vol_shares,
+            # ── Indicadores novos ──────────────────────────────
+            "psr":              _psr,
+            "fcl":              _fcl_k,          # Fluxo de Caixa Livre em R$ mil
+            "interest_coverage": _interest_coverage,
         }
     )
     return result

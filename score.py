@@ -210,11 +210,37 @@ def classify_pvp(value, sector: str) -> tuple[str, str]:
         elif value <= 2.5:  return "Razoável", display
         else:               return "Proibitivo", display
     else:
-        if value < 1.0:     return "Bom", display       # abaixo do book — verde claro (neutro/positivo)
+        if value < 1.0:     return "Bom", display
         elif value <= 2.0:  return "Excelente", display
         elif value <= 3.0:  return "Razoável", display
         elif value <= 5.0:  return "Atenção", display
         else:               return "Proibitivo", display
+
+
+def classify_psr(value, sector: str) -> tuple[str, str]:
+    """PSR — Price/Sales Ratio. Informativo (não entra no score)."""
+    if value is None:
+        return "ND", "N/D"
+    display = f"{value:.2f}×"
+    if value <= 1:      return "Excelente", display
+    elif value <= 2:    return "Bom", display
+    elif value <= 4:    return "Razoável", display
+    elif value <= 6:    return "Atenção", display
+    else:               return "Proibitivo", display
+
+
+def classify_interest_coverage(value, sector: str) -> tuple[str, str]:
+    """Cobertura de Juros = EBIT / Despesa Financeira. Informativo."""
+    if is_bank(sector):
+        return "NA", "N/A — Bancário"
+    if value is None:
+        return "ND", "N/D"
+    display = f"{value:.2f}×"
+    if value >= 5:      return "Excelente", display
+    elif value >= 3:    return "Bom", display
+    elif value >= 1.5:  return "Razoável", display
+    elif value >= 1:    return "Atenção", display
+    else:               return "Proibitivo", display
 
 
 # Mapeamento ordenado: indicador → função de classificação

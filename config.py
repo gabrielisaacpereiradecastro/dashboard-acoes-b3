@@ -135,6 +135,7 @@ INDICATOR_LABELS = {
     "liquidity":        "Liquidez",
     "cagr_revenue_5y":  "CAGR Rec. 5a",
     "pvp":              "P/VP",
+    "psr":              "PSR",
     "net_margin":       "Mg. Líquida",
     "payout":           "Payout",
     "roa":              "ROA",

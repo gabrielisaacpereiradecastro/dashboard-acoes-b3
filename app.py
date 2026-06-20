@@ -154,6 +154,13 @@ INDICATOR_INFO: dict[str, dict[str, str]] = {
         "faixa_ideal": "1–2× costuma ser razoável para a maioria. Bancos bons negociam entre 1–2,5×.",
         "atencao": "Indicador informativo — não entra no score.",
     },
+    "psr": {
+        "o_que_mede": "Quanto o mercado paga por cada R$ 1 de receita (Market Cap / Receita Líquida TTM).",
+        "por_que_importa": "Útil para avaliar empresas sem lucro ainda ou com lucro distorcido, quando P/L não é confiável.",
+        "interpretacao": "Quanto menor, melhor.",
+        "faixa_ideal": "≤ 1× Excelente · 1–2× Bom · 2–4× Razoável · 4–6× Atenção · > 6× Proibitivo",
+        "atencao": "Não considera margem nem rentabilidade — empresa com PSR baixo mas margens ruins pode não ser barata de verdade. Indicador informativo, não entra no score.",
+    },
 }
 
 
@@ -434,12 +441,31 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
     data["ticker"] = t
 
     _prev = st.session_state.acoes.get(t, {})
+
+    # Detecta mudanças de classificação em relação à versão anterior
+    _cls_changes: list[dict] = []
+    _prev_data = _prev.get("data", {})
+    if _prev_data:
+        _old_cls = sc.classify_all(_prev_data)
+        _new_cls = sc.classify_all(data)
+        for _ind, (_new_c, _new_d) in _new_cls.items():
+            _old_c = _old_cls.get(_ind, ("", ""))[0]
+            if _old_c and _old_c not in ("ND", "NA") and _new_c not in ("ND", "NA") and _old_c != _new_c:
+                _cls_changes.append({
+                    "ind":  INDICATOR_LABELS.get(_ind, _ind),
+                    "de":   _old_c,
+                    "para": _new_c,
+                })
+
     st.session_state.acoes[t] = {
-        "data":       data,
-        "updated_at": _now_bsb().isoformat(),
-        "qtd":        _prev.get("qtd", 0),          # preserva quantidade existente
-        "notas":      _prev.get("notas", ""),
-        "notas_updated_at": _prev.get("notas_updated_at", ""),
+        "data":                   data,
+        "updated_at":             _now_bsb().isoformat(),
+        "qtd":                    _prev.get("qtd", 0),
+        "notas":                  _prev.get("notas", ""),
+        "notas_updated_at":       _prev.get("notas_updated_at", ""),
+        "notas_mudancas":         _prev.get("notas_mudancas", ""),
+        "notas_historico":        _prev.get("notas_historico", []),
+        "classification_changes": _cls_changes,
     }
     st.session_state.todas_listas[st.session_state.lista_atual] = st.session_state.acoes
     _save_all()
@@ -516,6 +542,10 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         display_row["P/VP"] = disp_pvp
         class_row["P/VP"] = cls_pvp
 
+        cls_psr, disp_psr = sc.classify_psr(s.get("psr"), sector)
+        display_row["PSR"] = disp_psr
+        class_row["PSR"] = cls_psr
+
         rows_display.append(display_row)
         rows_class.append(class_row)
 
@@ -545,7 +575,7 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         "Setor Bancário": "#37474f",
         "NA":             "#37474f",
     }
-    colored_cols = {"Score", "P/VP", "Balanço"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
+    colored_cols = {"Score", "P/VP", "PSR", "Balanço"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
     # Pandas >= 2.x: _update_ctx lança KeyError se index ou columns não forem únicos.
     # Retorna sem cores em vez de travar o app.
@@ -1037,8 +1067,24 @@ def _show_macro_panel() -> None:
 
 
 # ────────────────────────────────────────────────────────────────
-# Histórico de preços (Pro)
+# Histórico de preços (Pro) + BOVA11 para comparação
 # ────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_bova11_history(n_days: int) -> Optional[pd.DataFrame]:
+    """Busca histórico do BOVA11 via yfinance para os últimos n_days pregões."""
+    try:
+        bova = yf.Ticker("BOVA11.SA")
+        start = (datetime.now() - timedelta(days=int(n_days * 1.6) + 30)).strftime("%Y-%m-%d")
+        hist = bova.history(start=start)
+        if hist.empty:
+            return None
+        df = hist.reset_index()[["Date", "Close"]].rename(columns={"Date": "date", "Close": "close"})
+        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+        return df.tail(n_days).reset_index(drop=True)
+    except Exception:
+        return None
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_price_history(ticker: str) -> Optional[pd.DataFrame]:
@@ -1069,13 +1115,62 @@ def _show_price_history_chart(s: dict) -> None:
         return
 
     periods = {"1M": 21, "3M": 63, "6M": 126, "1A": 252, "3A": 756, "5A": 1260}
-    sel = st.radio(
-        "Período:", list(periods.keys()), index=3, horizontal=True,
-        key=f"hist_period_{ticker}",
-    )
-    show_ma = st.checkbox("MM50", value=False, key=f"hist_ma_{ticker}")
-    df_plot = df.tail(periods[sel])
+    ctrl_cols = st.columns([4, 2, 3])
+    with ctrl_cols[0]:
+        sel = st.radio(
+            "Período:", list(periods.keys()), index=3, horizontal=True,
+            key=f"hist_period_{ticker}",
+        )
+    with ctrl_cols[1]:
+        show_ma   = st.checkbox("MM50", value=False, key=f"hist_ma_{ticker}")
+    with ctrl_cols[2]:
+        show_ibov = st.checkbox("📊 Comparar com Ibovespa", value=False, key=f"hist_ibov_{ticker}")
 
+    n_days  = periods[sel]
+    df_plot = df.tail(n_days)
+
+    # Modo comparativo (normalizado em base 100) vs. modo preço absoluto
+    if show_ibov:
+        df_ibov = _fetch_bova11_history(n_days)
+        if df_ibov is not None and not df_ibov.empty:
+            base_s = df_plot["adjusted_close"].iloc[0]
+            base_i = df_ibov["close"].iloc[0]
+            y_stock = (df_plot["adjusted_close"] / base_s * 100).values
+            y_ibov  = (df_ibov["close"] / base_i * 100).values
+            pct     = (y_stock[-1] - 100)
+            pct_ibov= (y_ibov[-1] - 100)
+            line_col = "#4caf50" if pct >= 0 else "#f44336"
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=df_plot["trade_date"].values, y=y_stock,
+                mode="lines", name=ticker,
+                line=dict(color=line_col, width=2),
+                hovertemplate=f"<b>%{{x|%d/%m/%Y}}</b><br>{ticker}: %{{y:.1f}} ({pct:+.1f}%)<extra></extra>",
+            ))
+            fig.add_trace(go.Scatter(
+                x=df_ibov["date"].values, y=y_ibov,
+                mode="lines", name="Ibovespa",
+                line=dict(color="#9e9e9e", width=1.5, dash="dot"),
+                hovertemplate=f"<b>%{{x|%d/%m/%Y}}</b><br>Ibovespa: %{{y:.1f}} ({pct_ibov:+.1f}%)<extra></extra>",
+            ))
+            fig.update_layout(
+                height=300, margin=dict(l=0, r=0, t=30, b=0),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                xaxis=dict(showgrid=False, color="#9e9e9e"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e",
+                           ticksuffix=""),
+                showlegend=True, legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#c8cce0")),
+                title=dict(
+                    text=f"{ticker} vs Ibovespa — {sel}  |  {ticker}: {pct:+.1f}%  Ibov: {pct_ibov:+.1f}%",
+                    font=dict(size=12, color="#e8eaf6"),
+                ),
+            )
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            return
+        else:
+            st.caption("⚠️ Dados do Ibovespa indisponíveis — exibindo preço absoluto.")
+
+    # Modo padrão: preço absoluto
     pct = (df_plot["adjusted_close"].iloc[-1] / df_plot["adjusted_close"].iloc[0] - 1) * 100
     line_col = "#4caf50" if pct >= 0 else "#f44336"
     fill_col = "rgba(76,175,80,0.08)" if pct >= 0 else "rgba(244,67,54,0.08)"
@@ -1192,6 +1287,141 @@ def _show_lucro_cotacao_chart(ticker: str) -> None:
 
 
 # ────────────────────────────────────────────────────────────────
+# Valuation DCF
+# ────────────────────────────────────────────────────────────────
+
+def _show_dcf(s: dict) -> None:
+    """Seção de Valuation por Fluxo de Caixa Descontado (DCF)."""
+    sector = s.get("sector", "")
+    if sc.is_bank(sector):
+        return
+
+    fcl_k = s.get("fcl")  # FCL em R$ mil
+    net_debt = s.get("net_debt")  # R$ mil (negativo = caixa > dívida)
+    shares = s.get("shares_outstanding")  # número de ações
+    price = s.get("close_price")
+
+    st.divider()
+    st.subheader("📐 Valuation por DCF (Fluxo de Caixa Descontado)")
+
+    if fcl_k is None or shares is None or shares <= 0:
+        st.info(
+            "⚠️ FCL (Fluxo de Caixa Livre) ou número de ações não disponível para este ticker. "
+            "O modelo DCF requer dados de DFC disponíveis na API Bolsai."
+        )
+        return
+
+    if fcl_k <= 0:
+        st.warning(
+            f"⚠️ FCL atual negativo ({fcl_k/1000:.0f} R$ mi) — DCF não aplicável com FCL negativo. "
+            "Verifique se a empresa está em fase de investimento intenso."
+        )
+        return
+
+    st.caption(
+        f"FCL base (último exercício): **R$ {fcl_k/1000:.0f} mi** · "
+        f"Ações: **{shares/1e6:.1f} milhões**"
+    )
+
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        wacc = st.slider(
+            "WACC (%)", min_value=6.0, max_value=20.0, value=12.0, step=0.5,
+            key=f"dcf_wacc_{s.get('ticker','')}",
+        ) / 100
+    with col_s2:
+        g5 = st.slider(
+            "Crescimento FCL (5 anos, %)", min_value=-10.0, max_value=40.0, value=10.0, step=0.5,
+            key=f"dcf_g5_{s.get('ticker','')}",
+        ) / 100
+    with col_s3:
+        perp_g = st.slider(
+            "Crescimento na perpetuidade (%)", min_value=0.0, max_value=8.0, value=3.0, step=0.25,
+            key=f"dcf_perp_{s.get('ticker','')}",
+        ) / 100
+
+    if wacc <= perp_g:
+        st.error("WACC deve ser maior que o crescimento na perpetuidade.")
+        return
+
+    def _dcf_price(fcl_base: float, g: float, w: float, pg: float, nd_k: float, n_shares: float) -> float:
+        """Retorna preço justo por ação (R$)."""
+        pv = 0.0
+        fcl_y = fcl_base
+        for yr in range(1, 6):
+            fcl_y *= (1 + g)
+            pv += fcl_y / (1 + w) ** yr
+        fcl_yr5 = fcl_base * (1 + g) ** 5
+        tv = fcl_yr5 * (1 + pg) / (w - pg)
+        pv += tv / (1 + w) ** 5
+        equity_k = pv - (nd_k or 0)
+        return max(0.0, equity_k * 1000 / n_shares)
+
+    nd_k = net_debt or 0.0
+    scenarios = [
+        ("Conservador", g5 * 0.7, "#f44336"),
+        ("Base",        g5,       "#4caf50"),
+        ("Otimista",    g5 * 1.3, "#2196f3"),
+    ]
+
+    prices_dcf = {}
+    for name, g, _ in scenarios:
+        prices_dcf[name] = _dcf_price(fcl_k, g, wacc, perp_g, nd_k, shares)
+
+    # Tabela rápida e barra de range
+    p_cons = prices_dcf["Conservador"]
+    p_base = prices_dcf["Base"]
+    p_otim = prices_dcf["Otimista"]
+
+    c_r, c_b, c_o = st.columns(3)
+    def _upside(p):
+        if price and price > 0:
+            return f"({(p/price-1)*100:+.1f}%)"
+        return ""
+
+    c_r.metric("Conservador (−30% crescimento)", f"R$ {p_cons:.2f}", _upside(p_cons))
+    c_b.metric("Base",                            f"R$ {p_base:.2f}", _upside(p_base))
+    c_o.metric("Otimista (+30% crescimento)",     f"R$ {p_otim:.2f}", _upside(p_otim))
+
+    # Gráfico Plotly
+    fig = go.Figure()
+    colors = ["#f44336", "#4caf50", "#2196f3"]
+    names  = ["Conservador", "Base", "Otimista"]
+    vals   = [p_cons, p_base, p_otim]
+    fig.add_trace(go.Bar(
+        x=names, y=vals,
+        marker_color=colors,
+        text=[f"R$ {v:.2f}" for v in vals],
+        textposition="outside",
+        hovertemplate="%{x}: R$ %{y:.2f}<extra></extra>",
+    ))
+    if price:
+        fig.add_hline(
+            y=price,
+            line_dash="dash", line_color="#ffeb3b", line_width=2,
+            annotation_text=f"Preço atual: R$ {price:.2f}",
+            annotation_font_color="#ffeb3b",
+        )
+    fig.update_layout(
+        height=320, margin=dict(l=0, r=0, t=30, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e",
+                   tickprefix="R$ "),
+        showlegend=False,
+        title=dict(text="Faixa de Preço Justo — DCF (3 cenários)", font=dict(size=12, color="#e8eaf6")),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    st.warning(
+        "⚠️ **Aviso importante:** Este modelo é uma ferramenta educacional de aproximação e "
+        "**não constitui recomendação de investimento**. Os valores são altamente sensíveis às "
+        "premissas de WACC, crescimento e perpetuidade. Resultados passados não garantem "
+        "retornos futuros. Consulte um profissional habilitado antes de investir."
+    )
+
+
+# ────────────────────────────────────────────────────────────────
 # Visão de detalhe de uma ação
 # ────────────────────────────────────────────────────────────────
 
@@ -1250,6 +1480,17 @@ def _show_detail(s: dict):
             unsafe_allow_html=True,
         )
         st.progress(int(score) if score else 0)
+
+    # ── Alertas de mudança de classificação ────────────────────
+    _t_alert = s.get("ticker", "")
+    _cls_changes = st.session_state.acoes.get(_t_alert, {}).get("classification_changes", [])
+    if _cls_changes:
+        _n = len(_cls_changes)
+        with st.expander(f"🔔 {_n} indicador{'es' if _n > 1 else ''} mudou{'am' if _n > 1 else ''} de classificação desde a última atualização", expanded=False):
+            for _chg in _cls_changes:
+                _old_em = COLOR_EMOJI.get(_chg['de'], "⬜")
+                _new_em = COLOR_EMOJI.get(_chg['para'], "⬜")
+                st.markdown(f"**{_chg['ind']}:** {_old_em} {_chg['de']} → {_new_em} {_chg['para']}")
 
     st.divider()
 
@@ -1321,6 +1562,9 @@ def _show_detail(s: dict):
         st.subheader("Lucro vs Cotação")
         _show_lucro_cotacao_chart(s.get("ticker", ""))
 
+    # ── DCF Valuation ───────────────────────────────────────────
+    _show_dcf(s)
+
     # ── Indicadores informativos ────────────────────────────────
     st.divider()
     st.subheader("Indicadores Informativos")
@@ -1365,6 +1609,34 @@ def _show_detail(s: dict):
         else:
             st.caption("N/D")
 
+    # PSR com popover
+    with st.container():
+        col_psr, col_psr_help = st.columns([8, 1])
+        with col_psr:
+            st.markdown("#### PSR — Preço / Receita")
+        with col_psr_help:
+            info_psr = INDICATOR_INFO.get("psr", {})
+            if info_psr:
+                with st.popover("❓"):
+                    st.markdown("**PSR — Preço / Receita (Price-to-Sales)**")
+                    st.markdown(f"**O que mede:** {info_psr.get('o_que_mede', '')}")
+                    st.markdown(f"**Por que importa:** {info_psr.get('por_que_importa', '')}")
+                    st.markdown(f"**Interpretação:** {info_psr.get('interpretacao', '')}")
+                    st.markdown(f"**Faixa ideal:** {info_psr.get('faixa_ideal', '')}")
+                    st.caption(f"⚠ {info_psr.get('atencao', '')}")
+        cls_psr, disp_psr = sc.classify_psr(s.get("psr"), sector)
+        bg_psr   = BG_COLORS.get(cls_psr, "#37474f")
+        emoji_psr = COLOR_EMOJI.get(cls_psr, "⬜")
+        if s.get("psr") is not None:
+            st.markdown(
+                f"<div style='display:inline-block;background:{bg_psr};color:#fff;"
+                f"padding:6px 14px;border-radius:6px;font-weight:700;font-size:1.05rem'>"
+                f"{emoji_psr} {disp_psr}</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("N/D")
+
     with st.container():
         st.markdown("#### Payout (%)")
         if payout is not None:
@@ -1394,30 +1666,59 @@ def _show_detail(s: dict):
     st.divider()
     st.subheader("📝 Minhas Anotações")
     _ticker = s.get("ticker", "")
-    _notas_key = f"notas_{_ticker}"
+    _notas_key    = f"notas_{_ticker}"
+    _mudanca_key  = f"notas_mudanca_{_ticker}"
 
-    _notas_entry = st.session_state.acoes.get(_ticker, {})
-    _notas_text = _notas_entry.get("notas", "")
-    _notas_updated = _notas_entry.get("notas_updated_at", "")
+    _notas_entry  = st.session_state.acoes.get(_ticker, {})
+    _notas_text   = _notas_entry.get("notas", "")
+    _notas_updated= _notas_entry.get("notas_updated_at", "")
+    _historico    = _notas_entry.get("notas_historico", [])
 
-    # Inicializa session_state com o valor salvo (apenas na primeira renderização do ticker)
+    # Inicializa session_state com valores salvos
     if _notas_key not in st.session_state:
         st.session_state[_notas_key] = _notas_text
-
-    def _save_notas(_key=_notas_key, _t=_ticker):
-        new_text = st.session_state[_key]
-        if _t in st.session_state.acoes:
-            st.session_state.acoes[_t]["notas"] = new_text
-            st.session_state.acoes[_t]["notas_updated_at"] = _now_bsb().isoformat()
-            _save_all()
+    if _mudanca_key not in st.session_state:
+        st.session_state[_mudanca_key] = ""
 
     st.text_area(
         "Observações sobre esta ação:",
         key=_notas_key,
-        on_change=_save_notas,
         height=120,
         placeholder="Escreva sua tese, lembretes ou observações sobre esta ação…",
     )
+    st.text_input(
+        "O que mudou? (resumo opcional para o histórico)",
+        key=_mudanca_key,
+        placeholder="ex.: resultado do 1T25 acima do esperado, reduzi preço-alvo…",
+    )
+
+    def _save_notas_btn(_t=_ticker, _key=_notas_key, _mkey=_mudanca_key):
+        new_text   = st.session_state.get(_key, "")
+        new_mudanca= st.session_state.get(_mkey, "").strip()
+        entry = st.session_state.acoes.get(_t)
+        if entry is None:
+            return
+        old_text = entry.get("notas", "")
+        if new_text == old_text and not new_mudanca:
+            return
+        hist = list(entry.get("notas_historico", []))
+        if old_text:
+            hist.insert(0, {
+                "texto":   old_text,
+                "mudanca": entry.get("notas_mudancas", ""),
+                "data":    entry.get("notas_updated_at", ""),
+            })
+            hist = hist[:5]
+        entry["notas"]           = new_text
+        entry["notas_mudancas"]  = new_mudanca
+        entry["notas_updated_at"]= _now_bsb().isoformat()
+        entry["notas_historico"] = hist
+        st.session_state.acoes[_t] = entry
+        st.session_state[_mkey] = ""
+        _save_all()
+
+    st.button("💾 Salvar anotação", key=f"btn_notas_{_ticker}", on_click=_save_notas_btn)
+
     if _notas_updated:
         try:
             _dt = datetime.fromisoformat(_notas_updated)
@@ -1428,22 +1729,47 @@ def _show_detail(s: dict):
         except Exception:
             st.caption(f"Última edição: {_notas_updated[:16]}")
 
+    if _historico:
+        with st.expander(f"🕓 Histórico de anotações ({len(_historico)} versões anteriores)", expanded=False):
+            for _v in _historico:
+                _vdata = _v.get("data", "")
+                try:
+                    _vdt = datetime.fromisoformat(_vdata)
+                    if _vdt.tzinfo is None:
+                        _vdt = _vdt.replace(tzinfo=timezone.utc)
+                    _vdt = _vdt.astimezone(TZ_BSB).replace(tzinfo=None)
+                    _vdata = _vdt.strftime("%d/%m/%Y %H:%M")
+                except Exception:
+                    _vdata = _vdata[:16]
+                _vmud = _v.get("mudanca", "")
+                st.markdown(f"**{_vdata}**" + (f" — _{_vmud}_" if _vmud else ""))
+                st.markdown(
+                    f"<div style='background:#1a1d2e;border-left:3px solid #3f51b5;"
+                    f"padding:8px 12px;border-radius:4px;color:#c8cce0;font-size:0.9rem'>"
+                    f"{_v.get('texto','').replace(chr(10),'<br>')}</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("")
+
     # ── Outros indicadores ─────────────────────────────────────
     _OUTROS_INFO: dict[str, str] = {
-        "ROA":                "**Return on Assets** — Lucro líquido / Ativo total. Mede a eficiência com que a empresa usa seus ativos para gerar lucro. Acima de 5% é satisfatório para a maioria dos setores.",
-        "ROIC":               "**Return on Invested Capital** — Lucro operacional após impostos / Capital investido. Indica se a empresa cria valor acima do custo de capital. ROIC > WACC = geração de valor.",
-        "Margem Líquida":     "**Net Margin** — Lucro líquido / Receita líquida. Percentual de cada real de receita que se converte em lucro após todas as despesas e impostos.",
-        "Margem Bruta":       "**Gross Margin** — (Receita − Custo dos produtos) / Receita. Indica o poder de precificação e a eficiência produtiva antes das despesas operacionais.",
-        "LPA":                "**Lucro por Ação** — Lucro líquido / número de ações. Base para calcular o P/L. Crescimento consistente do LPA sinaliza geração de valor para o acionista.",
-        "VPA":                "**Valor Patrimonial por Ação** — Patrimônio líquido / número de ações. Comparado ao preço de mercado (P/VP), indica se a ação negocia com prêmio ou desconto em relação ao balanço.",
-        "Liq. Corrente":      "**Current Ratio** — Ativo circulante / Passivo circulante. Acima de 1,5× indica boa folga de caixa para honrar obrigações de curto prazo. Abaixo de 1× é sinal de atenção.",
-        "EBITDA (R$ mi)":     "**EBITDA** — Lucro antes de juros, impostos, depreciação e amortização, em R$ milhões. Proxy do caixa operacional; base para indicadores como EV/EBITDA e Dív/EBITDA.",
-        "Rec. Líq. (R$ mi)":  "**Receita Líquida** — Faturamento após deduções fiscais e devoluções, em R$ milhões. Principal linha de crescimento; base para cálculo das margens.",
-        "Lucro Líq. (R$ mi)": "**Lucro Líquido** — Resultado final após todas as despesas, juros e impostos, em R$ milhões. Lucro negativo (prejuízo) classifica o P/L como Proibitivo.",
+        "ROA":                 "**Return on Assets** — Lucro líquido / Ativo total. Mede a eficiência com que a empresa usa seus ativos para gerar lucro. Acima de 5% é satisfatório para a maioria dos setores.",
+        "ROIC":                "**Return on Invested Capital** — Lucro operacional após impostos / Capital investido. Indica se a empresa cria valor acima do custo de capital. ROIC > WACC = geração de valor.",
+        "Margem Líquida":      "**Net Margin** — Lucro líquido / Receita líquida. Percentual de cada real de receita que se converte em lucro após todas as despesas e impostos.",
+        "Margem Bruta":        "**Gross Margin** — (Receita − Custo dos produtos) / Receita. Indica o poder de precificação e a eficiência produtiva antes das despesas operacionais.",
+        "LPA":                 "**Lucro por Ação** — Lucro líquido / número de ações. Base para calcular o P/L. Crescimento consistente do LPA sinaliza geração de valor para o acionista.",
+        "VPA":                 "**Valor Patrimonial por Ação** — Patrimônio líquido / número de ações. Comparado ao preço de mercado (P/VP), indica se a ação negocia com prêmio ou desconto em relação ao balanço.",
+        "Liq. Corrente":       "**Current Ratio** — Ativo circulante / Passivo circulante. Acima de 1,5× indica boa folga de caixa para honrar obrigações de curto prazo. Abaixo de 1× é sinal de atenção.",
+        "EBITDA (R$ mi)":      "**EBITDA** — Lucro antes de juros, impostos, depreciação e amortização, em R$ milhões. Proxy do caixa operacional; base para indicadores como EV/EBITDA e Dív/EBITDA.",
+        "Rec. Líq. (R$ mi)":   "**Receita Líquida** — Faturamento após deduções fiscais e devoluções, em R$ milhões. Principal linha de crescimento; base para cálculo das margens.",
+        "Lucro Líq. (R$ mi)":  "**Lucro Líquido** — Resultado final após todas as despesas, juros e impostos, em R$ milhões. Lucro negativo (prejuízo) classifica o P/L como Proibitivo.",
+        "Cob. de Juros":       "**Cobertura de Juros** = EBIT / Despesa Financeira. Indica quantas vezes o lucro operacional cobre os juros da dívida. Abaixo de 1× significa que a empresa não gera lucro suficiente para pagar os juros — sinal grave de risco financeiro.",
     }
     st.divider()
     with st.expander("📋 Outros indicadores", expanded=False):
         _gross_margin = s.get("gross_margin")
+        _int_cov = s.get("interest_coverage")
+        cls_cov, disp_cov = sc.classify_interest_coverage(_int_cov, sector)
         items = [
             ("Margem Líquida",      f"{net_margin:.1f}%" if net_margin is not None else "N/D"),
             ("Margem Bruta",        f"{_gross_margin:.1f}%" if _gross_margin is not None else "N/D"),
@@ -1455,12 +1781,25 @@ def _show_detail(s: dict):
             ("EBITDA (R$ mi)",      f"{s['ebitda']/1000:.0f}" if s.get("ebitda") else "N/D"),
             ("Rec. Líq. (R$ mi)",   f"{s['net_revenue']/1000:.0f}" if s.get("net_revenue") else "N/D"),
             ("Lucro Líq. (R$ mi)",  f"{s['net_income']/1000:.0f}" if s.get("net_income") else "N/D"),
+            ("Cob. de Juros",       disp_cov),
         ]
         cols = st.columns(3)
         for i, (lbl, val) in enumerate(items):
             with cols[i % 3]:
                 c_met, c_info = st.columns([4, 1])
-                c_met.metric(lbl, val)
+                # Cobertura de juros: mostra badge colorida em vez de metric
+                if lbl == "Cob. de Juros" and cls_cov not in ("ND", "NA"):
+                    bg_cov   = BG_COLORS.get(cls_cov, "#37474f")
+                    emoji_cov = COLOR_EMOJI.get(cls_cov, "⬜")
+                    c_met.markdown(f"**{lbl}**")
+                    c_met.markdown(
+                        f"<div style='display:inline-block;background:{bg_cov};color:#fff;"
+                        f"padding:4px 10px;border-radius:5px;font-weight:700;font-size:0.95rem'>"
+                        f"{emoji_cov} {disp_cov}</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    c_met.metric(lbl, val)
                 if lbl in _OUTROS_INFO:
                     with c_info.popover("ℹ️", use_container_width=True):
                         st.markdown(_OUTROS_INFO[lbl])
@@ -1472,7 +1811,7 @@ def _show_detail(s: dict):
 
 def _comparison_table(selected_tickers: list[str], stocks: list[dict]) -> None:
     """Renderiza tabela indicador × ação com células coloridas por classificação."""
-    all_inds = list(SCORED_COLS_ORDER) + ["pvp"]
+    all_inds = list(SCORED_COLS_ORDER) + ["pvp", "psr"]
 
     th = "padding:8px 10px;color:#e8eaf6;border-bottom:2px solid #333;background:#1a1d2e;font-weight:600"
     html = "<div style='overflow-x:auto'>"
@@ -1495,6 +1834,8 @@ def _comparison_table(selected_tickers: list[str], stocks: list[dict]) -> None:
             sector = stock.get("sector", "")
             if ind == "pvp":
                 cls, disp = sc.classify_pvp(stock.get("pvp"), sector)
+            elif ind == "psr":
+                cls, disp = sc.classify_psr(stock.get("psr"), sector)
             else:
                 cls, disp = sc.classify_all(stock).get(ind, ("ND", "N/D"))
             bg = BG_COLORS.get(cls, "")
