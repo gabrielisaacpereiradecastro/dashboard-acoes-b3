@@ -1903,39 +1903,55 @@ def _show_detail(s: dict):
         st.session_state[_mudanca_key] = ""
 
     st.text_area(
-        "Observações sobre esta ação:",
+        "Anotações / tese de investimento:",
         key=_notas_key,
-        height=120,
-        placeholder="Escreva sua tese, lembretes ou observações sobre esta ação…",
+        height=160,
+        placeholder=(
+            "Escreva sua tese, lembretes ou observações sobre esta ação…\n\n"
+            "Use o campo abaixo para registrar atualizações — elas serão inseridas "
+            "automaticamente aqui no topo, formando um histórico cronológico."
+        ),
     )
     st.text_input(
-        "O que mudou? (resumo opcional para o histórico)",
+        "📅 O que mudou desde a última revisão? (opcional)",
         key=_mudanca_key,
         placeholder="ex.: resultado do 1T25 acima do esperado, reduzi preço-alvo…",
+        help="Ao salvar, este texto será inserido no topo das anotações com a data atual.",
     )
 
     def _save_notas_btn(_t=_ticker, _key=_notas_key, _mkey=_mudanca_key):
-        new_text   = st.session_state.get(_key, "")
-        new_mudanca= st.session_state.get(_mkey, "").strip()
+        new_text    = st.session_state.get(_key, "")
+        new_mudanca = st.session_state.get(_mkey, "").strip()
         entry = st.session_state.acoes.get(_t)
         if entry is None:
             return
         old_text = entry.get("notas", "")
         if new_text == old_text and not new_mudanca:
             return
+
+        # Se "O que mudou" foi preenchido, prepend uma entrada de log no topo do texto
+        if new_mudanca:
+            now_fmt   = _now_bsb().strftime("%d/%m/%Y %H:%M")
+            sep       = "──────────────────────"
+            log_entry = f"📅 {now_fmt} — Atualização\n{new_mudanca}"
+            final_text = f"{log_entry}\n\n{sep}\n\n{new_text}" if new_text.strip() else log_entry
+        else:
+            final_text = new_text
+
+        # Empurra versão anterior para o histórico (max 5)
         hist = list(entry.get("notas_historico", []))
         if old_text:
-            hist.insert(0, {
-                "texto":   old_text,
-                "mudanca": entry.get("notas_mudancas", ""),
-                "data":    entry.get("notas_updated_at", ""),
-            })
+            hist.insert(0, {"texto": old_text, "data": entry.get("notas_updated_at", "")})
             hist = hist[:5]
-        entry["notas"]           = new_text
-        entry["notas_mudancas"]  = new_mudanca
-        entry["notas_updated_at"]= _now_bsb().isoformat()
-        entry["notas_historico"] = hist
+
+        entry["notas"]            = final_text
+        entry["notas_updated_at"] = _now_bsb().isoformat()
+        entry["notas_historico"]  = hist
+        # Remove campo obsoleto notas_mudancas (agora baked into o texto)
+        entry.pop("notas_mudancas", None)
         st.session_state.acoes[_t] = entry
+        # Atualiza text_area para refletir o novo conteúdo imediatamente
+        st.session_state[_key]  = final_text
         st.session_state[_mkey] = ""
         _save_all()
 
@@ -1952,7 +1968,7 @@ def _show_detail(s: dict):
             st.caption(f"Última edição: {_notas_updated[:16]}")
 
     if _historico:
-        with st.expander(f"🕓 Histórico de anotações ({len(_historico)} versões anteriores)", expanded=False):
+        with st.expander(f"🕓 Histórico ({len(_historico)} versões anteriores)", expanded=False):
             for _v in _historico:
                 _vdata = _v.get("data", "")
                 try:
@@ -1963,12 +1979,13 @@ def _show_detail(s: dict):
                     _vdata = _vdt.strftime("%d/%m/%Y %H:%M")
                 except Exception:
                     _vdata = _vdata[:16]
-                _vmud = _v.get("mudanca", "")
-                st.markdown(f"**{_vdata}**" + (f" — _{_vmud}_" if _vmud else ""))
+                st.markdown(f"**Versão de {_vdata}**")
                 st.markdown(
                     f"<div style='background:#1a1d2e;border-left:3px solid #3f51b5;"
-                    f"padding:8px 12px;border-radius:4px;color:#c8cce0;font-size:0.9rem'>"
-                    f"{_v.get('texto','').replace(chr(10),'<br>')}</div>",
+                    f"padding:8px 12px;border-radius:4px;color:#c8cce0;font-size:0.9rem;"
+                    f"white-space:pre-wrap'>"
+                    f"{_v.get('texto','').replace('<','&lt;').replace('>','&gt;')}"
+                    f"</div>",
                     unsafe_allow_html=True,
                 )
                 st.markdown("")
