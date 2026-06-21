@@ -4,7 +4,6 @@ Fonte de dados: API Bolsai (usebolsai.com)
 """
 from __future__ import annotations
 
-import base64
 import json
 import math
 import time
@@ -36,9 +35,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-DATA_FILE   = Path("acoes_salvas.json")
-TZ_BSB      = timezone(timedelta(hours=-3))
-_GIST_FILE  = "acoes_salvas.json"
+DATA_FILE = Path("acoes_salvas.json")
+TZ_BSB    = timezone(timedelta(hours=-3))
 LISTAS_PADRAO = ["⭐ Carteira", "👁 Watchlist", "🔍 Pesquisa"]
 USUARIOS = ["Gabriel", "Bolivar", "Danilo"]
 
@@ -168,45 +166,57 @@ INDICATOR_INFO: dict[str, dict[str, str]] = {
 
 
 # ────────────────────────────────────────────────────────────────
-# Persistência
+# Persistência — Supabase (PostgreSQL)
+# Fallback automático para arquivo local em desenvolvimento.
 # ────────────────────────────────────────────────────────────────
 
-def _gist_headers() -> dict:
-    tok = st.secrets.get("GITHUB_TOKEN", "")
-    return {"Authorization": f"token {tok}", "Accept": "application/vnd.github+json"} if tok else {}
+def _sb_url() -> str:
+    return st.secrets.get("SUPABASE_URL", "").rstrip("/")
+
+def _sb_key() -> str:
+    return st.secrets.get("SUPABASE_KEY", "")
+
+def _sb_headers() -> dict:
+    k = _sb_key()
+    return {
+        "apikey": k,
+        "Authorization": f"Bearer {k}",
+        "Content-Type": "application/json",
+    }
+
+def _sb_configured() -> bool:
+    return bool(_sb_url() and _sb_key())
 
 
-def _load_file_gist() -> dict:
-    """Carrega dados do GitHub Gist (persiste entre redeploys do Streamlit Cloud)."""
-    gist_id = st.secrets.get("GIST_ID", "")
-    if not gist_id or not st.secrets.get("GITHUB_TOKEN", ""):
+def _load_file_supabase() -> dict:
+    """Carrega dados do Supabase (persiste entre redeploys do Streamlit Cloud)."""
+    if not _sb_configured():
         return {}
     try:
         import requests as _req
         r = _req.get(
-            f"https://api.github.com/gists/{gist_id}",
-            headers=_gist_headers(), timeout=10,
+            f"{_sb_url()}/rest/v1/app_state?id=eq.1&select=dados",
+            headers=_sb_headers(),
+            timeout=10,
         )
-        if r.status_code == 200:
-            content = r.json()["files"].get(_GIST_FILE, {}).get("content", "")
-            if content:
-                return json.loads(content)
+        if r.status_code == 200 and r.json():
+            return r.json()[0].get("dados") or {}
     except Exception:
         pass
     return {}
 
 
-def _save_file_gist(data: dict) -> None:
-    """Salva dados no GitHub Gist em background (não bloqueia o app)."""
-    gist_id = st.secrets.get("GIST_ID", "")
-    if not gist_id or not st.secrets.get("GITHUB_TOKEN", ""):
+def _save_file_supabase(data: dict) -> None:
+    """Salva dados no Supabase (upsert)."""
+    if not _sb_configured():
         return
     try:
         import requests as _req
-        _req.patch(
-            f"https://api.github.com/gists/{gist_id}",
-            headers=_gist_headers(),
-            json={"files": {_GIST_FILE: {"content": json.dumps(data, ensure_ascii=False, indent=2)}}},
+        headers = {**_sb_headers(), "Prefer": "resolution=merge-duplicates"}
+        _req.post(
+            f"{_sb_url()}/rest/v1/app_state",
+            headers=headers,
+            json={"id": 1, "dados": data},
             timeout=10,
         )
     except Exception:
@@ -214,17 +224,16 @@ def _save_file_gist(data: dict) -> None:
 
 
 def _load_file() -> dict:
-    """Lê o JSON — tenta Gist primeiro (persistente), depois arquivo local."""
-    # Gist: sobrevive a redeploys no Streamlit Cloud
-    gist_data = _load_file_gist()
-    if gist_data:
-        # atualiza cache local para leituras rápidas subsequentes
+    """Lê os dados — Supabase primeiro, arquivo local como fallback."""
+    sb_data = _load_file_supabase()
+    if sb_data:
+        # cache local para leituras rápidas na mesma sessão
         try:
-            DATA_FILE.write_text(json.dumps(gist_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            DATA_FILE.write_text(json.dumps(sb_data, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             pass
-        return gist_data
-    # Fallback: arquivo local (funciona em desenvolvimento)
+        return sb_data
+    # Fallback: arquivo local (desenvolvimento sem Supabase configurado)
     if DATA_FILE.exists():
         try:
             return json.loads(DATA_FILE.read_text(encoding="utf-8"))
@@ -284,8 +293,8 @@ def _save_all() -> None:
         json.dumps(raw, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    # Persiste no Gist para sobreviver a redeploys do Streamlit Cloud
-    _save_file_gist(raw)
+    # Persiste no Supabase para sobreviver a redeploys do Streamlit Cloud
+    _save_file_supabase(raw)
 
 
 def save_data(_data: dict = None) -> None:
