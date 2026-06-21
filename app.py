@@ -524,16 +524,19 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
     if _diag_ciclico:
         _diag_anos = sorted(_diag_hist.keys(), reverse=True)[:5]
         _diag_pos  = [_diag_hist[a] for a in _diag_anos if _diag_hist.get(a) is not None and _diag_hist[a] > 0]
-        if len(_diag_pos) >= 3:
-            _diag_med = sum(_diag_pos) / len(_diag_pos)
+        if len(_diag_pos) >= 5:
+            _vs = sorted(_diag_pos)
+            _n = len(_vs)
+            _mid = _n // 2
+            _diag_mediana = (_vs[_mid-1] + _vs[_mid]) / 2 if _n % 2 == 0 else _vs[_mid]
             _dm3 = (
-                f"[DIAG] {t} | normalizacao: n={len(_diag_pos)} anos {_diag_anos[:len(_diag_pos)]} | "
-                f"valores={_diag_pos} | media={_diag_med:.0f} R$ mil | FCL atual={_diag_fcl_ult} R$ mil"
+                f"[DIAG] {t} | normalizacao: n={_n} anos {_diag_anos[:_n]} | "
+                f"valores={_diag_pos} | mediana={_diag_mediana:.0f} R$ mil | FCL atual={_diag_fcl_ult} R$ mil"
             )
         else:
             _dm3 = (
                 f"[DIAG] {t} | historico insuficiente: {len(_diag_pos)} ano(s) positivo(s) "
-                f"(minimo 3) — mantendo FCL atual"
+                f"(minimo 5) — mantendo FCL atual"
             )
         log.append(_dm3); print(_dm3, file=sys.stderr); sys.stderr.flush()
 
@@ -542,11 +545,11 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         _diag_roe = data.get("roe")
         _diag_vpa = data.get("vpa")
         _diag_ke, _diag_g = 0.15, 0.04
-        _diag_ke_c = _diag_ke * 1.3
+        _diag_ke_c = _diag_ke * 1.15  # ajustado: era 1.3, agora 1.15
         _diag_g_c  = _diag_g  * 0.7
         _dg1 = (
             f"[DIAG] {t} | Gordon: ROE={_diag_roe}% | VPA=R${_diag_vpa} | "
-            f"Ke_base={_diag_ke*100:.1f}% -> Ke_cons={_diag_ke_c*100:.1f}% | "
+            f"Ke_base={_diag_ke*100:.1f}% -> Ke_cons={_diag_ke_c*100:.2f}% | "
             f"g_base={_diag_g*100:.1f}% -> g_cons={_diag_g_c*100:.1f}%"
         )
         log.append(_dg1); print(_dg1, file=sys.stderr); sys.stderr.flush()
@@ -1459,14 +1462,18 @@ def _fcl_normalizado(s: dict) -> tuple[Optional[float], Optional[float], int]:
     if not hist:
         return fcl_ultimo, fcl_ultimo, 0
 
-    anos_ordenados = sorted(hist.keys(), reverse=True)[:5]  # últimos 5 anos
+    # Usa até 10 anos (mediana é mais resistente a picos de ciclo do que média de 5 anos)
+    anos_ordenados = sorted(hist.keys(), reverse=True)[:10]
     valores_pos = [hist[a] for a in anos_ordenados if hist[a] is not None and hist[a] > 0]
 
-    if len(valores_pos) < 3:
+    if len(valores_pos) < 5:
         return None, fcl_ultimo, len(valores_pos)  # insuficiente
 
-    fcl_med = sum(valores_pos) / len(valores_pos)
-    return fcl_med, fcl_ultimo, len(valores_pos)
+    valores_sorted = sorted(valores_pos)
+    n = len(valores_sorted)
+    mid = n // 2
+    fcl_mediana = (valores_sorted[mid - 1] + valores_sorted[mid]) / 2 if n % 2 == 0 else valores_sorted[mid]
+    return fcl_mediana, fcl_ultimo, n
 
 
 def _dcf_conservative_price(s: dict, wacc: float = 0.12, g5: float = 0.10, perp_g: float = 0.03) -> Optional[float]:
@@ -1490,7 +1497,7 @@ def _dcf_conservative_price(s: dict, wacc: float = 0.12, g5: float = 0.10, perp_
 
 
 def _gordon_conservative_price(s: dict, ke: float = 0.15, g: float = 0.04) -> Optional[float]:
-    """Preço alvo para bancos — Gordon Growth cenário Conservador (g×0.7, Ke×1.3)."""
+    """Preço alvo para bancos — Gordon Growth cenário Conservador (g×0.7, Ke×1.15)."""
     roe = s.get("roe")
     vpa = s.get("vpa")
     ticker = s.get("ticker", "?")
@@ -1500,7 +1507,7 @@ def _gordon_conservative_price(s: dict, ke: float = 0.15, g: float = 0.04) -> Op
         return None
     roe_f = roe / 100
     g_cons  = g  * 0.7
-    ke_cons = ke * 1.3
+    ke_cons = ke * 1.15  # conservador: +15% sobre Ke base (era +30%, excessivo)
     if ke_cons <= g_cons:
         print(f"GORDON {ticker}: ke_cons={ke_cons} <= g_cons={g_cons} -> retorna None", file=sys.stderr); sys.stderr.flush()
         return None
