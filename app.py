@@ -22,7 +22,7 @@ import score_fii as sf
 from score import classify_psr as _classify_psr, classify_interest_coverage as _classify_interest_coverage
 from config import (
     BG_COLORS, COLOR_EMOJI, INDICATOR_LABELS, INDICATOR_WEIGHTS,
-    SCORE_COLORS, SECTOR_REMAP,
+    SCORE_COLORS, SECTOR_REMAP, SETORES_CICLICOS,
 )
 
 # ────────────────────────────────────────────────────────────────
@@ -1371,7 +1371,6 @@ def _show_lucro_cotacao_chart(ticker: str) -> None:
 def _is_cyclical(sector: str) -> bool:
     """True se o setor for cíclico/commodity (usar FCL normalizado no DCF)."""
     sl = (sector or "").lower()
-    from config import SETORES_CICLICOS
     return any(kw in sl for kw in SETORES_CICLICOS)
 
 
