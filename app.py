@@ -465,7 +465,9 @@ def _init_state():
 # ────────────────────────────────────────────────────────────────
 
 def _fetch_ticker(ticker: str) -> Optional[str]:
+    print("\n===== INICIO BUSCA TICKER =====")
     t = ticker.strip().upper()
+    print(f"PROCESSANDO TICKER: {t}")
     log = st.session_state.debug_log
 
     api_key = api._get_api_key()
@@ -504,6 +506,7 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
     # ── Diagnóstico: ciclo cíclico e FCL normalizado ──────────────
     _diag_sector = data.get("sector", "")
     _diag_ciclico = _is_cyclical(_diag_sector)
+    print(f"SETOR DETECTADO: {_diag_sector!r} | CICLICO: {_diag_ciclico}")
     _dm1 = f"[DIAG] {t} | setor={_diag_sector!r} | _is_cyclical={_diag_ciclico}"
     log.append(_dm1); print(_dm1)
 
@@ -1487,15 +1490,21 @@ def _gordon_conservative_price(s: dict, ke: float = 0.15, g: float = 0.04) -> Op
     """Preço alvo para bancos — Gordon Growth cenário Conservador (g×0.7, Ke×1.3)."""
     roe = s.get("roe")
     vpa = s.get("vpa")
+    ticker = s.get("ticker", "?")
+    print(f"GORDON ROE={roe} VPA={vpa} g={g} ke={ke} ticker={ticker}")
     if roe is None or vpa is None or vpa <= 0:
+        print(f"GORDON {ticker}: ROE ou VPA ausente/zero -> retorna None")
         return None
     roe_f = roe / 100
     g_cons  = g  * 0.7
     ke_cons = ke * 1.3
     if ke_cons <= g_cons:
+        print(f"GORDON {ticker}: ke_cons={ke_cons} <= g_cons={g_cons} -> retorna None")
         return None
     pvp_j = (roe_f - g_cons) / (ke_cons - g_cons)
+    print(f"GORDON {ticker}: pvp_j={pvp_j:.4f} preco_alvo={pvp_j*vpa:.2f} (vpa={vpa:.2f})")
     if pvp_j <= 0:
+        print(f"GORDON {ticker}: pvp_j <= 0 -> retorna None")
         return None
     return pvp_j * vpa
 
