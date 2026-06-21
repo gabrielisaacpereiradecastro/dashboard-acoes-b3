@@ -47,6 +47,8 @@ BG_COLORS = {
     "Inconclusivo": "#4a3800",
     "NA":           "#37474f",
     "ND":           "#37474f",
+    "Positivo":     "#1b5e20",
+    "Negativo":     "#7f0000",
 }
 
 # Emoji de cor para exibição rápida

@@ -575,17 +575,29 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         classifications = sc.classify_all(s)
 
         ref_date = s.get("reference_date", "")
+        # Potencial de valorização — cenário conservador
+        _price_now = s.get("close_price")
+        _target = _gordon_conservative_price(s) if sc.is_bank(sector) else _dcf_conservative_price(s)
+        if _target is not None and _price_now and _price_now > 0:
+            _pot_pct  = (_target / _price_now - 1) * 100
+            _pot_disp = f"↑ {_pot_pct:.1f}%" if _pot_pct >= 0 else f"↓ {abs(_pot_pct):.1f}%"
+            _pot_cls  = "Positivo" if _pot_pct >= 0 else "Negativo"
+        else:
+            _pot_disp, _pot_cls = "N/D", "ND"
+
         display_row = {
-            "Ticker":   s.get("ticker", ""),
-            "Empresa":  s.get("trade_name") or s.get("corporate_name", ""),
-            "Setor":    sector,
-            "Balanço":  _fmt_quarter(ref_date),
-            "Preço":    _fmt_price(s.get("close_price")),
-            "Var.Dia":  _fmt_pct(s.get("daily_change_pct")),
+            "Ticker":    s.get("ticker", ""),
+            "Empresa":   s.get("trade_name") or s.get("corporate_name", ""),
+            "Setor":     sector,
+            "Balanço":   _fmt_quarter(ref_date),
+            "Preço":     _fmt_price(_price_now),
+            "Potencial": _pot_disp,
+            "Var.Dia":   _fmt_pct(s.get("daily_change_pct")),
         }
         class_row = {
             "Ticker": s.get("ticker", ""), "Empresa": "", "Setor": "",
-            "Balanço": _quarter_staleness(ref_date), "Preço": "", "Var.Dia": "",
+            "Balanço": _quarter_staleness(ref_date), "Preço": "",
+            "Potencial": _pot_cls, "Var.Dia": "",
         }
 
         score = s.get("score")
@@ -641,7 +653,7 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         "Setor Bancário": "#37474f",
         "NA":             "#37474f",
     }
-    colored_cols = {"Score", "P/VP", "PSR", "Balanço"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
+    colored_cols = {"Score", "P/VP", "PSR", "Balanço", "Potencial"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
     # Pandas >= 2.x: _update_ctx lança KeyError se index ou columns não forem únicos.
     # Retorna sem cores em vez de travar o app.
@@ -1353,6 +1365,149 @@ def _show_lucro_cotacao_chart(ticker: str) -> None:
 
 
 # ────────────────────────────────────────────────────────────────
+# Helpers de valuation (usados na tabela e no detalhe)
+# ────────────────────────────────────────────────────────────────
+
+def _dcf_conservative_price(s: dict, wacc: float = 0.12, g5: float = 0.10, perp_g: float = 0.03) -> Optional[float]:
+    """Preço justo DCF — cenário Conservador (g5 × 0.7). Retorna R$ por ação ou None."""
+    fcl_k = s.get("fcl")
+    shares = s.get("shares_outstanding")
+    if not fcl_k or fcl_k <= 0 or not shares or shares <= 0:
+        return None
+    net_debt = s.get("net_debt") or 0.0
+    g_cons = g5 * 0.7
+    if wacc <= perp_g:
+        return None
+    pv, fcl_y = 0.0, fcl_k
+    for yr in range(1, 6):
+        fcl_y *= (1 + g_cons)
+        pv += fcl_y / (1 + wacc) ** yr
+    tv = fcl_k * (1 + g_cons) ** 5 * (1 + perp_g) / (wacc - perp_g)
+    pv += tv / (1 + wacc) ** 5
+    equity_k = pv - net_debt
+    return max(0.0, equity_k * 1000 / shares)
+
+
+def _gordon_conservative_price(s: dict, ke: float = 0.15, g: float = 0.04) -> Optional[float]:
+    """Preço alvo para bancos — Gordon Growth cenário Conservador (g×0.7, Ke×1.3)."""
+    roe = s.get("roe")
+    vpa = s.get("vpa")
+    if roe is None or vpa is None or vpa <= 0:
+        return None
+    roe_f = roe / 100
+    g_cons  = g  * 0.7
+    ke_cons = ke * 1.3
+    if ke_cons <= g_cons:
+        return None
+    pvp_j = (roe_f - g_cons) / (ke_cons - g_cons)
+    if pvp_j <= 0:
+        return None
+    return pvp_j * vpa
+
+
+# ────────────────────────────────────────────────────────────────
+# Valuation — Gordon Growth (bancos)
+# ────────────────────────────────────────────────────────────────
+
+def _show_gordon_growth(s: dict) -> None:
+    """Valuation para bancos via Gordon Growth (P/VP justificado pelo ROE)."""
+    roe   = s.get("roe")
+    vpa   = s.get("vpa")
+    price = s.get("close_price")
+    ticker = s.get("ticker", "")
+
+    st.divider()
+    st.subheader("📐 Valuation — Gordon Growth (P/VP Justificado)")
+    st.info(
+        "ℹ️ Para bancos, o valuation usa o **modelo de Gordon Growth sobre o Patrimônio** "
+        "(P/VP justificado pelo ROE), método padrão para o setor — diferente do DCF "
+        "tradicional usado para as demais ações, pois o fluxo de caixa de um banco "
+        "não é diretamente comparável ao de empresas não-financeiras."
+    )
+
+    if roe is None or vpa is None or vpa <= 0:
+        st.warning("⚠️ ROE ou VPA não disponível — Gordon Growth não pode ser calculado.")
+        return
+
+    st.caption(f"ROE base: **{roe:.1f}%** · VPA: **R$ {vpa:.2f}**")
+
+    col_ke, col_g = st.columns(2)
+    with col_ke:
+        ke = st.slider(
+            "Ke — Custo do Capital Próprio (%)",
+            min_value=8.0, max_value=25.0, value=15.0, step=0.5,
+            key=f"gg_ke_{ticker}",
+        ) / 100
+    with col_g:
+        g = st.slider(
+            "Crescimento na perpetuidade (%)",
+            min_value=0.0, max_value=8.0, value=4.0, step=0.25,
+            key=f"gg_g_{ticker}",
+        ) / 100
+
+    if ke <= g:
+        st.error("Ke deve ser maior que o crescimento (g).")
+        return
+
+    roe_f = roe / 100
+
+    def _gg_price(g_s: float, ke_s: float) -> Optional[float]:
+        if ke_s <= g_s:
+            return None
+        pvp_j = (roe_f - g_s) / (ke_s - g_s)
+        return max(0.0, pvp_j * vpa) if pvp_j > 0 else 0.0
+
+    scenarios = [
+        ("Conservador", g * 0.7, ke * 1.3, "#f44336"),
+        ("Base",        g,       ke,        "#4caf50"),
+        ("Otimista",    g * 1.3, ke * 0.7,  "#2196f3"),
+    ]
+    prices_gg = {name: _gg_price(g_s, ke_s) for name, g_s, ke_s, _ in scenarios}
+
+    def _upside(p: Optional[float]) -> str:
+        if p is not None and price and price > 0:
+            return f"({(p / price - 1) * 100:+.1f}%)"
+        return ""
+
+    c_r, c_b, c_o = st.columns(3)
+    p_c, p_b, p_o = prices_gg["Conservador"], prices_gg["Base"], prices_gg["Otimista"]
+    c_r.metric("Conservador (g−30%, Ke+30%)", f"R$ {p_c:.2f}" if p_c is not None else "N/D", _upside(p_c))
+    c_b.metric("Base",                         f"R$ {p_b:.2f}" if p_b is not None else "N/D", _upside(p_b))
+    c_o.metric("Otimista (g+30%, Ke−30%)",    f"R$ {p_o:.2f}" if p_o is not None else "N/D", _upside(p_o))
+
+    fig = go.Figure()
+    names  = [n for n, *_ in scenarios]
+    vals   = [prices_gg[n] or 0 for n in names]
+    colors = [c for *_, c in scenarios]
+    fig.add_trace(go.Bar(
+        x=names, y=vals,
+        marker_color=colors,
+        text=[f"R$ {v:.2f}" for v in vals],
+        textposition="outside",
+        hovertemplate="%{x}: R$ %{y:.2f}<extra></extra>",
+    ))
+    if price:
+        fig.add_hline(
+            y=price, line_dash="dash", line_color="#ffeb3b", line_width=2,
+            annotation_text=f"Preço atual: R$ {price:.2f}",
+            annotation_font_color="#ffeb3b",
+        )
+    fig.update_layout(
+        height=300, margin=dict(l=0, r=0, t=30, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e", tickprefix="R$ "),
+        showlegend=False,
+        title=dict(text="Faixa de Preço Justo — Gordon Growth (3 cenários)", font=dict(size=12, color="#e8eaf6")),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.warning(
+        "⚠️ **Aviso:** modelo educacional de aproximação — não constitui recomendação de investimento. "
+        "Resultados são muito sensíveis às premissas de ROE, Ke e crescimento."
+    )
+
+
+# ────────────────────────────────────────────────────────────────
 # Valuation DCF
 # ────────────────────────────────────────────────────────────────
 
@@ -1360,6 +1515,7 @@ def _show_dcf(s: dict) -> None:
     """Seção de Valuation por Fluxo de Caixa Descontado (DCF)."""
     sector = s.get("sector", "")
     if sc.is_bank(sector):
+        _show_gordon_growth(s)
         return
 
     fcl_k = s.get("fcl")  # FCL em R$ mil
@@ -3008,39 +3164,65 @@ _PORTFOLIO_COLORS = [
 
 
 def _qty_editor(enriched: list[dict], acoes: dict) -> None:
-    """Exibe editor de quantidades e persiste alterações."""
-    with st.expander("📝 Quantidades em carteira", expanded=False):
-        qty_rows = [
-            {
-                "Ticker": e["ticker"],
-                "Quantidade": int(acoes.get(e["ticker"], {}).get("qtd", 0) or 0),
-            }
-            for e in enriched
-        ]
+    """Exibe editor de quantidades, preço médio e data de compra para a Carteira."""
+    from datetime import date as _date
+    with st.expander("📝 Carteira — Quantidades e Posições", expanded=False):
+        qty_rows = []
+        for e in enriched:
+            t  = e["ticker"]
+            en = acoes.get(t, {})
+            dc_raw = en.get("data_compra", "")
+            try:
+                dc_val = _date.fromisoformat(dc_raw) if dc_raw else None
+            except ValueError:
+                dc_val = None
+            qty_rows.append({
+                "Ticker":         t,
+                "Quantidade":     int(en.get("qtd", 0) or 0),
+                "Preço Médio (R$)": float(en.get("preco_medio", 0) or 0),
+                "Data de Compra": dc_val,
+            })
         qty_df = pd.DataFrame(qty_rows)
         edited = st.data_editor(
             qty_df,
             column_config={
                 "Ticker": st.column_config.TextColumn("Ticker", disabled=True, width="small"),
                 "Quantidade": st.column_config.NumberColumn(
-                    "Quantidade", min_value=0, max_value=10_000_000, step=1, width="medium"
+                    "Qtd", min_value=0, max_value=10_000_000, step=1, width="small",
+                ),
+                "Preço Médio (R$)": st.column_config.NumberColumn(
+                    "Preço Médio (R$)", min_value=0.0, format="%.2f", width="medium",
+                    help="Opcional — preço médio de compra para calcular lucro/prejuízo",
+                ),
+                "Data de Compra": st.column_config.DateColumn(
+                    "Data de Compra", width="medium",
+                    help="Opcional — data de compra ou início da posição",
                 ),
             },
             hide_index=True,
-            use_container_width=False,
+            use_container_width=True,
             key="qty_data_editor",
         )
-        if st.button("💾 Salvar quantidades", key="btn_salvar_qtd", use_container_width=False):
+        if st.button("💾 Salvar posições", key="btn_salvar_qtd", use_container_width=False):
             changed = False
             for _, row in edited.iterrows():
-                t = str(row["Ticker"])
+                t       = str(row["Ticker"])
                 new_qty = int(row["Quantidade"] or 0)
-                if t in acoes and acoes[t].get("qtd", 0) != new_qty:
-                    acoes[t]["qtd"] = new_qty
-                    changed = True
+                new_pm  = float(row["Preço Médio (R$)"] or 0)
+                dc_obj  = row["Data de Compra"]
+                new_dc  = dc_obj.isoformat() if dc_obj is not None else ""
+                if t in acoes:
+                    old = acoes[t]
+                    if (old.get("qtd", 0) != new_qty or
+                            old.get("preco_medio", 0) != new_pm or
+                            old.get("data_compra", "") != new_dc):
+                        acoes[t]["qtd"]         = new_qty
+                        acoes[t]["preco_medio"]  = new_pm
+                        acoes[t]["data_compra"]  = new_dc
+                        changed = True
             if changed:
                 _save_all()
-                st.success("Quantidades salvas.")
+                st.success("Posições salvas.")
                 st.rerun()
             else:
                 st.info("Nenhuma alteração detectada.")
@@ -3062,22 +3244,29 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     """Seção 📊 Análise da Carteira — visível apenas quando ⭐ Carteira com posições > 0."""
     positions = []
     for e in enriched:
-        t = e["ticker"]
-        qtd = int(acoes.get(t, {}).get("qtd", 0) or 0)
+        t     = e["ticker"]
+        en    = acoes.get(t, {})
+        qtd   = int(en.get("qtd", 0) or 0)
         price = e.get("close_price")
+        pm    = float(en.get("preco_medio", 0) or 0)
         if qtd > 0 and price:
+            pnl_r   = (price - pm) * qtd if pm > 0 else None
+            pnl_pct = (price / pm - 1) * 100   if pm > 0 else None
             positions.append({
-                "ticker":          t,
-                "qtd":             qtd,
-                "price":           price,
-                "value":           qtd * price,
-                "sector":          e.get("sector") or "Outros",
-                "dy":              e.get("dividend_yield"),
-                "pl":              e.get("pl") if (e.get("pl") or 0) > 0 else None,
-                "score":           e.get("score"),
-                "nd_ebitda":       e.get("net_debt_ebitda"),
+                "ticker":           t,
+                "qtd":              qtd,
+                "price":            price,
+                "value":            qtd * price,
+                "preco_medio":      pm if pm > 0 else None,
+                "pnl_reais":        pnl_r,
+                "pnl_pct":         pnl_pct,
+                "sector":           e.get("sector") or "Outros",
+                "dy":               e.get("dividend_yield"),
+                "pl":               e.get("pl") if (e.get("pl") or 0) > 0 else None,
+                "score":            e.get("score"),
+                "nd_ebitda":        e.get("net_debt_ebitda"),
                 "daily_change_pct": e.get("daily_change_pct"),
-                "weight":          0.0,
+                "weight":           0.0,
             })
 
     if not positions:
@@ -3171,21 +3360,73 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         help="Dívida Líquida/EBITDA médio ponderado (excluindo N/A bancário e N/D)",
     )
 
+    # ── P&L total das posições com preço médio ────────────────────
+    pnl_positions = [p for p in positions if p.get("pnl_reais") is not None]
+    if pnl_positions:
+        total_pnl = sum(p["pnl_reais"] for p in pnl_positions)
+        total_custo = sum((p["preco_medio"] or 0) * p["qtd"] for p in pnl_positions)
+        total_pnl_pct = (total_pnl / total_custo * 100) if total_custo > 0 else None
+        pnl_color = "#4caf50" if total_pnl >= 0 else "#ef5350"
+        sign = "+" if total_pnl >= 0 else ""
+        pnl_fmt = f"R$ {abs(total_pnl):,.0f}".replace(",", ".")
+        pct_fmt = f"{sign}{total_pnl_pct:.1f}%" if total_pnl_pct is not None else ""
+        st.markdown(
+            f"""<div style='margin-top:12px;padding:10px 14px;border-radius:8px;
+            background:#1a1d2e;border-left:4px solid {pnl_color}'>
+            <span style='color:#9ea3b0;font-size:0.85rem'>💼 Lucro/Prejuízo não realizado
+            ({len(pnl_positions)} posição{'ões' if len(pnl_positions)>1 else ''})</span><br>
+            <span style='color:{pnl_color};font-size:1.4rem;font-weight:700'>
+            {sign}{pnl_fmt}</span>
+            <span style='color:{pnl_color};font-size:1rem;margin-left:10px'>{pct_fmt}</span>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        st.markdown("")
+
     # ── Tabela de posições ────────────────────────────────────────
     st.markdown("#### Posições")
     pos_rows = sorted(positions, key=lambda p: p["weight"], reverse=True)
+
+    def _fmt_pnl_r(v: Optional[float]) -> str:
+        if v is None:
+            return "—"
+        s = "+" if v >= 0 else ""
+        return f"{s}R$ {abs(v):,.0f}".replace(",", ".")
+
+    def _fmt_pnl_pct(v: Optional[float]) -> str:
+        if v is None:
+            return "—"
+        return f"{'+' if v >= 0 else ''}{v:.1f}%"
+
     pos_data = [
         {
-            "Ticker":         p["ticker"],
-            "Quantidade":     f"{p['qtd']:,}".replace(",", "."),
-            "Preço Atual":    f"R$ {p['price']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-            "Valor Total":    f"R$ {p['value']:,.0f}".replace(",", "."),
-            "% da Carteira":  f"{p['weight'] * 100:.1f}%",
+            "Ticker":              p["ticker"],
+            "Qtd":                 f"{p['qtd']:,}".replace(",", "."),
+            "Preço Atual":         f"R$ {p['price']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+            "Preço Médio":         f"R$ {p['preco_medio']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if p.get("preco_medio") else "—",
+            "Lucro/Prej. (R$)":    _fmt_pnl_r(p.get("pnl_reais")),
+            "Lucro/Prej. (%)":     _fmt_pnl_pct(p.get("pnl_pct")),
+            "Valor Total":         f"R$ {p['value']:,.0f}".replace(",", "."),
+            "% Carteira":          f"{p['weight'] * 100:.1f}%",
         }
         for p in pos_rows
     ]
     pos_df = pd.DataFrame(pos_data)
-    st.dataframe(pos_df, hide_index=True, use_container_width=True,
+
+    # Colore P&L baseando-se no sinal (verde/vermelho via Styler)
+    def _color_pnl(val: str) -> str:
+        if val.startswith("+"):
+            return "color:#4caf50;font-weight:600"
+        if val.startswith("-") or (val not in ("—", "") and float(val.replace("R$ ","").replace(".","").replace(",",".").replace("+","") or 0) < 0):
+            return "color:#ef5350;font-weight:600"
+        return ""
+
+    try:
+        styled_pos = pos_df.style.map(_color_pnl, subset=["Lucro/Prej. (R$)", "Lucro/Prej. (%)"])
+    except Exception:
+        styled_pos = pos_df
+
+    st.dataframe(styled_pos, hide_index=True, use_container_width=True,
                  height=min(42 + 35 * len(pos_data), 400))
 
     # ── Gráficos de rosca ─────────────────────────────────────────
@@ -3321,15 +3562,15 @@ footer {visibility: hidden;}
     _sidebar()
 
     if not st.session_state.acoes:
-        st.markdown("## Bem-vindo ao Analisador Fundamentalista B3")
+        st.markdown("## 📈 Bem-vindo ao Analisador Fundamentalista B3")
         st.markdown(
-            "Adicione tickers no painel à esquerda para começar. "
-            "Cada ação é analisada com **10 indicadores fundamentalistas** "
-            "ponderados em um score de **0 a 100**."
+            "Este app ajuda você a analisar ações da bolsa brasileira combinando 10+ indicadores "
+            "fundamentalistas em um score único de 0 a 100, com contexto setorial, comparação "
+            "visual entre ações, valuation por fluxo de caixa descontado e acompanhamento de carteira."
         )
         st.markdown(
-            "**Fonte de dados:** [Bolsai](https://usebolsai.com) · "
-            "**Plano gratuito:** 200 req/dia"
+            "**Para começar:** adicione um ou mais tickers no campo à esquerda "
+            "(ex: PETR4, VALE3, ITUB4)."
         )
         return
 
@@ -3419,6 +3660,7 @@ div[data-testid="stPopover"] button:hover {
                 "Empresa":         st.column_config.TextColumn("Empresa", width="medium"),
                 "Setor":           st.column_config.TextColumn("Setor", width="medium"),
                 "Balanço":         st.column_config.TextColumn("Balanço", width="small"),
+                "Potencial":       st.column_config.TextColumn("Potencial", width="small"),
                 "Dív.Líq/EBITDA":  st.column_config.TextColumn("Dív/EBITDA", width="small"),
                 "ROE":             st.column_config.TextColumn("ROE", width="small"),
                 "EV/EBITDA":       st.column_config.TextColumn("EV/EBITDA", width="small"),
@@ -3430,6 +3672,7 @@ div[data-testid="stPopover"] button:hover {
                 "Liquidez":        st.column_config.TextColumn("Liquidez", width="small"),
                 "CAGR Rec. 5a":    st.column_config.TextColumn("CAGR Rec.", width="small"),
                 "P/VP":            st.column_config.TextColumn("P/VP", width="small"),
+                "PSR":             st.column_config.TextColumn("PSR", width="small"),
             },
         )
 
