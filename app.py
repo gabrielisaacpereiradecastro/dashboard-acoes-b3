@@ -504,29 +504,32 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
     # ── Diagnóstico: ciclo cíclico e FCL normalizado ──────────────
     _diag_sector = data.get("sector", "")
     _diag_ciclico = _is_cyclical(_diag_sector)
-    log.append(f"🔄 [DIAG] setor={_diag_sector!r} → _is_cyclical={_diag_ciclico}")
+    _dm1 = f"[DIAG] {t} | setor={_diag_sector!r} | _is_cyclical={_diag_ciclico}"
+    log.append(_dm1); print(_dm1)
 
     _diag_fcl_ult = data.get("fcl")
     _diag_hist: dict = data.get("fcl_historico") or {}
-    log.append(
-        f"💵 [DIAG] FCL último período: {_diag_fcl_ult} R$ mil | "
-        f"fcl_historico: {len(_diag_hist)} anos disponíveis → {dict(sorted(_diag_hist.items()))}"
+    _dm2 = (
+        f"[DIAG] {t} | FCL ultimo periodo: {_diag_fcl_ult} R$ mil | "
+        f"fcl_historico: {len(_diag_hist)} anos -> {dict(sorted(_diag_hist.items()))}"
     )
+    log.append(_dm2); print(_dm2)
+
     if _diag_ciclico:
         _diag_anos = sorted(_diag_hist.keys(), reverse=True)[:5]
         _diag_pos  = [_diag_hist[a] for a in _diag_anos if _diag_hist.get(a) is not None and _diag_hist[a] > 0]
         if len(_diag_pos) >= 3:
             _diag_med = sum(_diag_pos) / len(_diag_pos)
-            log.append(
-                f"📊 [DIAG] Anos usados na média: {_diag_anos[:len(_diag_pos)]} | "
-                f"n={len(_diag_pos)} | valores (R$ mil): {_diag_pos} | "
-                f"Média normalizada: {_diag_med:.0f} R$ mil  ←  FCL atual: {_diag_fcl_ult} R$ mil"
+            _dm3 = (
+                f"[DIAG] {t} | normalizacao: n={len(_diag_pos)} anos {_diag_anos[:len(_diag_pos)]} | "
+                f"valores={_diag_pos} | media={_diag_med:.0f} R$ mil | FCL atual={_diag_fcl_ult} R$ mil"
             )
         else:
-            log.append(
-                f"⚠️ [DIAG] Histórico insuficiente para normalizar: "
-                f"{len(_diag_pos)} ano(s) positivo(s) (mínimo 3). Mantendo FCL atual."
+            _dm3 = (
+                f"[DIAG] {t} | historico insuficiente: {len(_diag_pos)} ano(s) positivo(s) "
+                f"(minimo 3) — mantendo FCL atual"
             )
+        log.append(_dm3); print(_dm3)
 
     # ── Diagnóstico: Gordon Growth (bancos) ──────────────────────
     if sc.is_bank(_diag_sector):
@@ -535,11 +538,12 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         _diag_ke, _diag_g = 0.15, 0.04
         _diag_ke_c = _diag_ke * 1.3
         _diag_g_c  = _diag_g  * 0.7
-        log.append(
-            f"🏦 [DIAG] Gordon: ROE={_diag_roe}% | VPA=R${_diag_vpa} | "
-            f"Ke_base={_diag_ke*100:.1f}% → Ke_cons={_diag_ke_c*100:.1f}% | "
-            f"g_base={_diag_g*100:.1f}% → g_cons={_diag_g_c*100:.1f}%"
+        _dg1 = (
+            f"[DIAG] {t} | Gordon: ROE={_diag_roe}% | VPA=R${_diag_vpa} | "
+            f"Ke_base={_diag_ke*100:.1f}% -> Ke_cons={_diag_ke_c*100:.1f}% | "
+            f"g_base={_diag_g*100:.1f}% -> g_cons={_diag_g_c*100:.1f}%"
         )
+        log.append(_dg1); print(_dg1)
         if _diag_roe is not None and _diag_vpa is not None and _diag_vpa > 0:
             _diag_roe_f = _diag_roe / 100
             if _diag_ke_c > _diag_g_c:
@@ -547,16 +551,17 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
                 _diag_alvo = _diag_pvp * _diag_vpa
                 _diag_preco = data.get("close_price")
                 _diag_pot = (_diag_alvo / _diag_preco - 1) * 100 if _diag_preco else None
-                log.append(
-                    f"🏦 [DIAG] P/VP_justo = ({_diag_roe_f:.4f} - {_diag_g_c:.4f}) / "
-                    f"({_diag_ke_c:.4f} - {_diag_g_c:.4f}) = {_diag_pvp:.4f} | "
-                    f"Preço alvo = {_diag_pvp:.4f} × R${_diag_vpa:.2f} = R${_diag_alvo:.2f}"
-                    + (f" | Potencial: {_diag_pot:+.1f}%" if _diag_pot is not None else "")
+                _dg2 = (
+                    f"[DIAG] {t} | P/VP_justo=({_diag_roe_f:.4f}-{_diag_g_c:.4f})"
+                    f"/({_diag_ke_c:.4f}-{_diag_g_c:.4f})={_diag_pvp:.4f} | "
+                    f"preco_alvo={_diag_pvp:.4f}xR${_diag_vpa:.2f}=R${_diag_alvo:.2f}"
+                    + (f" | potencial={_diag_pot:+.1f}%" if _diag_pot is not None else "")
                 )
             else:
-                log.append("🏦 [DIAG] Gordon inválido: Ke_cons ≤ g_cons (não gera preço alvo)")
+                _dg2 = f"[DIAG] {t} | Gordon invalido: Ke_cons <= g_cons"
         else:
-            log.append(f"🏦 [DIAG] Gordon: ROE ou VPA ausente/zero — preço alvo = None")
+            _dg2 = f"[DIAG] {t} | Gordon: ROE ou VPA ausente/zero"
+        log.append(_dg2); print(_dg2)
 
     # Força o ticker armazenado a ser o que o usuário digitou.
     # A Bolsai pode retornar fund["ticker"] = "ITUB4" mesmo para a query "ITUB3" —
