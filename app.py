@@ -4,6 +4,7 @@ Fonte de dados: API Bolsai (usebolsai.com)
 """
 from __future__ import annotations
 
+import base64
 import json
 import math
 import time
@@ -35,8 +36,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-DATA_FILE = Path("acoes_salvas.json")
-TZ_BSB = timezone(timedelta(hours=-3))
+DATA_FILE   = Path("acoes_salvas.json")
+TZ_BSB      = timezone(timedelta(hours=-3))
+_GIST_FILE  = "acoes_salvas.json"
 LISTAS_PADRAO = ["⭐ Carteira", "👁 Watchlist", "🔍 Pesquisa"]
 USUARIOS = ["Gabriel", "Bolivar", "Danilo"]
 
@@ -169,8 +171,60 @@ INDICATOR_INFO: dict[str, dict[str, str]] = {
 # Persistência
 # ────────────────────────────────────────────────────────────────
 
+def _gist_headers() -> dict:
+    tok = st.secrets.get("GITHUB_TOKEN", "")
+    return {"Authorization": f"token {tok}", "Accept": "application/vnd.github+json"} if tok else {}
+
+
+def _load_file_gist() -> dict:
+    """Carrega dados do GitHub Gist (persiste entre redeploys do Streamlit Cloud)."""
+    gist_id = st.secrets.get("GIST_ID", "")
+    if not gist_id or not st.secrets.get("GITHUB_TOKEN", ""):
+        return {}
+    try:
+        import requests as _req
+        r = _req.get(
+            f"https://api.github.com/gists/{gist_id}",
+            headers=_gist_headers(), timeout=10,
+        )
+        if r.status_code == 200:
+            content = r.json()["files"].get(_GIST_FILE, {}).get("content", "")
+            if content:
+                return json.loads(content)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_file_gist(data: dict) -> None:
+    """Salva dados no GitHub Gist em background (não bloqueia o app)."""
+    gist_id = st.secrets.get("GIST_ID", "")
+    if not gist_id or not st.secrets.get("GITHUB_TOKEN", ""):
+        return
+    try:
+        import requests as _req
+        _req.patch(
+            f"https://api.github.com/gists/{gist_id}",
+            headers=_gist_headers(),
+            json={"files": {_GIST_FILE: {"content": json.dumps(data, ensure_ascii=False, indent=2)}}},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def _load_file() -> dict:
-    """Lê o JSON do disco sem tocar no session_state."""
+    """Lê o JSON — tenta Gist primeiro (persistente), depois arquivo local."""
+    # Gist: sobrevive a redeploys no Streamlit Cloud
+    gist_data = _load_file_gist()
+    if gist_data:
+        # atualiza cache local para leituras rápidas subsequentes
+        try:
+            DATA_FILE.write_text(json.dumps(gist_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return gist_data
+    # Fallback: arquivo local (funciona em desenvolvimento)
     if DATA_FILE.exists():
         try:
             return json.loads(DATA_FILE.read_text(encoding="utf-8"))
@@ -230,6 +284,8 @@ def _save_all() -> None:
         json.dumps(raw, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    # Persiste no Gist para sobreviver a redeploys do Streamlit Cloud
+    _save_file_gist(raw)
 
 
 def save_data(_data: dict = None) -> None:
