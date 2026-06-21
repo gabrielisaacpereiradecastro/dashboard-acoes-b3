@@ -1368,21 +1368,55 @@ def _show_lucro_cotacao_chart(ticker: str) -> None:
 # Helpers de valuation (usados na tabela e no detalhe)
 # ────────────────────────────────────────────────────────────────
 
+def _is_cyclical(sector: str) -> bool:
+    """True se o setor for cíclico/commodity (usar FCL normalizado no DCF)."""
+    sl = (sector or "").lower()
+    from config import SETORES_CICLICOS
+    return any(kw in sl for kw in SETORES_CICLICOS)
+
+
+def _fcl_normalizado(s: dict) -> tuple[Optional[float], Optional[float], int]:
+    """
+    Retorna (fcl_base_norm, fcl_ultimo, n_anos):
+    - fcl_base_norm: média dos últimos 3-5 anos (None se < 3 anos positivos)
+    - fcl_ultimo:    FCL do período mais recente
+    - n_anos:        quantos anos foram usados na média (0 se não normalizou)
+    Se o setor não for cíclico, fcl_base_norm == fcl_ultimo.
+    """
+    fcl_ultimo = s.get("fcl")
+    sector = s.get("sector", "")
+    if not _is_cyclical(sector):
+        return fcl_ultimo, fcl_ultimo, 0
+
+    hist: dict = s.get("fcl_historico") or {}
+    if not hist:
+        return fcl_ultimo, fcl_ultimo, 0
+
+    anos_ordenados = sorted(hist.keys(), reverse=True)[:5]  # últimos 5 anos
+    valores_pos = [hist[a] for a in anos_ordenados if hist[a] is not None and hist[a] > 0]
+
+    if len(valores_pos) < 3:
+        return None, fcl_ultimo, len(valores_pos)  # insuficiente
+
+    fcl_med = sum(valores_pos) / len(valores_pos)
+    return fcl_med, fcl_ultimo, len(valores_pos)
+
+
 def _dcf_conservative_price(s: dict, wacc: float = 0.12, g5: float = 0.10, perp_g: float = 0.03) -> Optional[float]:
-    """Preço justo DCF — cenário Conservador (g5 × 0.7). Retorna R$ por ação ou None."""
-    fcl_k = s.get("fcl")
+    """Preço justo DCF — cenário Conservador (g5 × 0.7). Usa FCL normalizado para setores cíclicos."""
+    fcl_base, _, _ = _fcl_normalizado(s)
     shares = s.get("shares_outstanding")
-    if not fcl_k or fcl_k <= 0 or not shares or shares <= 0:
+    if not fcl_base or fcl_base <= 0 or not shares or shares <= 0:
         return None
     net_debt = s.get("net_debt") or 0.0
     g_cons = g5 * 0.7
     if wacc <= perp_g:
         return None
-    pv, fcl_y = 0.0, fcl_k
+    pv, fcl_y = 0.0, fcl_base
     for yr in range(1, 6):
         fcl_y *= (1 + g_cons)
         pv += fcl_y / (1 + wacc) ** yr
-    tv = fcl_k * (1 + g_cons) ** 5 * (1 + perp_g) / (wacc - perp_g)
+    tv = fcl_base * (1 + g_cons) ** 5 * (1 + perp_g) / (wacc - perp_g)
     pv += tv / (1 + wacc) ** 5
     equity_k = pv - net_debt
     return max(0.0, equity_k * 1000 / shares)
@@ -1518,10 +1552,11 @@ def _show_dcf(s: dict) -> None:
         _show_gordon_growth(s)
         return
 
-    fcl_k = s.get("fcl")  # FCL em R$ mil
-    net_debt = s.get("net_debt")  # R$ mil (negativo = caixa > dívida)
-    shares = s.get("shares_outstanding")  # número de ações
+    fcl_k = s.get("fcl")  # FCL mais recente em R$ mil
+    net_debt = s.get("net_debt")
+    shares = s.get("shares_outstanding")
     price = s.get("close_price")
+    ciclico = _is_cyclical(sector)
 
     st.divider()
     st.subheader("📐 Valuation por DCF (Fluxo de Caixa Descontado)")
@@ -1533,17 +1568,49 @@ def _show_dcf(s: dict) -> None:
         )
         return
 
-    if fcl_k <= 0:
+    # Determina a base de FCL a usar (normalizada para setores cíclicos)
+    fcl_norm, fcl_ultimo, n_anos_hist = _fcl_normalizado(s)
+
+    if ciclico:
+        if fcl_norm is None:
+            # Histórico insuficiente para normalizar
+            st.warning(
+                "⚠️ **Setor cíclico — histórico insuficiente para normalização.** "
+                f"Foram encontrados apenas {n_anos_hist} ano(s) de FCL positivo "
+                "(mínimo: 3). O cálculo usa o FCL do último período, que pode estar "
+                "distorcido pelo momento atual do ciclo de commodity."
+            )
+            fcl_base = fcl_k
+        else:
+            st.warning(
+                "⚠️ **Empresa de setor cíclico — valuation usa FCL médio normalizado.** "
+                f"Em vez do resultado mais recente (R$ {fcl_ultimo/1000:.0f} mi), o modelo "
+                f"usa a média dos últimos {n_anos_hist} anos (R$ {fcl_norm/1000:.0f} mi) "
+                "para evitar distorção causada por picos ou vales do ciclo de commodities."
+            )
+            fcl_base = fcl_norm
+    else:
+        fcl_base = fcl_k
+
+    if fcl_base is None or fcl_base <= 0:
         st.warning(
-            f"⚠️ FCL atual negativo ({fcl_k/1000:.0f} R$ mi) — DCF não aplicável com FCL negativo. "
-            "Verifique se a empresa está em fase de investimento intenso."
+            f"⚠️ FCL base negativo ou zero (R$ {(fcl_base or 0)/1000:.0f} mi) — "
+            "DCF não aplicável. Verifique se a empresa está em fase de investimento intenso "
+            "ou se o ciclo atual é desfavorável."
         )
         return
 
-    st.caption(
-        f"FCL base (último exercício): **R$ {fcl_k/1000:.0f} mi** · "
-        f"Ações: **{shares/1e6:.1f} milhões**"
-    )
+    # Informações da base usada
+    if ciclico and fcl_norm is not None:
+        col_i1, col_i2, col_i3 = st.columns(3)
+        col_i1.metric("FCL último período", f"R$ {fcl_ultimo/1000:.0f} mi")
+        col_i2.metric(f"FCL médio {n_anos_hist}a (usado)", f"R$ {fcl_norm/1000:.0f} mi")
+        col_i3.metric("Ações", f"{shares/1e6:.1f} mi")
+    else:
+        st.caption(
+            f"FCL base (último exercício): **R$ {fcl_base/1000:.0f} mi** · "
+            f"Ações: **{shares/1e6:.1f} milhões**"
+        )
 
     col_s1, col_s2, col_s3 = st.columns(3)
     with col_s1:
@@ -1566,15 +1633,13 @@ def _show_dcf(s: dict) -> None:
         st.error("WACC deve ser maior que o crescimento na perpetuidade.")
         return
 
-    def _dcf_price(fcl_base: float, g: float, w: float, pg: float, nd_k: float, n_shares: float) -> float:
-        """Retorna preço justo por ação (R$)."""
+    def _dcf_price(fcl_b: float, g: float, w: float, pg: float, nd_k: float, n_shares: float) -> float:
         pv = 0.0
-        fcl_y = fcl_base
+        fcl_y = fcl_b
         for yr in range(1, 6):
             fcl_y *= (1 + g)
             pv += fcl_y / (1 + w) ** yr
-        fcl_yr5 = fcl_base * (1 + g) ** 5
-        tv = fcl_yr5 * (1 + pg) / (w - pg)
+        tv = fcl_b * (1 + g) ** 5 * (1 + pg) / (w - pg)
         pv += tv / (1 + w) ** 5
         equity_k = pv - (nd_k or 0)
         return max(0.0, equity_k * 1000 / n_shares)
@@ -1588,9 +1653,8 @@ def _show_dcf(s: dict) -> None:
 
     prices_dcf = {}
     for name, g, _ in scenarios:
-        prices_dcf[name] = _dcf_price(fcl_k, g, wacc, perp_g, nd_k, shares)
+        prices_dcf[name] = _dcf_price(fcl_base, g, wacc, perp_g, nd_k, shares)
 
-    # Tabela rápida e barra de range
     p_cons = prices_dcf["Conservador"]
     p_base = prices_dcf["Base"]
     p_otim = prices_dcf["Otimista"]

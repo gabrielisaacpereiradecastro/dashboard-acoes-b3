@@ -274,7 +274,8 @@ def get_all_stock_data(ticker: str) -> dict:
 
     # 5 — DFC (Pro): P/FCF e FCL via Caixa Líquido Operacional e Capex
     p_fcf: Optional[float] = None
-    _fcl_k: Optional[float] = None  # FCL em R$ mil (armazenado para DCF)
+    _fcl_k: Optional[float] = None        # FCL mais recente em R$ mil
+    _fcl_historico: dict = {}             # {ano_str: FCL_em_R$_mil} — todos os anos disponíveis
     fin = get_financials(t, statement_type="DFC_MI")
     if fin:
         stmts = fin.get("statements", [])
@@ -289,6 +290,22 @@ def get_all_stock_data(ticker: str) -> dict:
                 mcap = fund.get("market_cap")
                 if _fcl_k > 0 and mcap:
                     p_fcf = mcap / (_fcl_k * 1000)
+
+        # Histórico de FCL por ano (para normalização cíclica)
+        _fco_by_yr: dict = {}
+        _capex_by_yr: dict = {}
+        for _s in stmts:
+            _yr = (_s.get("reference_date") or "")[:4]
+            _v  = _s.get("value")
+            _c  = _s.get("account_code", "")
+            if not _yr or _v is None:
+                continue
+            if _c == "6.01" and _yr not in _fco_by_yr:
+                _fco_by_yr[_yr] = _v
+            elif _c in ("6.02.02", "6.02.03"):
+                _capex_by_yr[_yr] = _capex_by_yr.get(_yr, 0) + _v
+        for _yr in _fco_by_yr:
+            _fcl_historico[_yr] = _fco_by_yr[_yr] + _capex_by_yr.get(_yr, 0)
 
     # Payout: dividendo por ação TTM / LPA (sem precisar de net_income em unidade)
     lpa_val = fund.get("lpa")
@@ -408,7 +425,8 @@ def get_all_stock_data(ticker: str) -> dict:
             "avg_volume_52w":   avg_vol_shares,
             # ── Indicadores novos ──────────────────────────────
             "psr":              _psr,
-            "fcl":              _fcl_k,          # Fluxo de Caixa Livre em R$ mil
+            "fcl":              _fcl_k,          # FCL mais recente em R$ mil
+            "fcl_historico":    _fcl_historico,  # {ano: FCL R$ mil} para normalização cíclica
             "interest_coverage": _interest_coverage,
         }
     )

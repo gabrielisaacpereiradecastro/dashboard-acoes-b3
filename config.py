@@ -80,6 +80,18 @@ BANK_KEYWORDS = [
     "banco", "bancos", "financeiro", "financeira",
     "bancário", "bancaria", "crédito", "credito",
 ]
+
+# Setores cíclicos/commodities: FCL normalizado (média histórica) no DCF
+SETORES_CICLICOS = [
+    "petróleo", "petroleo", "petro",
+    "gás", "gas", "combustível", "combustivel",
+    "mineração", "mineracao", "minério", "minerio",
+    "metalurgia", "siderurgia",
+    "papel e celulose", "celulose",
+    "agricultura", "agropecuária", "agropecuaria",
+    "açúcar", "acucar", "álcool", "alcool", "sucroalcooleiro",
+    "carvão", "carvao",
+]
 UTILITY_KEYWORDS = [
     "energia elétrica", "energia eletrica", "saneamento",
     "concessão", "concessao", "transmissão", "transmissao",
