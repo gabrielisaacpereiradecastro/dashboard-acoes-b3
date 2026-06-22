@@ -6,13 +6,10 @@ from __future__ import annotations
 
 import json
 import math
-import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-
-print("ARQUIVO APP.PY CARREGADO - TESTE", file=sys.stderr); sys.stderr.flush()
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -468,9 +465,7 @@ def _init_state():
 # ────────────────────────────────────────────────────────────────
 
 def _fetch_ticker(ticker: str) -> Optional[str]:
-    print("\n===== INICIO BUSCA TICKER =====", file=sys.stderr); sys.stderr.flush()
     t = ticker.strip().upper()
-    print(f"PROCESSANDO TICKER: {t}", file=sys.stderr); sys.stderr.flush()
     log = st.session_state.debug_log
 
     api_key = api._get_api_key()
@@ -505,72 +500,6 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         f"  |  cagr_revenue_5y={raw_fund.get('cagr_revenue_5y')!r}"
     )
     log.append(f"📋 Total de campos retornados por /fundamentals: {len(raw_fund)}")
-
-    # ── Diagnóstico: ciclo cíclico e FCL normalizado ──────────────
-    _diag_sector = data.get("sector", "")
-    _diag_ciclico = _is_cyclical(_diag_sector)
-    print(f"SETOR DETECTADO: {_diag_sector!r} | CICLICO: {_diag_ciclico}", file=sys.stderr); sys.stderr.flush()
-    _dm1 = f"[DIAG] {t} | setor={_diag_sector!r} | _is_cyclical={_diag_ciclico}"
-    log.append(_dm1); print(_dm1, file=sys.stderr); sys.stderr.flush()
-
-    _diag_fcl_ult = data.get("fcl")
-    _diag_hist: dict = data.get("fcl_historico") or {}
-    _dm2 = (
-        f"[DIAG] {t} | FCL ultimo periodo: {_diag_fcl_ult} R$ mil | "
-        f"fcl_historico: {len(_diag_hist)} anos -> {dict(sorted(_diag_hist.items()))}"
-    )
-    log.append(_dm2); print(_dm2, file=sys.stderr); sys.stderr.flush()
-
-    if _diag_ciclico:
-        _diag_anos = sorted(_diag_hist.keys(), reverse=True)[:5]
-        _diag_pos  = [_diag_hist[a] for a in _diag_anos if _diag_hist.get(a) is not None and _diag_hist[a] > 0]
-        if len(_diag_pos) >= 5:
-            _vs = sorted(_diag_pos)
-            _n = len(_vs)
-            _mid = _n // 2
-            _diag_mediana = (_vs[_mid-1] + _vs[_mid]) / 2 if _n % 2 == 0 else _vs[_mid]
-            _dm3 = (
-                f"[DIAG] {t} | normalizacao: n={_n} anos {_diag_anos[:_n]} | "
-                f"valores={_diag_pos} | mediana={_diag_mediana:.0f} R$ mil | FCL atual={_diag_fcl_ult} R$ mil"
-            )
-        else:
-            _dm3 = (
-                f"[DIAG] {t} | historico insuficiente: {len(_diag_pos)} ano(s) positivo(s) "
-                f"(minimo 5) — mantendo FCL atual"
-            )
-        log.append(_dm3); print(_dm3, file=sys.stderr); sys.stderr.flush()
-
-    # ── Diagnóstico: Gordon Growth (bancos) ──────────────────────
-    if sc.is_bank(_diag_sector):
-        _diag_roe = data.get("roe")
-        _diag_vpa = data.get("vpa")
-        _diag_ke, _diag_g = 0.12, 0.04
-        _diag_ke_c = _diag_ke * 1.08  # Ke_base=12%, conservador +8%
-        _diag_g_c  = _diag_g  * 0.7
-        _dg1 = (
-            f"[DIAG] {t} | Gordon: ROE={_diag_roe}% | VPA=R${_diag_vpa} | "
-            f"Ke_base={_diag_ke*100:.1f}% -> Ke_cons={_diag_ke_c*100:.2f}% | "
-            f"g_base={_diag_g*100:.1f}% -> g_cons={_diag_g_c*100:.1f}%"
-        )
-        log.append(_dg1); print(_dg1, file=sys.stderr); sys.stderr.flush()
-        if _diag_roe is not None and _diag_vpa is not None and _diag_vpa > 0:
-            _diag_roe_f = _diag_roe / 100
-            if _diag_ke_c > _diag_g_c:
-                _diag_pvp = (_diag_roe_f - _diag_g_c) / (_diag_ke_c - _diag_g_c)
-                _diag_alvo = _diag_pvp * _diag_vpa
-                _diag_preco = data.get("close_price")
-                _diag_pot = (_diag_alvo / _diag_preco - 1) * 100 if _diag_preco else None
-                _dg2 = (
-                    f"[DIAG] {t} | P/VP_justo=({_diag_roe_f:.4f}-{_diag_g_c:.4f})"
-                    f"/({_diag_ke_c:.4f}-{_diag_g_c:.4f})={_diag_pvp:.4f} | "
-                    f"preco_alvo={_diag_pvp:.4f}xR${_diag_vpa:.2f}=R${_diag_alvo:.2f}"
-                    + (f" | potencial={_diag_pot:+.1f}%" if _diag_pot is not None else "")
-                )
-            else:
-                _dg2 = f"[DIAG] {t} | Gordon invalido: Ke_cons <= g_cons"
-        else:
-            _dg2 = f"[DIAG] {t} | Gordon: ROE ou VPA ausente/zero"
-        log.append(_dg2); print(_dg2, file=sys.stderr); sys.stderr.flush()
 
     # Força o ticker armazenado a ser o que o usuário digitou.
     # A Bolsai pode retornar fund["ticker"] = "ITUB4" mesmo para a query "ITUB3" —
@@ -1519,21 +1448,15 @@ def _gordon_conservative_price(s: dict, ke: float = 0.12, g: float = 0.04) -> Op
     Ke_base=12% reflete Selic + prêmio de risco bancário para bancos privados grandes."""
     roe = s.get("roe")
     vpa = s.get("vpa")
-    ticker = s.get("ticker", "?")
-    print(f"GORDON ROE={roe} VPA={vpa} g={g} ke={ke} ticker={ticker}", file=sys.stderr); sys.stderr.flush()
     if roe is None or vpa is None or vpa <= 0:
-        print(f"GORDON {ticker}: ROE ou VPA ausente/zero -> retorna None", file=sys.stderr); sys.stderr.flush()
         return None
     roe_f = roe / 100
     g_cons  = g  * 0.7
     ke_cons = ke * 1.08  # conservador: +8% sobre Ke base
     if ke_cons <= g_cons:
-        print(f"GORDON {ticker}: ke_cons={ke_cons} <= g_cons={g_cons} -> retorna None", file=sys.stderr); sys.stderr.flush()
         return None
     pvp_j = (roe_f - g_cons) / (ke_cons - g_cons)
-    print(f"GORDON {ticker}: pvp_j={pvp_j:.4f} preco_alvo={pvp_j*vpa:.2f} (vpa={vpa:.2f})", file=sys.stderr); sys.stderr.flush()
     if pvp_j <= 0:
-        print(f"GORDON {ticker}: pvp_j <= 0 -> retorna None", file=sys.stderr); sys.stderr.flush()
         return None
     return pvp_j * vpa
 
