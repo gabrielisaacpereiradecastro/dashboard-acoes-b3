@@ -544,8 +544,8 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
     if sc.is_bank(_diag_sector):
         _diag_roe = data.get("roe")
         _diag_vpa = data.get("vpa")
-        _diag_ke, _diag_g = 0.15, 0.04
-        _diag_ke_c = _diag_ke * 1.15  # ajustado: era 1.3, agora 1.15
+        _diag_ke, _diag_g = 0.12, 0.04
+        _diag_ke_c = _diag_ke * 1.08  # Ke_base=12%, conservador +8%
         _diag_g_c  = _diag_g  * 0.7
         _dg1 = (
             f"[DIAG] {t} | Gordon: ROE={_diag_roe}% | VPA=R${_diag_vpa} | "
@@ -1462,9 +1462,11 @@ def _fcl_normalizado(s: dict) -> tuple[Optional[float], Optional[float], int]:
     if not hist:
         return fcl_ultimo, fcl_ultimo, 0
 
-    # Usa até 10 anos (mediana é mais resistente a picos de ciclo do que média de 5 anos)
-    anos_ordenados = sorted(hist.keys(), reverse=True)[:10]
-    valores_pos = [hist[a] for a in anos_ordenados if hist[a] is not None and hist[a] > 0]
+    # Filtra positivos de TODOS os anos e pega os 10 mais recentes positivos.
+    # ([:10] nos anos desperdiçaria slots em anos negativos, ignorando positivos mais antigos)
+    todos_pos = [(a, hist[a]) for a in sorted(hist.keys(), reverse=True)
+                 if hist[a] is not None and hist[a] > 0]
+    valores_pos = [v for _, v in todos_pos[:10]]
 
     if len(valores_pos) < 5:
         return None, fcl_ultimo, len(valores_pos)  # insuficiente
@@ -1496,8 +1498,9 @@ def _dcf_conservative_price(s: dict, wacc: float = 0.12, g5: float = 0.10, perp_
     return max(0.0, equity_k * 1000 / shares)
 
 
-def _gordon_conservative_price(s: dict, ke: float = 0.15, g: float = 0.04) -> Optional[float]:
-    """Preço alvo para bancos — Gordon Growth cenário Conservador (g×0.7, Ke×1.15)."""
+def _gordon_conservative_price(s: dict, ke: float = 0.12, g: float = 0.04) -> Optional[float]:
+    """Preço alvo para bancos — Gordon Growth cenário Conservador (g×0.7, Ke×1.08).
+    Ke_base=12% reflete Selic + prêmio de risco bancário para bancos privados grandes."""
     roe = s.get("roe")
     vpa = s.get("vpa")
     ticker = s.get("ticker", "?")
@@ -1507,7 +1510,7 @@ def _gordon_conservative_price(s: dict, ke: float = 0.15, g: float = 0.04) -> Op
         return None
     roe_f = roe / 100
     g_cons  = g  * 0.7
-    ke_cons = ke * 1.15  # conservador: +15% sobre Ke base (era +30%, excessivo)
+    ke_cons = ke * 1.08  # conservador: +8% sobre Ke base
     if ke_cons <= g_cons:
         print(f"GORDON {ticker}: ke_cons={ke_cons} <= g_cons={g_cons} -> retorna None", file=sys.stderr); sys.stderr.flush()
         return None
@@ -1530,6 +1533,9 @@ def _show_gordon_growth(s: dict) -> None:
     price = s.get("close_price")
     ticker = s.get("ticker", "")
 
+    # Tickers com participação relevante do governo federal
+    _BANCOS_ESTATAIS = {"BBAS3", "BBAS11", "BAZA3", "BRSR3", "BRSR6", "BNBR3"}
+
     st.divider()
     st.subheader("📐 Valuation — Gordon Growth (P/VP Justificado)")
     st.info(
@@ -1538,6 +1544,12 @@ def _show_gordon_growth(s: dict) -> None:
         "tradicional usado para as demais ações, pois o fluxo de caixa de um banco "
         "não é diretamente comparável ao de empresas não-financeiras."
     )
+    if ticker in _BANCOS_ESTATAIS:
+        st.warning(
+            "⚠️ **Empresa com participação relevante do governo** — risco de governança e "
+            "interferência política pode justificar desconto persistente que o modelo de "
+            "Gordon Growth não captura. Resultado deve ser interpretado com cautela adicional."
+        )
 
     if roe is None or vpa is None or vpa <= 0:
         st.warning("⚠️ ROE ou VPA não disponível — Gordon Growth não pode ser calculado.")
@@ -1549,7 +1561,7 @@ def _show_gordon_growth(s: dict) -> None:
     with col_ke:
         ke = st.slider(
             "Ke — Custo do Capital Próprio (%)",
-            min_value=8.0, max_value=25.0, value=15.0, step=0.5,
+            min_value=8.0, max_value=25.0, value=12.0, step=0.5,
             key=f"gg_ke_{ticker}",
         ) / 100
     with col_g:
