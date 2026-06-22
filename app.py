@@ -599,8 +599,10 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             _target = _insurer_base_price(s)
         elif _is_shopping(sector):
             _target = _shopping_base_price(s)
-        else:
+        elif _is_utility(sector) or _is_cyclical(sector):
             _target = _dcf_base_price(s)
+        else:
+            _target = _geral_base_price(s)
         if _target is not None and _price_now and _price_now > 0:
             _pot_pct  = (_target / _price_now - 1) * 100
             _pot_disp = f"↑ {_pot_pct:.1f}%" if _pot_pct >= 0 else f"↓ {abs(_pot_pct):.1f}%"
@@ -1448,6 +1450,41 @@ def _shopping_base_price(s: dict, mult: float = SHOPPING_FAIR_EV_EBITDA) -> Opti
     return _ev_ebitda_price(s, mult)
 
 
+# EV/EBITDA justo por sub-bucket do "Geral" (normas BR through-cycle, não
+# ajustados a um analista). Ordem importa: o primeiro match vence.
+GERAL_EV_EBITDA_BUCKETS = [
+    (["farmácia", "farmacia", "drogaria", "saúde", "saude", "médic", "medic",
+      "diagnóstic", "diagnostic", "hospital", "odonto"], 11.0, "Saúde / Farma"),
+    (["bebida", "alimento", "fumo", "frigorífic", "frigorific", "proteína",
+      "proteina"], 11.0, "Consumo (alimentos/bebidas)"),
+    (["máquina", "maquina", "equipamento", "bens de capital", "industrial",
+      "indústria - ", "industria - "], 12.0, "Indústria / Bens de capital"),
+    (["locação", "locacao", "aluguel"], 7.0, "Locação / Serviços"),
+    (["educação", "educacao", "ensino"], 6.0, "Educação"),
+    (["construção", "construcao", "mat. constr", "incorporação",
+      "incorporacao"], 5.0, "Construção civil"),
+    (["têxtil", "textil", "vestuário", "vestuario", "calçad", "calcad",
+      "esportiv"], 6.0, "Vestuário / Têxtil"),
+    (["comércio", "comercio", "varejo", "atacado", "supermercado"], 6.0, "Varejo"),
+]
+GERAL_EV_EBITDA_DEFAULT = 8.0
+
+
+def _geral_bucket(sector: str) -> tuple[float, str]:
+    """Retorna (múltiplo EV/EBITDA, rótulo do sub-bucket) para um setor 'Geral'."""
+    sl = (sector or "").lower()
+    for kws, mult, label in GERAL_EV_EBITDA_BUCKETS:
+        if any(kw in sl for kw in kws):
+            return mult, label
+    return GERAL_EV_EBITDA_DEFAULT, "Geral (default)"
+
+
+def _geral_base_price(s: dict) -> Optional[float]:
+    """Preço justo para empresas 'gerais' — EV/EBITDA por sub-bucket setorial."""
+    mult, _ = _geral_bucket(s.get("sector", ""))
+    return _ev_ebitda_price(s, mult)
+
+
 def _dcf_params(sector: str) -> tuple[float, float]:
     """Retorna (wacc, perp_g) ajustados ao setor.
     Utilities reguladas: WACC 10% (Selic+2%, menor beta) e g perpétuo 4%
@@ -1847,6 +1884,90 @@ def _show_shopping_valuation(s: dict) -> None:
     )
 
 
+def _show_geral_valuation(s: dict) -> None:
+    """Valuation 'geral' via EV/EBITDA por sub-bucket setorial (referência conservadora)."""
+    sector   = s.get("sector", "")
+    ebitda   = s.get("ebitda")          # R$ mil
+    net_debt = s.get("net_debt") or 0.0
+    shares   = s.get("shares_outstanding")
+    price    = s.get("close_price")
+    ev_atual = s.get("ev_ebitda")
+    ticker   = s.get("ticker", "")
+    mult_setor, bucket_label = _geral_bucket(sector)
+
+    st.divider()
+    st.subheader("📐 Valuation — Múltiplo EV/EBITDA (referência setorial)")
+    st.info(
+        f"ℹ️ Sub-setor identificado: **{bucket_label}** → EV/EBITDA de referência "
+        f"**{mult_setor:.0f}×**. Valuation por múltiplo sobre o EBITDA atual."
+    )
+    st.warning(
+        "🟠 **Referência de baixa precisão.** O múltiplo médio do setor é aplicado sobre o "
+        "EBITDA *atual*, então: pode **subestimar** empresas em forte crescimento (cujo lucro "
+        "futuro o mercado já antecipa) e **superestimar** empresas que negociam abaixo da média "
+        "do setor por algum motivo estrutural. Trate como ponto de partida, não como preço-alvo."
+    )
+
+    if ebitda is None or ebitda <= 0 or not shares or shares <= 0:
+        st.info("⚠️ EBITDA ou nº de ações indisponível — múltiplo não aplicável para este ticker.")
+        return
+
+    st.caption(
+        f"EBITDA: **R$ {ebitda/1000:.0f} mi** · Dívida líq.: **R$ {net_debt/1000:.0f} mi**"
+        + (f" · EV/EBITDA atual: **{ev_atual:.1f}×**" if ev_atual else "")
+    )
+
+    mult_base = st.slider(
+        "EV/EBITDA justo de referência (×)",
+        min_value=3.0, max_value=22.0, value=float(mult_setor), step=0.5,
+        key=f"geral_mult_{ticker}",
+        help=f"Padrão do sub-setor '{bucket_label}': {mult_setor:.0f}×. Ajuste se conhecer o caso.",
+    )
+
+    def _upside(p: Optional[float]) -> Optional[str]:
+        if p is not None and price and price > 0:
+            return f"{(p / price - 1) * 100:+.1f}%"
+        return None
+
+    p_c = _ev_ebitda_price(s, mult_base * 0.85)
+    p_b = _ev_ebitda_price(s, mult_base)
+    p_o = _ev_ebitda_price(s, mult_base * 1.15)
+
+    c_r, c_b, c_o = st.columns(3)
+    c_r.metric(f"Conservador ({mult_base*0.85:.1f}×)", f"R$ {p_c:.2f}", _upside(p_c))
+    c_b.metric(f"Base ({mult_base:.1f}×)",             f"R$ {p_b:.2f}", _upside(p_b))
+    c_o.metric(f"Otimista ({mult_base*1.15:.1f}×)",    f"R$ {p_o:.2f}", _upside(p_o))
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=["Conservador", "Base", "Otimista"], y=[p_c, p_b, p_o],
+        marker_color=["#f44336", "#4caf50", "#2196f3"],
+        text=[f"R$ {v:.2f}" for v in (p_c, p_b, p_o)],
+        textposition="outside",
+        hovertemplate="%{x}: R$ %{y:.2f}<extra></extra>",
+    ))
+    if price:
+        fig.add_hline(
+            y=price, line_dash="dash", line_color="#ffeb3b", line_width=2,
+            annotation_text=f"Preço atual: R$ {price:.2f}",
+            annotation_font_color="#ffeb3b",
+        )
+    fig.update_layout(
+        height=300, margin=dict(l=0, r=0, t=30, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e",
+                   tickprefix="R$ "),
+        showlegend=False,
+        title=dict(text="Faixa de Preço Justo — EV/EBITDA (3 cenários)", font=dict(size=12, color="#e8eaf6")),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    st.warning(
+        "⚠️ Ferramenta educacional de aproximação — **não é recomendação de investimento**."
+    )
+
+
 def _show_dcf(s: dict) -> None:
     """Seção de Valuation por Fluxo de Caixa Descontado (DCF)."""
     sector = s.get("sector", "")
@@ -1858,6 +1979,10 @@ def _show_dcf(s: dict) -> None:
         return
     if _is_shopping(sector):
         _show_shopping_valuation(s)
+        return
+    # DCF segue apenas para utilities e cíclicas; demais usam EV/EBITDA setorial
+    if not (_is_utility(sector) or _is_cyclical(sector)):
+        _show_geral_valuation(s)
         return
 
     fcl_k = s.get("fcl")  # FCL mais recente em R$ mil
