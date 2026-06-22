@@ -108,6 +108,14 @@ INSURER_KEYWORDS = [
 # P/L justo de referência para seguradoras brasileiras estáveis (through-cycle).
 # Validado vs BTG (jun/2026): PSSA3 ~0pp, BBSE3/CXSE3 residuais a refinar.
 INSURER_FAIR_PE = 10.0
+
+# Shoppings: valuation por EV/EBITDA (FCL distorcido por compra/venda de imóveis)
+SHOPPING_KEYWORDS = [
+    "shopping", "centros comerciais",
+]
+# EV/EBITDA justo through-cycle para shoppings brasileiros.
+# Validado vs BTG (jun/2026): ALOS3 ~6pp, IGTI11 ~15pp, MULT3 residual (premium).
+SHOPPING_FAIR_EV_EBITDA = 10.5
 RETAIL_KEYWORDS = [
     "comércio varejista", "comercio varejista",
     "varejo", "comércio atacadista", "comercio atacadista",
@@ -131,7 +139,8 @@ SECTOR_REMAP: dict[str, str] = {
     "CSNA3": "Metalurgia e Siderurgia",
     "USIM5": "Metalurgia e Siderurgia",
     # Shoppings
-    "ALLOS3": "Shoppings e Centros Comerciais",
+    "ALOS3":  "Shoppings e Centros Comerciais",  # Allos (ticker atual)
+    "ALLOS3": "Shoppings e Centros Comerciais",  # legado
     "MULT3":  "Shoppings e Centros Comerciais",
     "IGTI11": "Shoppings e Centros Comerciais",
     "BRML3":  "Shoppings e Centros Comerciais",

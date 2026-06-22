@@ -24,6 +24,7 @@ from config import (
     BG_COLORS, COLOR_EMOJI, INDICATOR_LABELS, INDICATOR_WEIGHTS,
     SCORE_COLORS, SECTOR_REMAP, SETORES_CICLICOS, UTILITY_KEYWORDS,
     INSURER_KEYWORDS, INSURER_FAIR_PE,
+    SHOPPING_KEYWORDS, SHOPPING_FAIR_EV_EBITDA,
 )
 
 # ────────────────────────────────────────────────────────────────
@@ -582,6 +583,8 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             _target = _gordon_base_price(s)
         elif _is_insurer(sector):
             _target = _insurer_base_price(s)
+        elif _is_shopping(sector):
+            _target = _shopping_base_price(s)
         else:
             _target = _dcf_base_price(s)
         if _target is not None and _price_now and _price_now > 0:
@@ -1405,6 +1408,32 @@ def _insurer_base_price(s: dict, fair_pe: float = INSURER_FAIR_PE) -> Optional[f
     return fair_pe * lpa
 
 
+def _is_shopping(sector: str) -> bool:
+    """True se for shopping/centro comercial (valuation por EV/EBITDA)."""
+    sl = (sector or "").lower()
+    return any(kw in sl for kw in SHOPPING_KEYWORDS)
+
+
+def _ev_ebitda_price(s: dict, mult: float) -> Optional[float]:
+    """Preço justo via EV/EBITDA: (múltiplo × EBITDA − dívida líq.) / ações.
+
+    Genérico — usado por shoppings (e futuramente cíclicas/geral). Retorna
+    R$/ação ou None se EBITDA ausente/negativo.
+    """
+    ebitda = s.get("ebitda")          # R$ mil
+    shares = s.get("shares_outstanding")
+    if ebitda is None or ebitda <= 0 or not shares or shares <= 0:
+        return None
+    net_debt = s.get("net_debt") or 0.0
+    equity_k = mult * ebitda - net_debt
+    return max(0.0, equity_k * 1000 / shares)
+
+
+def _shopping_base_price(s: dict, mult: float = SHOPPING_FAIR_EV_EBITDA) -> Optional[float]:
+    """Preço justo para shoppings — EV/EBITDA de referência."""
+    return _ev_ebitda_price(s, mult)
+
+
 def _dcf_params(sector: str) -> tuple[float, float]:
     """Retorna (wacc, perp_g) ajustados ao setor.
     Utilities reguladas: WACC 10% (Selic+2%, menor beta) e g perpétuo 4%
@@ -1725,6 +1754,85 @@ def _show_insurer_valuation(s: dict) -> None:
     )
 
 
+def _show_shopping_valuation(s: dict) -> None:
+    """Valuation para shoppings via EV/EBITDA (3 cenários de múltiplo)."""
+    ebitda   = s.get("ebitda")          # R$ mil
+    net_debt = s.get("net_debt") or 0.0
+    shares   = s.get("shares_outstanding")
+    price    = s.get("close_price")
+    ev_atual = s.get("ev_ebitda")
+    ticker   = s.get("ticker", "")
+
+    st.divider()
+    st.subheader("📐 Valuation — Múltiplo EV/EBITDA")
+    st.info(
+        "ℹ️ Para shoppings, o valuation usa **EV/EBITDA** — método padrão do setor. "
+        "O DCF de fluxo de caixa não se aplica bem porque o caixa é distorcido por "
+        "compra e venda de empreendimentos."
+    )
+
+    if ebitda is None or ebitda <= 0 or not shares or shares <= 0:
+        st.warning("⚠️ EBITDA ou nº de ações indisponível — EV/EBITDA não aplicável.")
+        return
+
+    st.caption(
+        f"EBITDA: **R$ {ebitda/1000:.0f} mi** · Dívida líq.: **R$ {net_debt/1000:.0f} mi**"
+        + (f" · EV/EBITDA atual: **{ev_atual:.1f}×**" if ev_atual else "")
+    )
+
+    mult_base = st.slider(
+        "EV/EBITDA justo de referência (×)",
+        min_value=4.0, max_value=18.0, value=float(SHOPPING_FAIR_EV_EBITDA), step=0.5,
+        key=f"shop_mult_{ticker}",
+        help="EV/EBITDA através do ciclo. Padrão 10,5× para shoppings brasileiros.",
+    )
+
+    def _upside(p: Optional[float]) -> Optional[str]:
+        if p is not None and price and price > 0:
+            return f"{(p / price - 1) * 100:+.1f}%"
+        return None
+
+    p_c = _ev_ebitda_price(s, mult_base * 0.85)
+    p_b = _ev_ebitda_price(s, mult_base)
+    p_o = _ev_ebitda_price(s, mult_base * 1.15)
+
+    c_r, c_b, c_o = st.columns(3)
+    c_r.metric(f"Conservador ({mult_base*0.85:.1f}×)", f"R$ {p_c:.2f}", _upside(p_c))
+    c_b.metric(f"Base ({mult_base:.1f}×)",             f"R$ {p_b:.2f}", _upside(p_b))
+    c_o.metric(f"Otimista ({mult_base*1.15:.1f}×)",    f"R$ {p_o:.2f}", _upside(p_o))
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=["Conservador", "Base", "Otimista"], y=[p_c, p_b, p_o],
+        marker_color=["#f44336", "#4caf50", "#2196f3"],
+        text=[f"R$ {v:.2f}" for v in (p_c, p_b, p_o)],
+        textposition="outside",
+        hovertemplate="%{x}: R$ %{y:.2f}<extra></extra>",
+    ))
+    if price:
+        fig.add_hline(
+            y=price, line_dash="dash", line_color="#ffeb3b", line_width=2,
+            annotation_text=f"Preço atual: R$ {price:.2f}",
+            annotation_font_color="#ffeb3b",
+        )
+    fig.update_layout(
+        height=300, margin=dict(l=0, r=0, t=30, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e",
+                   tickprefix="R$ "),
+        showlegend=False,
+        title=dict(text="Faixa de Preço Justo — EV/EBITDA (3 cenários)", font=dict(size=12, color="#e8eaf6")),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    st.warning(
+        "⚠️ **Aviso:** Múltiplo de referência simplificado. Shoppings premium "
+        "(maior margem/localização) podem negociar acima do padrão. "
+        "Não é recomendação de investimento."
+    )
+
+
 def _show_dcf(s: dict) -> None:
     """Seção de Valuation por Fluxo de Caixa Descontado (DCF)."""
     sector = s.get("sector", "")
@@ -1733,6 +1841,9 @@ def _show_dcf(s: dict) -> None:
         return
     if _is_insurer(sector):
         _show_insurer_valuation(s)
+        return
+    if _is_shopping(sector):
+        _show_shopping_valuation(s)
         return
 
     fcl_k = s.get("fcl")  # FCL mais recente em R$ mil
