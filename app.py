@@ -1625,10 +1625,12 @@ def _show_gordon_growth(s: dict) -> None:
     ]
     prices_gg = {name: _gg_price(g_s, ke_s) for name, g_s, ke_s, _ in scenarios}
 
-    def _upside(p: Optional[float]) -> str:
+    def _upside(p: Optional[float]) -> Optional[str]:
+        # Sem parênteses para o st.metric detectar o sinal e colorir
+        # automaticamente (verde = alta, vermelho = queda)
         if p is not None and price and price > 0:
-            return f"({(p / price - 1) * 100:+.1f}%)"
-        return ""
+            return f"{(p / price - 1) * 100:+.1f}%"
+        return None
 
     c_r, c_b, c_o = st.columns(3)
     p_c, p_b, p_o = prices_gg["Conservador"], prices_gg["Base"], prices_gg["Otimista"]
@@ -1788,9 +1790,11 @@ def _show_dcf(s: dict) -> None:
 
     c_r, c_b, c_o = st.columns(3)
     def _upside(p):
+        # Sem parênteses para o st.metric detectar o sinal e colorir
+        # automaticamente (verde = alta, vermelho = queda)
         if price and price > 0:
-            return f"({(p/price-1)*100:+.1f}%)"
-        return ""
+            return f"{(p/price-1)*100:+.1f}%"
+        return None
 
     c_r.metric("Conservador (−30% crescimento)", f"R$ {p_cons:.2f}", _upside(p_cons))
     c_b.metric("Base",                            f"R$ {p_base:.2f}", _upside(p_base))
