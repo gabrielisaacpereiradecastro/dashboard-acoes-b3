@@ -586,17 +586,18 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         else:
             _pot_disp, _pot_cls = "N/D", "ND"
 
-        # ── CALIB temporário: dados completos p/ calibração vs BTG ────
+        # ── CALIB temporário: dump completo p/ desenhar rotas de múltiplo ────
         _cb_norm, _cb_ult, _cb_n = _fcl_normalizado(s)
-        _cb_tgt = f"{_target:.2f}" if _target is not None else "None"
-        _cb_pct = f"{(_target/_price_now-1)*100:+.1f}" if (_target and _price_now) else "NA"
         print(
             f"[CALIB] {s.get('ticker','?')} | setor={sector!r} | "
             f"bank={sc.is_bank(sector)} cyc={_is_cyclical(sector)} util={_is_utility(sector)} | "
-            f"fcl_ult={s.get('fcl')} fcl_norm={_cb_norm} n_anos={_cb_n} | "
-            f"roe={s.get('roe')} vpa={s.get('vpa')} | "
-            f"shares={s.get('shares_outstanding')} net_debt={s.get('net_debt')} | "
-            f"preco={_price_now} nosso_alvo={_cb_tgt} nosso_pct={_cb_pct}%",
+            f"preco={_price_now} | pl={s.get('pl')} lpa={s.get('lpa')} vpa={s.get('vpa')} "
+            f"roe={s.get('roe')} payout={s.get('payout')} dy={s.get('dividend_yield')} "
+            f"cagr_lucro={s.get('cagr_earnings_5y')} | "
+            f"ev_ebitda={s.get('ev_ebitda')} ebitda={s.get('ebitda')} ebit_margin={s.get('ebit_margin')} "
+            f"net_income={s.get('net_income')} net_revenue={s.get('net_revenue')} | "
+            f"shares={s.get('shares_outstanding')} net_debt={s.get('net_debt')} mcap={s.get('market_cap')} | "
+            f"fcl_ult={s.get('fcl')} fcl_norm={_cb_norm}",
             file=sys.stderr,
         ); sys.stderr.flush()
 
