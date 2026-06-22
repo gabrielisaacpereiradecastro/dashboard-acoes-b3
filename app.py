@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import math
-import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +23,7 @@ from score import classify_psr as _classify_psr, classify_interest_coverage as _
 from config import (
     BG_COLORS, COLOR_EMOJI, INDICATOR_LABELS, INDICATOR_WEIGHTS,
     SCORE_COLORS, SECTOR_REMAP, SETORES_CICLICOS, UTILITY_KEYWORDS,
+    INSURER_KEYWORDS, INSURER_FAIR_PE,
 )
 
 # ────────────────────────────────────────────────────────────────
@@ -576,30 +576,20 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         classifications = sc.classify_all(s)
 
         ref_date = s.get("reference_date", "")
-        # Potencial de valorização — cenário Base/Esperado
+        # Potencial de valorização — cenário Base/Esperado (motor por setor)
         _price_now = s.get("close_price")
-        _target = _gordon_base_price(s) if sc.is_bank(sector) else _dcf_base_price(s)
+        if sc.is_bank(sector):
+            _target = _gordon_base_price(s)
+        elif _is_insurer(sector):
+            _target = _insurer_base_price(s)
+        else:
+            _target = _dcf_base_price(s)
         if _target is not None and _price_now and _price_now > 0:
             _pot_pct  = (_target / _price_now - 1) * 100
             _pot_disp = f"↑ {_pot_pct:.1f}%" if _pot_pct >= 0 else f"↓ {abs(_pot_pct):.1f}%"
             _pot_cls  = "Positivo" if _pot_pct >= 0 else "Negativo"
         else:
             _pot_disp, _pot_cls = "N/D", "ND"
-
-        # ── CALIB temporário: dump completo p/ desenhar rotas de múltiplo ────
-        _cb_norm, _cb_ult, _cb_n = _fcl_normalizado(s)
-        print(
-            f"[CALIB] {s.get('ticker','?')} | setor={sector!r} | "
-            f"bank={sc.is_bank(sector)} cyc={_is_cyclical(sector)} util={_is_utility(sector)} | "
-            f"preco={_price_now} | pl={s.get('pl')} lpa={s.get('lpa')} vpa={s.get('vpa')} "
-            f"roe={s.get('roe')} payout={s.get('payout')} dy={s.get('dividend_yield')} "
-            f"cagr_lucro={s.get('cagr_earnings_5y')} | "
-            f"ev_ebitda={s.get('ev_ebitda')} ebitda={s.get('ebitda')} ebit_margin={s.get('ebit_margin')} "
-            f"net_income={s.get('net_income')} net_revenue={s.get('net_revenue')} | "
-            f"shares={s.get('shares_outstanding')} net_debt={s.get('net_debt')} mcap={s.get('market_cap')} | "
-            f"fcl_ult={s.get('fcl')} fcl_norm={_cb_norm}",
-            file=sys.stderr,
-        ); sys.stderr.flush()
 
         display_row = {
             "Ticker":    s.get("ticker", ""),
@@ -1397,6 +1387,24 @@ def _is_utility(sector: str) -> bool:
     return any(kw in sl for kw in UTILITY_KEYWORDS)
 
 
+def _is_insurer(sector: str) -> bool:
+    """True se for seguradora/corretora (valuation por P/L, não DCF de FCL)."""
+    sl = (sector or "").lower()
+    return any(kw in sl for kw in INSURER_KEYWORDS)
+
+
+def _insurer_base_price(s: dict, fair_pe: float = INSURER_FAIR_PE) -> Optional[float]:
+    """Preço justo para seguradoras — P/L de referência × LPA. Retorna R$/ação ou None.
+
+    DCF de FCL não funciona para seguradoras (FCL distorcido pelo float de
+    prêmios). O mercado as avalia por múltiplo de lucro / dividendos.
+    """
+    lpa = s.get("lpa")
+    if lpa is None or lpa <= 0:
+        return None
+    return fair_pe * lpa
+
+
 def _dcf_params(sector: str) -> tuple[float, float]:
     """Retorna (wacc, perp_g) ajustados ao setor.
     Utilities reguladas: WACC 10% (Selic+2%, menor beta) e g perpétuo 4%
@@ -1635,11 +1643,96 @@ def _show_gordon_growth(s: dict) -> None:
 # Valuation DCF
 # ────────────────────────────────────────────────────────────────
 
+def _show_insurer_valuation(s: dict) -> None:
+    """Valuation para seguradoras via múltiplo P/L × LPA (3 cenários de P/L)."""
+    lpa   = s.get("lpa")
+    price = s.get("close_price")
+    pl_atual = s.get("pl")
+    ticker = s.get("ticker", "")
+
+    st.divider()
+    st.subheader("📐 Valuation — Múltiplo de Lucro (P/L)")
+    st.info(
+        "ℹ️ Para seguradoras, o valuation usa **múltiplo de lucro (P/L × LPA)** — "
+        "método padrão do setor. O DCF de fluxo de caixa não se aplica porque o "
+        "caixa de uma seguradora é distorcido pelo *float* de prêmios."
+    )
+
+    if lpa is None or lpa <= 0:
+        st.warning("⚠️ LPA não disponível ou negativo — múltiplo P/L não aplicável.")
+        return
+
+    st.caption(
+        f"LPA: **R$ {lpa:.2f}**"
+        + (f" · P/L atual: **{pl_atual:.1f}×**" if pl_atual else "")
+    )
+
+    pe_base = st.slider(
+        "P/L justo de referência (×)",
+        min_value=5.0, max_value=18.0, value=float(INSURER_FAIR_PE), step=0.5,
+        key=f"ins_pe_{ticker}",
+        help="P/L através do ciclo. Padrão 10× para seguradoras brasileiras estáveis.",
+    )
+
+    cenarios = [
+        ("Conservador", pe_base * 0.85, "#f44336"),
+        ("Base",        pe_base,        "#4caf50"),
+        ("Otimista",    pe_base * 1.15, "#2196f3"),
+    ]
+
+    def _upside(p: Optional[float]) -> Optional[str]:
+        if p is not None and price and price > 0:
+            return f"{(p / price - 1) * 100:+.1f}%"
+        return None
+
+    c_r, c_b, c_o = st.columns(3)
+    p_c = cenarios[0][1] * lpa
+    p_b = cenarios[1][1] * lpa
+    p_o = cenarios[2][1] * lpa
+    c_r.metric(f"Conservador ({cenarios[0][1]:.1f}×)", f"R$ {p_c:.2f}", _upside(p_c))
+    c_b.metric(f"Base ({cenarios[1][1]:.1f}×)",        f"R$ {p_b:.2f}", _upside(p_b))
+    c_o.metric(f"Otimista ({cenarios[2][1]:.1f}×)",    f"R$ {p_o:.2f}", _upside(p_o))
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=["Conservador", "Base", "Otimista"], y=[p_c, p_b, p_o],
+        marker_color=["#f44336", "#4caf50", "#2196f3"],
+        text=[f"R$ {v:.2f}" for v in (p_c, p_b, p_o)],
+        textposition="outside",
+        hovertemplate="%{x}: R$ %{y:.2f}<extra></extra>",
+    ))
+    if price:
+        fig.add_hline(
+            y=price, line_dash="dash", line_color="#ffeb3b", line_width=2,
+            annotation_text=f"Preço atual: R$ {price:.2f}",
+            annotation_font_color="#ffeb3b",
+        )
+    fig.update_layout(
+        height=300, margin=dict(l=0, r=0, t=30, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e",
+                   tickprefix="R$ "),
+        showlegend=False,
+        title=dict(text="Faixa de Preço Justo — P/L (3 cenários)", font=dict(size=12, color="#e8eaf6")),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    st.warning(
+        "⚠️ **Aviso:** Múltiplo de referência simplificado. Seguradoras com perfil "
+        "de crescimento diferenciado (ex.: forte expansão ou franquia em maturação) "
+        "podem justificar P/L acima ou abaixo do padrão. Não é recomendação de investimento."
+    )
+
+
 def _show_dcf(s: dict) -> None:
     """Seção de Valuation por Fluxo de Caixa Descontado (DCF)."""
     sector = s.get("sector", "")
     if sc.is_bank(sector):
         _show_gordon_growth(s)
+        return
+    if _is_insurer(sector):
+        _show_insurer_valuation(s)
         return
 
     fcl_k = s.get("fcl")  # FCL mais recente em R$ mil

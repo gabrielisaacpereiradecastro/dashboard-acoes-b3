@@ -100,6 +100,14 @@ UTILITY_KEYWORDS = [
     "distribuição", "distribuicao", "água", "agua",
     "gás", "gas canalizado", "utilities",
 ]
+
+# Seguradoras: valuation por P/L × LPA (DCF de FCL não funciona p/ seguradora)
+INSURER_KEYWORDS = [
+    "seguradora", "seguradoras", "seguros", "seguridade", "resseguro",
+]
+# P/L justo de referência para seguradoras brasileiras estáveis (through-cycle).
+# Validado vs BTG (jun/2026): PSSA3 ~0pp, BBSE3/CXSE3 residuais a refinar.
+INSURER_FAIR_PE = 10.0
 RETAIL_KEYWORDS = [
     "comércio varejista", "comercio varejista",
     "varejo", "comércio atacadista", "comercio atacadista",
