@@ -3927,9 +3927,10 @@ div[data-testid="stPopover"] button:hover {
             _ldata = st.session_state.todas_listas.get(_lname, {})
             for _tk, _entry in _ldata.items():
                 if _tk not in _all_stocks_map:
-                    _d = _entry.get("data", {})
-                    if _d and not _d.get("error"):
-                        _all_stocks_map[_tk] = (_lname, _d)
+                    _raw = _entry.get("data", {})
+                    if _raw and not _raw.get("error"):
+                        # _enrich adiciona score/breakdown necessários para o radar
+                        _all_stocks_map[_tk] = (_lname, _enrich(_entry))
 
         if not _all_stocks_map:
             st.info("Nenhuma ação com dados disponível. Adicione ações nas suas listas primeiro.")
