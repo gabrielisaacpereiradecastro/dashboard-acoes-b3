@@ -1549,16 +1549,7 @@ def _dcf_base_price(s: dict, wacc: Optional[float] = None, g5: float = 0.10,
         perp_g = _pg_sec
     fcl_base, _fcl_ult, _ = _fcl_normalizado(s)
     shares = s.get("shares_outstanding")
-    # ── DIAG temporário (item 2 — RDOR3 N/D) ──────────────────────
-    _dtk = s.get("ticker", "?")
-    print(f"[DCF-DIAG] {_dtk} | fcl_ultimo={s.get('fcl')} | fcl_base_norm={fcl_base} | "
-          f"fcl_historico={s.get('fcl_historico')} | shares={shares} | net_debt={s.get('net_debt')}",
-          file=sys.stderr); sys.stderr.flush()
     if not fcl_base or fcl_base <= 0 or not shares or shares <= 0:
-        print(f"[DCF-DIAG] {_dtk} -> None: "
-              f"fcl_base_invalido={not fcl_base or (fcl_base or 0) <= 0} "
-              f"shares_invalido={not shares or (shares or 0) <= 0}",
-              file=sys.stderr); sys.stderr.flush()
         return None
     net_debt = s.get("net_debt") or 0.0
     if wacc <= perp_g:
@@ -1764,11 +1755,18 @@ def _show_dcf(s: dict) -> None:
         fcl_base = fcl_k
 
     if fcl_base is None or fcl_base <= 0:
-        st.warning(
-            f"⚠️ FCL base negativo ou zero (R$ {(fcl_base or 0)/1000:.0f} mi) — "
-            "DCF não aplicável. Verifique se a empresa está em fase de investimento intenso "
-            "ou se o ciclo atual é desfavorável."
-        )
+        if ciclico:
+            st.warning(
+                f"⚠️ FCL base negativo ou zero (R$ {(fcl_base or 0)/1000:.0f} mi) — "
+                "DCF não aplicável. Verifique se a empresa está em fase de investimento "
+                "intenso ou se o ciclo atual é desfavorável."
+            )
+        else:
+            st.warning(
+                "⚠️ **FCL historicamente negativo (empresa em fase de expansão intensiva) "
+                "— DCF não aplicável.** Avalie por múltiplos (EV/EBITDA, P/VP) ou fluxo "
+                "normalizado quando a maturação dos investimentos elevar o caixa livre."
+            )
         return
 
     # Informações da base usada

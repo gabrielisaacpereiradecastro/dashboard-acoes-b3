@@ -84,7 +84,9 @@ BANK_KEYWORDS = [
 # Setores cíclicos/commodities: FCL normalizado (média histórica) no DCF
 SETORES_CICLICOS = [
     "petróleo", "petroleo", "petro",
-    "gás", "gas", "combustível", "combustivel",
+    # NÃO incluir "gás"/"gas" soltos: geram falso-positivo em saneamento
+    # ("Serv. Água e Gás"). Petróleo e Gás já é coberto por "petróleo"/"petro".
+    "combustível", "combustivel",
     "mineração", "mineracao", "minério", "minerio",
     "metalurgia", "siderurgia",
     "papel e celulose", "celulose",
