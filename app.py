@@ -646,9 +646,9 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         classifications = sc.classify_all(s)
 
         ref_date = s.get("reference_date", "")
-        # Potencial de valorização — cenário conservador
+        # Potencial de valorização — cenário Base/Esperado
         _price_now = s.get("close_price")
-        _target = _gordon_conservative_price(s) if sc.is_bank(sector) else _dcf_conservative_price(s)
+        _target = _gordon_base_price(s) if sc.is_bank(sector) else _dcf_base_price(s)
         if _target is not None and _price_now and _price_now > 0:
             _pot_pct  = (_target / _price_now - 1) * 100
             _pot_disp = f"↑ {_pot_pct:.1f}%" if _pot_pct >= 0 else f"↓ {abs(_pot_pct):.1f}%"
@@ -1085,7 +1085,8 @@ def _fetch_macro() -> dict:
     except Exception:
         pass
     try:
-        _smll = yf.Ticker("SMLL11.SA")
+        # SMAL11 é o ETF iShares Small Cap (SMLL11 está deslistado no Yahoo Finance)
+        _smll = yf.Ticker("SMAL11.SA")
         _fi = _smll.fast_info
         _smll_price = _fi.last_price
         _smll_prev = _fi.previous_close
@@ -1145,7 +1146,7 @@ def _show_macro_panel() -> None:
             )
 
     with c2:
-        st.markdown("**Small Caps (SMLL11)**")
+        st.markdown("**Small Caps (SMAL11)**")
         sp = macro.get("smll_price")
         sc_chg = macro.get("smll_chg") or 0
         sc_col = "#4caf50" if sc_chg >= 0 else "#f44336"
@@ -1156,7 +1157,7 @@ def _show_macro_panel() -> None:
                 unsafe_allow_html=True,
             )
         else:
-            st.caption("Indisponível")
+            st.caption("Indisponível", help="Fonte de dados para Small Caps instável — em verificação.")
 
     with c3:
         ibov_ytd = macro.get("ibov_ytd")
@@ -1518,6 +1519,40 @@ def _gordon_conservative_price(s: dict, ke: float = 0.12, g: float = 0.04) -> Op
     print(f"GORDON {ticker}: pvp_j={pvp_j:.4f} preco_alvo={pvp_j*vpa:.2f} (vpa={vpa:.2f})", file=sys.stderr); sys.stderr.flush()
     if pvp_j <= 0:
         print(f"GORDON {ticker}: pvp_j <= 0 -> retorna None", file=sys.stderr); sys.stderr.flush()
+        return None
+    return pvp_j * vpa
+
+
+def _dcf_base_price(s: dict, wacc: float = 0.12, g5: float = 0.10, perp_g: float = 0.03) -> Optional[float]:
+    """Preço justo DCF — cenário Base/Esperado (g5 sem ajuste). Usa FCL normalizado p/ cíclicos."""
+    fcl_base, _, _ = _fcl_normalizado(s)
+    shares = s.get("shares_outstanding")
+    if not fcl_base or fcl_base <= 0 or not shares or shares <= 0:
+        return None
+    net_debt = s.get("net_debt") or 0.0
+    if wacc <= perp_g:
+        return None
+    pv, fcl_y = 0.0, fcl_base
+    for yr in range(1, 6):
+        fcl_y *= (1 + g5)
+        pv += fcl_y / (1 + wacc) ** yr
+    tv = fcl_base * (1 + g5) ** 5 * (1 + perp_g) / (wacc - perp_g)
+    pv += tv / (1 + wacc) ** 5
+    equity_k = pv - net_debt
+    return max(0.0, equity_k * 1000 / shares)
+
+
+def _gordon_base_price(s: dict, ke: float = 0.12, g: float = 0.04) -> Optional[float]:
+    """Preço alvo bancos — Gordon Growth cenário Base/Esperado (Ke e g sem ajuste de cenário)."""
+    roe = s.get("roe")
+    vpa = s.get("vpa")
+    if roe is None or vpa is None or vpa <= 0:
+        return None
+    roe_f = roe / 100
+    if ke <= g:
+        return None
+    pvp_j = (roe_f - g) / (ke - g)
+    if pvp_j <= 0:
         return None
     return pvp_j * vpa
 
@@ -3826,7 +3861,12 @@ div[data-testid="stPopover"] button:hover {
                 "Empresa":         st.column_config.TextColumn("Empresa", width="medium"),
                 "Setor":           st.column_config.TextColumn("Setor", width="medium"),
                 "Balanço":         st.column_config.TextColumn("Balanço", width="small"),
-                "Potencial":       st.column_config.TextColumn("Potencial", width="small"),
+                "Potencial":       st.column_config.TextColumn(
+                    "Potencial", width="small",
+                    help="Potencial de valorização vs preço atual no cenário Esperado (Base): "
+                         "DCF para ações em geral, Gordon Growth para bancos. "
+                         "Os 3 cenários (Conservador/Base/Otimista) ficam na aba Detalhe.",
+                ),
                 "Dív.Líq/EBITDA":  st.column_config.TextColumn("Dív/EBITDA", width="small"),
                 "ROE":             st.column_config.TextColumn("ROE", width="small"),
                 "EV/EBITDA":       st.column_config.TextColumn("EV/EBITDA", width="small"),
