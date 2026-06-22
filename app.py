@@ -25,7 +25,7 @@ import score_fii as sf
 from score import classify_psr as _classify_psr, classify_interest_coverage as _classify_interest_coverage
 from config import (
     BG_COLORS, COLOR_EMOJI, INDICATOR_LABELS, INDICATOR_WEIGHTS,
-    SCORE_COLORS, SECTOR_REMAP, SETORES_CICLICOS,
+    SCORE_COLORS, SECTOR_REMAP, SETORES_CICLICOS, UTILITY_KEYWORDS,
 )
 
 # ────────────────────────────────────────────────────────────────
@@ -1446,6 +1446,21 @@ def _is_cyclical(sector: str) -> bool:
     return any(kw in sl for kw in SETORES_CICLICOS)
 
 
+def _is_utility(sector: str) -> bool:
+    """True se for utility/setor regulado (energia, saneamento, transmissão, gás)."""
+    sl = (sector or "").lower()
+    return any(kw in sl for kw in UTILITY_KEYWORDS)
+
+
+def _dcf_params(sector: str) -> tuple[float, float]:
+    """Retorna (wacc, perp_g) ajustados ao setor.
+    Utilities reguladas: WACC 10% (Selic+2%, menor beta) e g perpétuo 4%
+    (indexação tarifária de longo prazo). Demais: 12% e 3% (padrão)."""
+    if _is_utility(sector):
+        return 0.10, 0.04
+    return 0.12, 0.03
+
+
 def _fcl_normalizado(s: dict) -> tuple[Optional[float], Optional[float], int]:
     """
     Retorna (fcl_base_norm, fcl_ultimo, n_anos):
@@ -1523,8 +1538,15 @@ def _gordon_conservative_price(s: dict, ke: float = 0.12, g: float = 0.04) -> Op
     return pvp_j * vpa
 
 
-def _dcf_base_price(s: dict, wacc: float = 0.12, g5: float = 0.10, perp_g: float = 0.03) -> Optional[float]:
-    """Preço justo DCF — cenário Base/Esperado (g5 sem ajuste). Usa FCL normalizado p/ cíclicos."""
+def _dcf_base_price(s: dict, wacc: Optional[float] = None, g5: float = 0.10,
+                    perp_g: Optional[float] = None) -> Optional[float]:
+    """Preço justo DCF — cenário Base/Esperado (g5 sem ajuste). Usa FCL normalizado p/ cíclicos.
+    WACC e perp_g são ajustados por setor (utilities reguladas: 10%/4%)."""
+    _w_sec, _pg_sec = _dcf_params(s.get("sector", ""))
+    if wacc is None:
+        wacc = _w_sec
+    if perp_g is None:
+        perp_g = _pg_sec
     fcl_base, _fcl_ult, _ = _fcl_normalizado(s)
     shares = s.get("shares_outstanding")
     # ── DIAG temporário (item 2 — RDOR3 N/D) ──────────────────────
@@ -1695,9 +1717,20 @@ def _show_dcf(s: dict) -> None:
     shares = s.get("shares_outstanding")
     price = s.get("close_price")
     ciclico = _is_cyclical(sector)
+    utility = _is_utility(sector)
+    # Parâmetros padrão de WACC/perp_g ajustados ao setor (utilities: 10%/4%)
+    _wacc_default, _perp_default = _dcf_params(sector)
 
     st.divider()
     st.subheader("📐 Valuation por DCF (Fluxo de Caixa Descontado)")
+
+    if utility:
+        st.info(
+            "🏛️ **Setor regulado — WACC reduzido (10%)** refletindo menor risco de "
+            "fluxo de caixa tarifário. Concessões de energia/saneamento têm receita "
+            "regulada e indexada à inflação, justificando prêmio de risco menor que "
+            "o de empresas não-reguladas."
+        )
 
     if fcl_k is None or shares is None or shares <= 0:
         st.info(
@@ -1753,8 +1786,9 @@ def _show_dcf(s: dict) -> None:
     col_s1, col_s2, col_s3 = st.columns(3)
     with col_s1:
         wacc = st.slider(
-            "WACC (%)", min_value=6.0, max_value=20.0, value=12.0, step=0.5,
+            "WACC (%)", min_value=6.0, max_value=20.0, value=_wacc_default * 100, step=0.5,
             key=f"dcf_wacc_{s.get('ticker','')}",
+            help="Padrão 12%. Utilities reguladas usam 10% (menor risco de fluxo tarifário).",
         ) / 100
     with col_s2:
         g5 = st.slider(
@@ -1763,8 +1797,9 @@ def _show_dcf(s: dict) -> None:
         ) / 100
     with col_s3:
         perp_g = st.slider(
-            "Crescimento na perpetuidade (%)", min_value=0.0, max_value=8.0, value=3.0, step=0.25,
+            "Crescimento na perpetuidade (%)", min_value=0.0, max_value=8.0, value=_perp_default * 100, step=0.25,
             key=f"dcf_perp_{s.get('ticker','')}",
+            help="Padrão 3%. Utilities reguladas usam 4% (indexação tarifária de longo prazo).",
         ) / 100
 
     if wacc <= perp_g:

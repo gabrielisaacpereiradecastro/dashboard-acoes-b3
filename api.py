@@ -59,6 +59,11 @@ def _get(path: str, params: Optional[dict] = None) -> Optional[dict]:
             "Limite diário de 200 requisições atingido. "
             "Tente novamente amanhã após meia-noite UTC."
         )
+    if resp.status_code >= 500:
+        raise RuntimeError(
+            "A API retornou erro temporário para este ticker. "
+            "Tente novamente em alguns minutos ou verifique se o ticker está correto."
+        )
     if not resp.ok:
         raise RuntimeError(f"Erro {resp.status_code} ao chamar {path}: {resp.text[:200]}")
 
