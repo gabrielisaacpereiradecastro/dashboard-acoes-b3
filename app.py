@@ -599,7 +599,9 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             _target = _insurer_base_price(s)
         elif _is_shopping(sector):
             _target = _shopping_base_price(s)
-        elif _is_utility(sector) or _is_cyclical(sector):
+        elif _is_cyclical(sector):
+            _target = _cyclical_base_price(s)
+        elif _is_utility(sector):
             _target = _dcf_base_price(s)
         else:
             _target = _geral_base_price(s)
@@ -1485,6 +1487,78 @@ def _geral_base_price(s: dict) -> Optional[float]:
     return _ev_ebitda_price(s, mult)
 
 
+# EV/EBITDA through-cycle por sub-setor cíclico (aplicado sobre EBITDA mid-cycle).
+# Múltiplos da pesquisa de mercado (Itaú BBA Vale ~4×, etc.).
+CICLICA_EV_EBITDA_BUCKETS = [
+    (["petróleo", "petroleo", "petro", "combustível", "combustivel"], 4.0, "Petróleo e Gás"),
+    (["mineração", "mineracao", "minério", "minerio", "extração mineral",
+      "extracao mineral"], 4.5, "Mineração"),
+    (["metalurgia", "siderurgia"], 5.0, "Siderurgia / Metalurgia"),
+    (["papel e celulose", "celulose", "papel"], 6.0, "Papel e Celulose"),
+    (["açúcar", "acucar", "álcool", "alcool", "agricultura", "agropecuária",
+      "agropecuaria", "sucroalcooleiro"], 5.0, "Agro / Açúcar e Álcool"),
+]
+CICLICA_EV_EBITDA_DEFAULT = 5.0
+
+
+def _ciclica_bucket(sector: str) -> tuple[float, str]:
+    """Retorna (EV/EBITDA through-cycle, rótulo) para um setor cíclico."""
+    sl = (sector or "").lower()
+    for kws, mult, label in CICLICA_EV_EBITDA_BUCKETS:
+        if any(kw in sl for kw in kws):
+            return mult, label
+    return CICLICA_EV_EBITDA_DEFAULT, "Cíclica (default)"
+
+
+def _ebitda_midcycle(s: dict) -> tuple[Optional[float], int, Optional[float], float]:
+    """Retorna (EBITDA_midcycle, n_anos, EBIT_mid, ratio_EBITDA/EBIT).
+
+    Cíclicas: usa a mediana do EBIT histórico (mid-cycle) e faz a ponte para
+    EBITDA via a razão EBITDA/EBIT atual (D&A é relativamente estável).
+    EBITDA_mid = None se houver menos de 5 anos de EBIT positivo.
+    """
+    hist: dict = s.get("ebit_historico") or {}
+    anos = sorted(hist.keys(), reverse=True)[:10]
+    pos = [hist[a] for a in anos if hist.get(a) is not None and hist[a] > 0]
+    if len(pos) < 5:
+        return None, len(pos), None, 1.0
+
+    vs = sorted(pos)
+    n = len(vs)
+    mid = n // 2
+    ebit_mid = (vs[mid - 1] + vs[mid]) / 2 if n % 2 == 0 else vs[mid]
+
+    # Razão EBITDA/EBIT atual para reconstruir o EBITDA normalizado
+    ebitda_cur = s.get("ebitda")
+    ebit_cur = None
+    if s.get("ebit_margin") is not None and s.get("net_revenue"):
+        ebit_cur = s["ebit_margin"] / 100 * s["net_revenue"]
+    if ebitda_cur and ebit_cur and ebit_cur > 0:
+        ratio = min(max(ebitda_cur / ebit_cur, 1.05), 2.5)
+    else:
+        ratio = 1.4  # add-back de D&A padrão quando não dá para calcular
+    return ebit_mid * ratio, n, ebit_mid, ratio
+
+
+def _cyclical_base_price(s: dict) -> Optional[float]:
+    """Preço justo para cíclicas — EV/EBITDA through-cycle sobre EBITDA mid-cycle.
+
+    Se não houver histórico de EBIT suficiente, cai para o EBITDA atual (e o
+    detalhe sinaliza baixa confiança).
+    """
+    ebitda_mid, _n, _e, _r = _ebitda_midcycle(s)
+    if ebitda_mid is None:
+        ebitda_mid = s.get("ebitda")  # fallback: EBITDA atual
+    if ebitda_mid is None or ebitda_mid <= 0:
+        return None
+    shares = s.get("shares_outstanding")
+    if not shares or shares <= 0:
+        return None
+    mult, _ = _ciclica_bucket(s.get("sector", ""))
+    net_debt = s.get("net_debt") or 0.0
+    return max(0.0, (mult * ebitda_mid - net_debt) * 1000 / shares)
+
+
 def _dcf_params(sector: str) -> tuple[float, float]:
     """Retorna (wacc, perp_g) ajustados ao setor.
     Utilities reguladas: WACC 10% (Selic+2%, menor beta) e g perpétuo 4%
@@ -1968,6 +2042,114 @@ def _show_geral_valuation(s: dict) -> None:
     )
 
 
+def _show_cyclical_valuation(s: dict) -> None:
+    """Valuation para cíclicas — EV/EBITDA through-cycle sobre EBITDA mid-cycle."""
+    sector   = s.get("sector", "")
+    net_debt = s.get("net_debt") or 0.0
+    shares   = s.get("shares_outstanding")
+    price    = s.get("close_price")
+    ebitda_cur = s.get("ebitda")
+    ticker   = s.get("ticker", "")
+    mult_setor, bucket_label = _ciclica_bucket(sector)
+    ebitda_mid, n_anos, ebit_mid, ratio = _ebitda_midcycle(s)
+
+    st.divider()
+    st.subheader("📐 Valuation — EV/EBITDA mid-cycle (cíclica)")
+    st.info(
+        f"ℹ️ Sub-setor cíclico: **{bucket_label}** → EV/EBITDA through-cycle "
+        f"**{mult_setor:.1f}×**. Para commodities, o mercado aplica o múltiplo sobre "
+        "um **EBITDA normalizado** (médio do ciclo), não sobre o resultado pontual."
+    )
+
+    if not shares or shares <= 0:
+        st.warning("⚠️ Nº de ações indisponível — valuation não aplicável.")
+        return
+
+    insuficiente = ebitda_mid is None
+    if insuficiente:
+        ebitda_mid = ebitda_cur  # fallback
+        st.warning(
+            f"🟠 **Histórico de EBIT insuficiente** ({n_anos} ano(s), mín. 5) para "
+            "normalizar o ciclo. Usando o EBITDA atual — o resultado pode estar "
+            "distorcido pelo momento do ciclo de commodity."
+        )
+    else:
+        st.warning(
+            "🟠 **Referência through-cycle.** Usa o EBITDA médio do ciclo, não o atual. "
+            "Pode divergir de analistas que apostam numa alta/queda **específica** do "
+            "preço da commodity (deck de preços que não modelamos). Trate como valor "
+            "justo de longo prazo, não preço-alvo de 12 meses."
+        )
+
+    if ebitda_mid is None or ebitda_mid <= 0:
+        st.warning("⚠️ EBITDA indisponível ou negativo — valuation não aplicável.")
+        return
+
+    # Comparativo EBITDA atual vs mid-cycle
+    if not insuficiente and ebitda_cur:
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("EBITDA atual", f"R$ {ebitda_cur/1000:.0f} mi")
+        col_b.metric(f"EBITDA mid-cycle ({n_anos}a)", f"R$ {ebitda_mid/1000:.0f} mi")
+        _delta = (ebitda_mid / ebitda_cur - 1) * 100 if ebitda_cur else 0
+        col_c.metric("Posição no ciclo", "vale" if _delta > 5 else ("pico" if _delta < -5 else "neutro"),
+                     f"{_delta:+.0f}% vs atual")
+    else:
+        st.caption(f"EBITDA base: **R$ {ebitda_mid/1000:.0f} mi** · Dívida líq.: **R$ {net_debt/1000:.0f} mi**")
+
+    def _price_at(mult: float) -> float:
+        return max(0.0, (mult * ebitda_mid - net_debt) * 1000 / shares)
+
+    def _upside(p: Optional[float]) -> Optional[str]:
+        if p is not None and price and price > 0:
+            return f"{(p / price - 1) * 100:+.1f}%"
+        return None
+
+    mult_base = st.slider(
+        "EV/EBITDA through-cycle (×)",
+        min_value=2.0, max_value=12.0, value=float(mult_setor), step=0.5,
+        key=f"ciclo_mult_{ticker}",
+        help=f"Padrão do sub-setor '{bucket_label}': {mult_setor:.1f}×.",
+    )
+
+    p_c = _price_at(mult_base * 0.85)
+    p_b = _price_at(mult_base)
+    p_o = _price_at(mult_base * 1.15)
+
+    c_r, c_b, c_o = st.columns(3)
+    c_r.metric(f"Conservador ({mult_base*0.85:.1f}×)", f"R$ {p_c:.2f}", _upside(p_c))
+    c_b.metric(f"Base ({mult_base:.1f}×)",             f"R$ {p_b:.2f}", _upside(p_b))
+    c_o.metric(f"Otimista ({mult_base*1.15:.1f}×)",    f"R$ {p_o:.2f}", _upside(p_o))
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=["Conservador", "Base", "Otimista"], y=[p_c, p_b, p_o],
+        marker_color=["#f44336", "#4caf50", "#2196f3"],
+        text=[f"R$ {v:.2f}" for v in (p_c, p_b, p_o)],
+        textposition="outside",
+        hovertemplate="%{x}: R$ %{y:.2f}<extra></extra>",
+    ))
+    if price:
+        fig.add_hline(
+            y=price, line_dash="dash", line_color="#ffeb3b", line_width=2,
+            annotation_text=f"Preço atual: R$ {price:.2f}",
+            annotation_font_color="#ffeb3b",
+        )
+    fig.update_layout(
+        height=300, margin=dict(l=0, r=0, t=30, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e",
+                   tickprefix="R$ "),
+        showlegend=False,
+        title=dict(text="Faixa de Preço Justo — EV/EBITDA mid-cycle", font=dict(size=12, color="#e8eaf6")),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    st.warning(
+        "⚠️ Ferramenta educacional de aproximação — **não é recomendação de investimento**."
+    )
+
+
 def _show_dcf(s: dict) -> None:
     """Seção de Valuation por Fluxo de Caixa Descontado (DCF)."""
     sector = s.get("sector", "")
@@ -1980,8 +2162,11 @@ def _show_dcf(s: dict) -> None:
     if _is_shopping(sector):
         _show_shopping_valuation(s)
         return
-    # DCF segue apenas para utilities e cíclicas; demais usam EV/EBITDA setorial
-    if not (_is_utility(sector) or _is_cyclical(sector)):
+    if _is_cyclical(sector):
+        _show_cyclical_valuation(s)
+        return
+    # DCF segue apenas para utilities; demais usam EV/EBITDA setorial
+    if not _is_utility(sector):
         _show_geral_valuation(s)
         return
 

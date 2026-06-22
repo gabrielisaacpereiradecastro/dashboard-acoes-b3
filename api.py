@@ -6,7 +6,7 @@ import os
 import requests
 from typing import Optional
 
-from config import SECTOR_REMAP
+from config import SECTOR_REMAP, SETORES_CICLICOS
 
 BASE_URL = "https://api.usebolsai.com/api/v1"
 _TIMEOUT = 15  # segundos
@@ -256,6 +256,11 @@ def get_all_stock_data(ticker: str) -> dict:
     # 2 — Informações da empresa (setor, nome de pregão)
     company = get_company_info(t)
 
+    # Setor final (remapeado) + flag cíclica — decide se vale buscar o DRE
+    # para montar o EBIT histórico (usado no EBITDA mid-cycle das cíclicas).
+    _sector_final = SECTOR_REMAP.get(t, (company or {}).get("sector", "") or "")
+    _is_cyclical_sec = any(kw in _sector_final.lower() for kw in SETORES_CICLICOS)
+
     # 3 — Estatísticas de preço (variação diária, volume médio 52 semanas)
     stats = get_stock_stats(t)
 
@@ -328,7 +333,11 @@ def get_all_stock_data(ticker: str) -> dict:
     # Despesas financeiras: tenta do campo direto (Bolsai Pro pode fornecer)
     _fin_exp_mil: Optional[float] = fund.get("financial_expenses")
 
-    if _cagr_earn is None or _cagr_rev is None or _ebit_mil is None or _fin_exp_mil is None:
+    _ebit_historico: dict = {}  # {ano: EBIT R$ mil} — usado p/ EBITDA mid-cycle (cíclicas)
+
+    # Busca o DRE se faltar algum campo OU se for cíclica (precisa do EBIT histórico)
+    if (_cagr_earn is None or _cagr_rev is None or _ebit_mil is None
+            or _fin_exp_mil is None or _is_cyclical_sec):
         dre = get_financials(t, statement_type="DRE")
         if dre:
             _profit: dict = {}
@@ -370,6 +379,7 @@ def get_all_stock_data(ticker: str) -> dict:
                 _ebit_mil = _ebit_dre[max(_ebit_dre)]
             if _fin_exp_mil is None and _fin_exp_dre:
                 _fin_exp_mil = _fin_exp_dre[max(_fin_exp_dre)]
+            _ebit_historico = dict(_ebit_dre)
 
     # PSR = Market Cap / Receita Líquida Anual
     _psr: Optional[float] = None
@@ -391,7 +401,7 @@ def get_all_stock_data(ticker: str) -> dict:
             "ticker":             fund.get("ticker", t),
             "corporate_name":     fund.get("corporate_name", ""),
             "trade_name":         (company or {}).get("trade_name", ""),
-            "sector":             SECTOR_REMAP.get(t, (company or {}).get("sector", "")),
+            "sector":             _sector_final,
             "reference_date":     fund.get("reference_date"),
             # Preço
             "close_price":        close_price,
@@ -432,6 +442,7 @@ def get_all_stock_data(ticker: str) -> dict:
             "psr":              _psr,
             "fcl":              _fcl_k,          # FCL mais recente em R$ mil
             "fcl_historico":    _fcl_historico,  # {ano: FCL R$ mil} para normalização cíclica
+            "ebit_historico":   _ebit_historico, # {ano: EBIT R$ mil} p/ EBITDA mid-cycle (cíclicas)
             "interest_coverage": _interest_coverage,
         }
     )

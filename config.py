@@ -88,6 +88,7 @@ SETORES_CICLICOS = [
     # ("Serv. Água e Gás"). Petróleo e Gás já é coberto por "petróleo"/"petro".
     "combustível", "combustivel",
     "mineração", "mineracao", "minério", "minerio",
+    "extração mineral", "extracao mineral",  # VALE3 vem como "Extração Mineral"
     "metalurgia", "siderurgia",
     "papel e celulose", "celulose",
     "agricultura", "agropecuária", "agropecuaria",
