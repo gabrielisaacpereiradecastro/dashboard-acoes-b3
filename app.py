@@ -3791,26 +3791,19 @@ div[data-testid="stPopover"] button:hover {
 </style>
 """, unsafe_allow_html=True)
 
-    tab_comp, tab_det, tab_scr, tab_fii = st.tabs(["📊 Comparativo", "🔍 Detalhe", "🔎 Screener", "🏢 FIIs"])
+    tab_comp, tab_det, tab_cmp, tab_scr, tab_fii = st.tabs(
+        ["📊 Comparativo", "🔍 Detalhe", "⚖️ Comparar", "🔎 Screener", "🏢 FIIs"]
+    )
 
     # ────────────────────────────────────────────────────────────
-    # Tab 1 — Comparativo
+    # Tab 1 — Comparativo (tabela limpa, sem radar)
     # ────────────────────────────────────────────────────────────
     with tab_comp:
         st.markdown("### Tabela Comparativa")
-
-        # ── Multiselect para radar (acima da tabela) ───────────
-        tickers_list = [e["ticker"] for e in enriched]
-        selected_compare = st.multiselect(
-            "Selecione 2 a 4 ações para comparar no radar:",
-            tickers_list,
-            max_selections=4,
-            placeholder="Escolha as ações…",
-        )
-
         st.caption(
             "Clique em uma linha para ver o detalhamento completo na aba **Detalhe**. "
-            "Colunas coloridas por classificação fundamentalista."
+            "Colunas coloridas por classificação fundamentalista. "
+            "Use a aba **⚖️ Comparar** para o radar comparativo entre ações."
         )
 
         enriched = _dedup_enriched(enriched)
@@ -3883,33 +3876,6 @@ div[data-testid="stPopover"] button:hover {
                 use_container_width=True,
             )
 
-        # ── Radar comparativo (auto-render quando ≥ 2 selecionadas) ──
-        if len(selected_compare) >= 2:
-            st.divider()
-            st.markdown("#### Radar Comparativo")
-            stocks_compare = [
-                next(e for e in enriched if e["ticker"] == t)
-                for t in selected_compare
-            ]
-            banks_in = [
-                t for t in selected_compare
-                if sc.is_bank(
-                    next(e for e in enriched if e["ticker"] == t).get("sector", "")
-                )
-            ]
-            if banks_in:
-                st.caption(
-                    f"⚠ {', '.join(banks_in)}: setor bancário — "
-                    "pontuação zero no radar (score não calculado para bancos)."
-                )
-            fig_compare = _radar_chart(stocks_compare, selected_compare)
-            st.plotly_chart(fig_compare, use_container_width=True,
-                            config={"displayModeBar": False})
-            st.markdown("##### Valores por indicador")
-            _comparison_table(selected_compare, stocks_compare)
-        elif len(selected_compare) == 1:
-            st.caption("Selecione ao menos 2 ações para ver o radar comparativo.")
-
         # ── Quantidades e análise de portfólio ────────────────────
         _is_carteira = st.session_state.lista_atual == LISTAS_PADRAO[0]
         if _is_carteira:
@@ -3942,13 +3908,84 @@ div[data-testid="stPopover"] button:hover {
                 _show_detail(stock_detail)
 
     # ────────────────────────────────────────────────────────────
-    # Tab 3 — Screener
+    # Tab 3 — Comparar (radar cross-listas)
+    # ────────────────────────────────────────────────────────────
+    with tab_cmp:
+        st.markdown("### ⚖️ Comparar Ações")
+        st.caption(
+            "Compare ações de **qualquer lista** — independente de qual está selecionada na sidebar. "
+            "Selecione de 2 a 4 ações para ver o radar e a tabela de indicadores lado a lado."
+        )
+
+        # Agrega todas as ações de todas as listas (sem duplicatas)
+        # Prioridade de fonte: Carteira > outras listas (ordem de LISTAS_PADRAO)
+        _all_stocks_map: dict[str, tuple[str, dict]] = {}  # ticker -> (lista, data)
+        _listas_ordenadas = list(LISTAS_PADRAO) + [
+            k for k in st.session_state.todas_listas if k not in LISTAS_PADRAO
+        ]
+        for _lname in _listas_ordenadas:
+            _ldata = st.session_state.todas_listas.get(_lname, {})
+            for _tk, _entry in _ldata.items():
+                if _tk not in _all_stocks_map:
+                    _d = _entry.get("data", {})
+                    if _d and not _d.get("error"):
+                        _all_stocks_map[_tk] = (_lname, _d)
+
+        if not _all_stocks_map:
+            st.info("Nenhuma ação com dados disponível. Adicione ações nas suas listas primeiro.")
+        else:
+            # Opções do multiselect: "TICKER (Lista)"
+            _cmp_options = [
+                f"{tk} ({ln})"
+                for tk, (ln, _) in sorted(_all_stocks_map.items())
+            ]
+            _cmp_ticker_of = {
+                f"{tk} ({ln})": tk
+                for tk, (ln, _) in _all_stocks_map.items()
+            }
+
+            _cmp_selected_opts = st.multiselect(
+                "Selecione 2 a 4 ações para comparar:",
+                _cmp_options,
+                max_selections=4,
+                placeholder="Escolha as ações…",
+                key="cmp_multiselect",
+            )
+            _cmp_tickers = [_cmp_ticker_of[o] for o in _cmp_selected_opts]
+
+            if len(_cmp_tickers) < 2:
+                if len(_cmp_tickers) == 1:
+                    st.caption("Selecione ao menos **2 ações** para ver o radar comparativo.")
+                else:
+                    st.caption("Selecione entre 2 e 4 ações acima para iniciar a comparação.")
+            else:
+                _cmp_stocks = [_all_stocks_map[t][1] for t in _cmp_tickers]
+
+                banks_in = [
+                    t for t, s in zip(_cmp_tickers, _cmp_stocks)
+                    if sc.is_bank(s.get("sector", ""))
+                ]
+                if banks_in:
+                    st.caption(
+                        f"⚠ {', '.join(banks_in)}: setor bancário — "
+                        "pontuação zero no radar (score não calculado para bancos)."
+                    )
+
+                fig_cmp = _radar_chart(_cmp_stocks, _cmp_tickers)
+                st.plotly_chart(fig_cmp, use_container_width=True,
+                                config={"displayModeBar": False})
+
+                st.markdown("##### Valores por indicador")
+                _comparison_table(_cmp_tickers, _cmp_stocks)
+
+    # ────────────────────────────────────────────────────────────
+    # Tab 4 — Screener
     # ────────────────────────────────────────────────────────────
     with tab_scr:
         _show_screener()
 
     # ────────────────────────────────────────────────────────────
-    # Tab 4 — FIIs
+    # Tab 5 — FIIs
     # ────────────────────────────────────────────────────────────
     with tab_fii:
         _show_fii_tab()
