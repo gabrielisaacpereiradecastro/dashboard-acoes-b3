@@ -1525,9 +1525,18 @@ def _gordon_conservative_price(s: dict, ke: float = 0.12, g: float = 0.04) -> Op
 
 def _dcf_base_price(s: dict, wacc: float = 0.12, g5: float = 0.10, perp_g: float = 0.03) -> Optional[float]:
     """Preço justo DCF — cenário Base/Esperado (g5 sem ajuste). Usa FCL normalizado p/ cíclicos."""
-    fcl_base, _, _ = _fcl_normalizado(s)
+    fcl_base, _fcl_ult, _ = _fcl_normalizado(s)
     shares = s.get("shares_outstanding")
+    # ── DIAG temporário (item 2 — RDOR3 N/D) ──────────────────────
+    _dtk = s.get("ticker", "?")
+    print(f"[DCF-DIAG] {_dtk} | fcl_ultimo={s.get('fcl')} | fcl_base_norm={fcl_base} | "
+          f"fcl_historico={s.get('fcl_historico')} | shares={shares} | net_debt={s.get('net_debt')}",
+          file=sys.stderr); sys.stderr.flush()
     if not fcl_base or fcl_base <= 0 or not shares or shares <= 0:
+        print(f"[DCF-DIAG] {_dtk} -> None: "
+              f"fcl_base_invalido={not fcl_base or (fcl_base or 0) <= 0} "
+              f"shares_invalido={not shares or (shares or 0) <= 0}",
+              file=sys.stderr); sys.stderr.flush()
         return None
     net_debt = s.get("net_debt") or 0.0
     if wacc <= perp_g:
