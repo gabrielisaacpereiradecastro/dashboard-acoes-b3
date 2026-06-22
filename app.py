@@ -20,12 +20,26 @@ import api
 import score as sc
 import score_fii as sf
 from score import classify_psr as _classify_psr, classify_interest_coverage as _classify_interest_coverage
+import config as _cfg
 from config import (
     BG_COLORS, COLOR_EMOJI, INDICATOR_LABELS, INDICATOR_WEIGHTS,
     SCORE_COLORS, SECTOR_REMAP, SETORES_CICLICOS, UTILITY_KEYWORDS,
-    INSURER_KEYWORDS, INSURER_FAIR_PE,
-    SHOPPING_KEYWORDS, SHOPPING_FAIR_EV_EBITDA,
 )
+
+# Constantes de valuation por setor com FALLBACK embutido. O Streamlit Cloud
+# já serviu config.py stale várias vezes (cache de .pyc), causando ImportError
+# em nomes recém-adicionados. getattr garante que o app sobe mesmo se o
+# config.py do servidor estiver desatualizado — o config continua sendo a
+# fonte canônica quando o deploy está fresco.
+INSURER_KEYWORDS = getattr(
+    _cfg, "INSURER_KEYWORDS",
+    ["seguradora", "seguradoras", "seguros", "seguridade", "resseguro"],
+)
+INSURER_FAIR_PE = getattr(_cfg, "INSURER_FAIR_PE", 10.0)
+SHOPPING_KEYWORDS = getattr(
+    _cfg, "SHOPPING_KEYWORDS", ["shopping", "centros comerciais"],
+)
+SHOPPING_FAIR_EV_EBITDA = getattr(_cfg, "SHOPPING_FAIR_EV_EBITDA", 10.5)
 
 # ────────────────────────────────────────────────────────────────
 # Configuração da página
