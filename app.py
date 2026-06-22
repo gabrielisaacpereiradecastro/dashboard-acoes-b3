@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -584,6 +585,20 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             _pot_cls  = "Positivo" if _pot_pct >= 0 else "Negativo"
         else:
             _pot_disp, _pot_cls = "N/D", "ND"
+
+        # ── CALIB temporário: dados completos p/ calibração vs BTG ────
+        _cb_norm, _cb_ult, _cb_n = _fcl_normalizado(s)
+        _cb_tgt = f"{_target:.2f}" if _target is not None else "None"
+        _cb_pct = f"{(_target/_price_now-1)*100:+.1f}" if (_target and _price_now) else "NA"
+        print(
+            f"[CALIB] {s.get('ticker','?')} | setor={sector!r} | "
+            f"bank={sc.is_bank(sector)} cyc={_is_cyclical(sector)} util={_is_utility(sector)} | "
+            f"fcl_ult={s.get('fcl')} fcl_norm={_cb_norm} n_anos={_cb_n} | "
+            f"roe={s.get('roe')} vpa={s.get('vpa')} | "
+            f"shares={s.get('shares_outstanding')} net_debt={s.get('net_debt')} | "
+            f"preco={_price_now} nosso_alvo={_cb_tgt} nosso_pct={_cb_pct}%",
+            file=sys.stderr,
+        ); sys.stderr.flush()
 
         display_row = {
             "Ticker":    s.get("ticker", ""),
