@@ -6,7 +6,7 @@ from config import (
     INDICATOR_WEIGHTS, CLASS_POINTS, SCORE_LEVELS,
     BANK_KEYWORDS, UTILITY_KEYWORDS, RETAIL_KEYWORDS,
     QUALITY_WEIGHTS, PRICE_WEIGHTS, QUALITY_WEIGHTS_BANK, PRICE_WEIGHTS_BANK,
-    DIAGNOSIS, SCORE_GOOD_THRESHOLD,
+    QUALITY_TIERS, PRICE_TIERS, VERDICT_COLORS, SCORE_GOOD_THRESHOLD,
 )
 
 
@@ -439,12 +439,38 @@ def _composite(stock: dict, weights: dict, sector: str):
     return (ws / tw if tw > 0 else None), bd
 
 
+def _tier(score, tiers):
+    """Rótulo graduado (5 níveis) do score, ou None."""
+    if score is None:
+        return None
+    for lim, label in tiers:
+        if score >= lim:
+            return label
+    return tiers[-1][1]
+
+
 def _diagnose(q, p, thr: float = SCORE_GOOD_THRESHOLD):
+    """Diagnóstico graduado: combina os tiers de Qualidade e Preço.
+
+    Retorna {label, verdict, color, quality_tier, price_tier} ou None.
+    A cor vem do veredito 2×2 (preserva o alerta de value trap); o rótulo é
+    graduado (ex.: 'Ótima · barata', 'Razoável · justa').
+    """
     if q is None or p is None:
         return None
-    ql = "boa" if q >= thr else "fraca"
-    pl = "barata" if p >= thr else "cara"
-    return DIAGNOSIS[(ql, pl)]
+    qt = _tier(q, QUALITY_TIERS)
+    pt = _tier(p, PRICE_TIERS)
+    verdict = ("boa" if q >= thr else "fraca") + "_" + ("barata" if p >= thr else "cara")
+    label = f"{qt} · {pt.lower()}"
+    if verdict == "fraca_barata":
+        label = "⚠ " + label  # possível value trap
+    return {
+        "label": label,
+        "verdict": verdict,
+        "color": VERDICT_COLORS.get(verdict, "#37474f"),
+        "quality_tier": qt,
+        "price_tier": pt,
+    }
 
 
 def calculate_scores(stock: dict) -> dict:

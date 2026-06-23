@@ -643,13 +643,13 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         _scores = s.get("scores") or sc.calculate_scores(s)
         _q = _scores.get("quality")
         _p = _scores.get("price")
-        _diag = _scores.get("diagnosis")  # (rótulo, cor) ou None
+        _diag = _scores.get("diagnosis")  # dict {label, verdict, color, ...} ou None
         display_row["Qualidade"]    = f"{_q:.0f}" if _q is not None else "—"
         class_row["Qualidade"]      = _score_band(_q)
         display_row["Atratividade"] = f"{_p:.0f}" if _p is not None else "—"
         class_row["Atratividade"]   = _score_band(_p)
-        display_row["Diagnóstico"]  = _diag[0] if _diag else "—"
-        class_row["Diagnóstico"]    = _diag[0] if _diag else ""
+        display_row["Diagnóstico"]  = _diag["label"] if _diag else "—"
+        class_row["Diagnóstico"]    = ("verdict_" + _diag["verdict"]) if _diag else ""
 
         for ind in SCORED_COLS_ORDER:
             col_name = INDICATOR_LABELS.get(ind, ind)
@@ -694,11 +694,11 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         "Evitar":         "#7f0000",
         "Setor Bancário": "#37474f",
         "NA":             "#37474f",
-        # Diagnóstico Qualidade × Preço
-        "🟢 Boa e barata":      "#1b5e20",
-        "🟡 Boa, mas cara":     "#7b5800",
-        "🟠 Barata, mas fraca": "#bf360c",
-        "🔴 Fraca e cara":      "#7f0000",
+        # Veredito do diagnóstico Qualidade × Preço
+        "verdict_boa_barata":   "#1b5e20",
+        "verdict_boa_cara":     "#7b5800",
+        "verdict_fraca_barata": "#bf360c",
+        "verdict_fraca_cara":   "#7f0000",
     }
     colored_cols = {"Qualidade", "Atratividade", "Diagnóstico", "P/VP", "PSR", "Balanço", "Potencial"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
@@ -2519,20 +2519,26 @@ def _show_score_panel(s: dict) -> None:
     st.subheader("📊 Qualidade × Preço")
     if diag:
         st.markdown(
-            f"<div style='background:{diag[1]};padding:10px 16px;border-radius:8px;color:#fff;"
-            f"font-size:1.2rem;font-weight:700;margin-bottom:8px'>{diag[0]}</div>",
+            f"<div style='background:{diag['color']};padding:10px 16px;border-radius:8px;color:#fff;"
+            f"font-size:1.2rem;font-weight:700;margin-bottom:8px'>{diag['label']}</div>",
             unsafe_allow_html=True)
     elif q is None and p is None:
         st.info("Dados insuficientes para calcular os scores deste ticker.")
         return
 
+    _qtier = diag["quality_tier"] if diag else None
+    _ptier = diag["price_tier"] if diag else None
     col_a, col_b = st.columns([1, 1.15])
     with col_a:
         cq, cp = st.columns(2)
         cq.metric("Qualidade", f"{q:.0f}/100" if q is not None else "—")
+        if _qtier:
+            cq.caption(f"**{_qtier}**")
         if q is not None:
             cq.progress(int(q))
         cp.metric("Preço (atratividade)", f"{p:.0f}/100" if p is not None else "—")
+        if _ptier:
+            cp.caption(f"**{_ptier}**")
         if p is not None:
             cp.progress(int(p))
         st.caption(

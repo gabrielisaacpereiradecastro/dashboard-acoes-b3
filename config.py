@@ -56,15 +56,31 @@ PRICE_WEIGHTS_BANK = {
     "pl":  0.40,
 }
 
-# Limiar para a matriz de diagnóstico (≥ = boa/barata)
+# Limiar "bom/barato" para a cor do diagnóstico (≥)
 SCORE_GOOD_THRESHOLD = 55
 
-# Matriz Qualidade × Preço → (rótulo, cor)
-DIAGNOSIS = {
-    ("boa",   "barata"): ("🟢 Boa e barata",      "#1b5e20"),
-    ("boa",   "cara"):   ("🟡 Boa, mas cara",     "#7b5800"),
-    ("fraca", "barata"): ("🟠 Barata, mas fraca", "#bf360c"),
-    ("fraca", "cara"):   ("🔴 Fraca e cara",      "#7f0000"),
+# Graduação dos scores (5 níveis): (limite_min, rótulo)
+QUALITY_TIERS = [
+    (85, "Excelente"),
+    (70, "Ótima"),
+    (55, "Boa"),
+    (40, "Razoável"),
+    (0,  "Fraca"),
+]
+PRICE_TIERS = [
+    (85, "Pechincha"),
+    (70, "Muito barata"),
+    (55, "Barata"),
+    (40, "Justa"),
+    (0,  "Cara"),
+]
+
+# Cor do diagnóstico pelo "veredito" 2×2 (Qualidade × Preço)
+VERDICT_COLORS = {
+    "boa_barata":   "#1b5e20",  # boa+barata = oportunidade
+    "boa_cara":     "#7b5800",  # boa+cara
+    "fraca_barata": "#bf360c",  # barata mas fraca = ⚠ value trap
+    "fraca_cara":   "#7f0000",  # fraca+cara
 }
 
 # Faixas de Score final e rótulos
