@@ -150,7 +150,7 @@ def get_macro_series(series: str) -> Optional[dict]:
 # Macro do Banco Central (SGS) — API PÚBLICA, sem chave/autenticação
 # ────────────────────────────────────────────────────────────────
 
-_SGS_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{cod}/dados/ultimos/{n}"
+_SGS_BASE = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{cod}/dados"
 
 # Códigos das séries usadas no painel de Ciclo
 SGS_SELIC_META   = 432    # Meta Selic definida pelo Copom (% a.a.)
@@ -160,17 +160,28 @@ SGS_USD_BRL      = 1      # Dólar (venda)
 SGS_CREDITO_PIB  = 20622  # Saldo de crédito / PIB (%)
 
 
-def get_sgs(codigo: int, ultimos: int = 1) -> Optional[list]:
+def get_sgs(codigo: int, ultimos: int = 1, dias: Optional[int] = None) -> Optional[list]:
     """Série temporal do SGS do Banco Central (pública, sem autenticação).
 
-    Retorna lista de dicts [{"data": "dd/mm/aaaa", "valor": "x.y"}] (mais
-    antigo → mais recente) ou None em caso de falha.
+    - `ultimos`: pega os N pontos mais recentes (limite ~50 em séries diárias).
+    - `dias`: se informado, busca por intervalo (hoje − N dias até hoje) — sem
+      o limite do /ultimos, ideal para séries diárias como a Selic.
+
+    Retorna lista [{"data": "dd/mm/aaaa", "valor": "x.y"}] (antigo → recente) ou None.
     """
+    from datetime import date, timedelta
     try:
-        r = requests.get(
-            _SGS_URL.format(cod=codigo, n=ultimos),
-            params={"formato": "json"}, timeout=12,
-        )
+        if dias:
+            fim = date.today()
+            ini = fim - timedelta(days=dias)
+            url = _SGS_BASE.format(cod=codigo)
+            params = {"formato": "json",
+                      "dataInicial": ini.strftime("%d/%m/%Y"),
+                      "dataFinal": fim.strftime("%d/%m/%Y")}
+        else:
+            url = _SGS_BASE.format(cod=codigo) + f"/ultimos/{ultimos}"
+            params = {"formato": "json"}
+        r = requests.get(url, params=params, timeout=12)
         if r.ok:
             return r.json()
     except Exception:

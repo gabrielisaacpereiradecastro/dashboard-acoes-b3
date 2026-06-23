@@ -4260,6 +4260,242 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
 
 
 # ────────────────────────────────────────────────────────────────
+# Aba de Ciclo de Mercado (termômetro educacional — Investment Clock)
+# ────────────────────────────────────────────────────────────────
+
+# Fase do ciclo: (rótulo, cor, descrição, o que historicamente favoreceu)
+_CICLO_FASES = {
+    "recuperacao": ("🌱 Recuperação", "#1b5e20",
+        "Atividade acelerando com inflação baixa ou em queda. A política monetária tende a "
+        "afrouxar (cortes de juros). É a fase mais favorável a tomar risco.",
+        "Ações — especialmente nomes de crescimento e cíclicas de consumo."),
+    "aquecimento": ("🔥 Aquecimento", "#bf360c",
+        "Economia forte e inflação subindo. O Banco Central tende a apertar os juros para "
+        "esfriar. Fim de ciclo de alta.",
+        "Commodities e cíclicas de materiais/energia (mineração, petróleo, siderurgia)."),
+    "estagflacao": ("🥶 Estagflação", "#37474f",
+        "Atividade enfraquecendo com inflação ainda alta — o cenário mais difícil para risco. "
+        "Juros altos pressionam tudo.",
+        "Caixa e pós-fixado (CDI/Selic); reduzir risco, aumentar reservas."),
+    "desaceleracao": ("❄️ Desaceleração", "#1f3a5f",
+        "Atividade e inflação caindo juntas. Os juros começam a ceder, antecipando a "
+        "recuperação.",
+        "Renda fixa pré-fixada e títulos longos (duration); começar a montar posição em ações."),
+}
+
+
+def _ciclo_fase(ibc_yoy: Optional[float], ipca_mom: Optional[float]) -> Optional[str]:
+    """Determina a fase pelo crescimento (IBC-Br YoY) e momentum da inflação (IPCA 6m)."""
+    if ibc_yoy is None or ipca_mom is None:
+        return None
+    cresc = ibc_yoy >= 0
+    infla = ipca_mom >= 0
+    if cresc and not infla:
+        return "recuperacao"
+    if cresc and infla:
+        return "aquecimento"
+    if not cresc and infla:
+        return "estagflacao"
+    return "desaceleracao"
+
+
+@st.cache_data(ttl=3600 * 6, show_spinner=False)
+def _get_ciclo_data() -> dict:
+    """Coleta indicadores macro do BC (SGS) + P/L do Ibovespa. Cache de 6h."""
+    out: dict = {}
+
+    def _serie(cod, n=1, dias=None):
+        d = api.get_sgs(cod, ultimos=n, dias=dias) or []
+        vals = []
+        for p in d:
+            try:
+                vals.append(float(p["valor"]))
+            except (TypeError, ValueError, KeyError):
+                continue
+        return vals
+
+    # Selic é diária → busca por intervalo (~13 meses) para ver a direção
+    selic = _serie(api.SGS_SELIC_META, dias=400)
+    out["selic"] = selic[-1] if selic else None
+    out["selic_dir"] = (selic[-1] - selic[0]) if len(selic) >= 2 else 0.0
+
+    ipca = _serie(api.SGS_IPCA_12M, 13)
+    out["ipca"] = ipca[-1] if ipca else None
+    out["ipca_mom"] = (ipca[-1] - ipca[-7]) if len(ipca) >= 7 else None
+
+    ibc = _serie(api.SGS_IBC_BR, 13)
+    out["ibc_yoy"] = ((ibc[-1] / ibc[0] - 1) * 100) if len(ibc) >= 13 and ibc[0] > 0 else None
+
+    usd = _serie(api.SGS_USD_BRL, 1)
+    out["usd"] = usd[-1] if usd else None
+
+    cred = _serie(api.SGS_CREDITO_PIB, 13)
+    out["credito_pib"] = cred[-1] if cred else None
+    out["credito_dir"] = (cred[-1] - cred[0]) if len(cred) >= 2 else 0.0
+
+    if out.get("selic") is not None and out.get("ipca") is not None:
+        out["juro_real"] = ((1 + out["selic"] / 100) / (1 + out["ipca"] / 100) - 1) * 100
+    else:
+        out["juro_real"] = None
+
+    out["ibov_pl"] = api.get_ibovespa_pl()
+    out["ibov_pl_media"] = 12.0  # média histórica de longo prazo (referência, desde 2001)
+    return out
+
+
+def _show_ciclo_relogio(mx: float, my: float, fase: str) -> None:
+    """Desenha o 'relógio do ciclo' (quadrante Crescimento × Inflação) com o marcador."""
+    quad = {  # (x0,y0,x1,y1, cor, chave)
+        "aquecimento":   (0, 0, 1, 1, "#bf360c"),
+        "estagflacao":   (-1, 0, 0, 1, "#37474f"),
+        "recuperacao":   (0, -1, 1, 0, "#1b5e20"),
+        "desaceleracao": (-1, -1, 0, 0, "#1f3a5f"),
+    }
+    fig = go.Figure()
+    for k, (x0, y0, x1, y1, cor) in quad.items():
+        ativo = (k == fase)
+        fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1,
+                      line=dict(color="rgba(255,255,255,0.15)", width=1),
+                      fillcolor=cor, opacity=0.85 if ativo else 0.18, layer="below")
+    labels = [
+        (0.5, 0.5, "🔥 Aquecimento<br>commodities"),
+        (-0.5, 0.5, "🥶 Estagflação<br>caixa / pós"),
+        (0.5, -0.5, "🌱 Recuperação<br>ações"),
+        (-0.5, -0.5, "❄️ Desaceleração<br>renda fixa"),
+    ]
+    for x, y, t in labels:
+        fig.add_annotation(x=x, y=y, text=t, showarrow=False,
+                           font=dict(size=11, color="#e8eaf6"))
+    # eixos
+    fig.add_shape(type="line", x0=-1, y0=0, x1=1, y1=0,
+                  line=dict(color="rgba(255,255,255,0.35)", width=1))
+    fig.add_shape(type="line", x0=0, y0=-1, x1=0, y1=1,
+                  line=dict(color="rgba(255,255,255,0.35)", width=1))
+    # marcador
+    fig.add_trace(go.Scatter(
+        x=[mx], y=[my], mode="markers",
+        marker=dict(size=22, color="#ffeb3b", line=dict(color="#000", width=2), symbol="circle"),
+        hovertemplate="Posição estimada<extra></extra>"))
+    fig.update_layout(
+        height=420, margin=dict(l=10, r=10, t=10, b=30),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=False,
+        xaxis=dict(range=[-1.08, 1.08], showgrid=False, zeroline=False, showticklabels=False,
+                   title=dict(text="←  Atividade contraindo      Atividade crescendo  →",
+                              font=dict(size=10, color="#9e9e9e"))),
+        yaxis=dict(range=[-1.08, 1.08], showgrid=False, zeroline=False, showticklabels=False,
+                   title=dict(text="←  Inflação caindo      Inflação subindo  →",
+                              font=dict(size=10, color="#9e9e9e"))),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+def _show_ciclo_tab() -> None:
+    st.markdown("### 🌐 Termômetro de Ciclo de Mercado")
+    st.caption(
+        "Onde estamos no ciclo econômico, segundo o framework do **Investment Clock** "
+        "(Crescimento × Inflação). Ferramenta **educacional** — mostra o cenário macro e o que "
+        "cada fase historicamente favoreceu; **não é recomendação** de compra/venda."
+    )
+
+    d = _get_ciclo_data()
+    fase = _ciclo_fase(d.get("ibc_yoy"), d.get("ipca_mom"))
+
+    # ── Relógio + diagnóstico da fase ──────────────────────────────
+    col_g, col_t = st.columns([1.1, 1])
+    with col_g:
+        if fase:
+            mx = max(-1.0, min(1.0, (d["ibc_yoy"] or 0) / 4.0))
+            my = max(-1.0, min(1.0, (d["ipca_mom"] or 0) / 2.0))
+            _show_ciclo_relogio(mx, my, fase)
+        else:
+            st.info("⚠️ Dados macro do Banco Central indisponíveis no momento. Tente mais tarde.")
+    with col_t:
+        if fase:
+            rotulo, cor, desc, favorece = _CICLO_FASES[fase]
+            st.markdown(
+                f"<div style='background:{cor};padding:12px 16px;border-radius:8px;margin-bottom:8px'>"
+                f"<div style='color:#fff;font-size:1.15rem;font-weight:700'>{rotulo}</div></div>",
+                unsafe_allow_html=True)
+            st.markdown(f"**Leitura atual:** {desc}")
+            st.markdown(f"**Historicamente favoreceu:** {favorece}")
+            st.caption(
+                "Eixos: crescimento = IBC-Br (proxy do PIB) na comparação anual; inflação = "
+                "tendência do IPCA 12m nos últimos 6 meses.")
+
+    st.divider()
+
+    # ── Indicadores macro (BC) ─────────────────────────────────────
+    st.markdown("##### Indicadores (Banco Central)")
+    def _seta(v, casas=2, suf="", inv=False):
+        if v is None:
+            return "—"
+        up = v > 0.01
+        down = v < -0.01
+        a = "↑" if (up and not inv) or (down and inv) else ("↓" if (down and not inv) or (up and inv) else "→")
+        return a
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    _selic = d.get("selic")
+    c1.metric("Selic (meta)", f"{_selic:.2f}%" if _selic is not None else "—",
+              ("subindo 12m" if d.get("selic_dir", 0) > 0.1 else
+               "caindo 12m" if d.get("selic_dir", 0) < -0.1 else "estável"),
+              delta_color="off")
+    _ipca = d.get("ipca")
+    c2.metric("IPCA (12m)", f"{_ipca:.2f}%" if _ipca is not None else "—",
+              ("acelerando" if (d.get("ipca_mom") or 0) > 0.1 else
+               "desacelerando" if (d.get("ipca_mom") or 0) < -0.1 else "estável"),
+              delta_color="off")
+    _jr = d.get("juro_real")
+    c3.metric("Juro real", f"{_jr:.2f}%" if _jr is not None else "—",
+              "Selic acima da inflação" if (_jr or 0) > 0 else "negativo", delta_color="off")
+    _ibc = d.get("ibc_yoy")
+    c4.metric("Atividade (IBC-Br a/a)", f"{_ibc:+.1f}%" if _ibc is not None else "—",
+              "expandindo" if (_ibc or 0) >= 0 else "contraindo", delta_color="off")
+    _usd = d.get("usd")
+    c5.metric("USD/BRL", f"R$ {_usd:.2f}" if _usd is not None else "—")
+    _cred = d.get("credito_pib")
+    c6.metric("Crédito/PIB", f"{_cred:.1f}%" if _cred is not None else "—",
+              ("subindo" if d.get("credito_dir", 0) > 0.1 else
+               "caindo" if d.get("credito_dir", 0) < -0.1 else "estável"),
+              delta_color="off")
+
+    st.divider()
+
+    # ── P/L do Ibovespa vs média histórica ─────────────────────────
+    st.markdown("##### Valuation da bolsa — P/L do Ibovespa")
+    pl = d.get("ibov_pl")
+    media = d.get("ibov_pl_media", 12.0)
+    if pl:
+        gap = (pl / media - 1) * 100
+        if gap > 5:
+            tag, cor = "acima da média (mais caro)", "#bf360c"
+        elif gap < -5:
+            tag, cor = "abaixo da média (mais barato)", "#1b5e20"
+        else:
+            tag, cor = "próximo da média", "#7b5800"
+        cc1, cc2, cc3 = st.columns(3)
+        cc1.metric("P/L atual", f"{pl:.1f}×")
+        cc2.metric("Média histórica (~desde 2001)", f"{media:.1f}×")
+        cc3.metric("Posição", f"{gap:+.0f}%", tag, delta_color="off")
+        st.markdown(
+            f"<div style='background:{cor};color:#fff;padding:6px 12px;border-radius:6px;"
+            f"font-size:0.9rem'>A bolsa negocia a <b>{pl:.1f}×</b> lucros, <b>{tag}</b> "
+            f"(referência ~{media:.0f}×).</div>", unsafe_allow_html=True)
+    else:
+        st.caption("P/L do Ibovespa indisponível no momento (fonte externa). "
+                   "Referência de média histórica: ~12×.")
+
+    st.divider()
+    st.warning(
+        "⚠️ **Leia com cautela.** Este é um termômetro educacional simplificado. O ciclo "
+        "brasileiro é fortemente influenciado por fatores **globais** (Fed, China, commodities) "
+        "que este painel doméstico não captura, e timing de ciclo é notoriamente incerto. "
+        "Não constitui recomendação de investimento — use como contexto, não como gatilho."
+    )
+
+
+# ────────────────────────────────────────────────────────────────
 # App principal
 # ────────────────────────────────────────────────────────────────
 
@@ -4343,8 +4579,8 @@ div[data-testid="stPopover"] button:hover {
 </style>
 """, unsafe_allow_html=True)
 
-    tab_comp, tab_det, tab_cmp, tab_scr, tab_fii = st.tabs(
-        ["📊 Comparativo", "🔍 Detalhe", "⚖️ Comparar", "🔎 Screener", "🏢 FIIs"]
+    tab_comp, tab_det, tab_cmp, tab_ciclo, tab_scr, tab_fii = st.tabs(
+        ["📊 Comparativo", "🔍 Detalhe", "⚖️ Comparar", "🌐 Ciclo", "🔎 Screener", "🏢 FIIs"]
     )
 
     # ────────────────────────────────────────────────────────────
@@ -4539,11 +4775,14 @@ div[data-testid="stPopover"] button:hover {
     # ────────────────────────────────────────────────────────────
     # Tab 4 — Screener
     # ────────────────────────────────────────────────────────────
+    with tab_ciclo:
+        _show_ciclo_tab()
+
     with tab_scr:
         _show_screener()
 
     # ────────────────────────────────────────────────────────────
-    # Tab 5 — FIIs
+    # Tab — FIIs
     # ────────────────────────────────────────────────────────────
     with tab_fii:
         _show_fii_tab()
