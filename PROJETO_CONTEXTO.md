@@ -6,7 +6,8 @@
 > reler todo o histórico de conversas — economiza tempo e tokens.
 
 > **Última atualização:** 23/06/2026 — reformulação do motor de valuation (híbrido por setor),
-> correções de setor (BALM4, DEXP3), Small Caps via SMAL11. Documento agora versionado no git.
+> correções de setor (BALM4, DEXP3), Small Caps via SMAL11, nova **aba de Ciclo de Mercado**
+> (dados do Banco Central). Documento agora versionado no git.
 
 ---
 
@@ -29,7 +30,7 @@ sem fins comerciais.
 | Arquivo | Responsabilidade |
 |---|---|
 | `app.py` | Interface Streamlit completa — abas, tabelas, gráficos, sidebar |
-| `api.py` | Toda comunicação com a API Bolsai (requisições, parsing de JSON) |
+| `api.py` | Comunicação com a API Bolsai + **API pública do Banco Central** (SGS e Focus, sem chave) + scraping do P/L do Ibovespa (Investidor10) |
 | `score.py` | Lógica de classificação e cálculo do score de cada indicador |
 | `config.py` | Constantes, limites de classificação, pesos, `SECTOR_REMAP`, keywords de setor (`SETORES_CICLICOS`, `UTILITY_KEYWORDS`, `INSURER_KEYWORDS`, `SHOPPING_KEYWORDS`) e múltiplos de referência |
 | `requirements.txt` | Dependências (inclui `yfinance`, `plotly`, `beautifulsoup4`) |
@@ -162,6 +163,37 @@ Linha compacta sempre visível, cache de 1h (`@st.cache_data(ttl=3600)`), botão
 - **USD/BRL, Selic, IPCA 12m, Juro Real:** via endpoint `/api/v1/macro` da Bolsai Pro
   (dados do Banco Central — podem ter delay de 24-48h após mudanças do COPOM, é normal
   e não é bug)
+
+---
+
+## 8.1 Aba de Ciclo de Mercado (🌐 Ciclo) — termômetro educacional
+
+Aba que estima a fase do ciclo econômico (framework **Investment Clock**: Crescimento ×
+Inflação) de forma **educacional** — mostra o cenário macro e o que cada fase historicamente
+favoreceu; **não dá sinal de compra/venda nem conselho de risco personalizado** — decisão
+consciente de design (timing de ciclo é incerto e o Brasil é puxado por fatores globais).
+
+**Fontes de dados (todas públicas e GRATUITAS, sem chave/secret):**
+- **API SGS do Banco Central** (`api.get_sgs`): Selic meta (432), IPCA 12m (13522), IBC-Br
+  (24364), USD/BRL (1), Crédito/PIB (20622). O param `dias` busca por intervalo de datas —
+  necessário para séries diárias como a Selic, pois o `/ultimos/N` tem limite (~50) e estoura.
+- **API Olinda / Expectativas do Focus** (`api.get_focus`): mediana das projeções de IPCA, PIB
+  e Selic por ano de referência. URL montada à mão (OData é sensível à codificação de aspas).
+- **P/L do Ibovespa** (`api.get_ibovespa_pl`): scraping do Investidor10. **A Bolsai NÃO tem
+  endpoint de índice/Ibovespa — confirmado** (todos os 22 endpoints dela são por ticker/setor/
+  macro). Média histórica ~12× é constante documentada. Fallback gracioso se o HTML mudar.
+
+**Relógio do ciclo:** quadrante Crescimento (IBC-Br a/a) × Inflação (momentum do IPCA 12m em
+6 meses), com marcador na fase provável + **rastro dos últimos ~6 meses** (direção do
+deslocamento). 4 fases: Recuperação 🌱 / Aquecimento 🔥 / Estagflação 🥶 / Desaceleração ❄️,
+cada uma com o que historicamente favoreceu.
+
+Também exibe os indicadores do BC, as **expectativas do Focus** (com leitura do caminho da
+Selic = afrouxamento/aperto, que substitui a curva de juros) e o **P/L do Ibovespa vs média**.
+
+Funções em `app.py`: `_get_ciclo_data` (cache 6h), `_ciclo_fase`, `_show_ciclo_relogio`,
+`_show_ciclo_tab`, dict `_CICLO_FASES`. Disclaimers fortes: simplificação que ignora fatores
+globais (Fed/China/commodities); timing de ciclo é incerto; não é recomendação.
 
 ---
 
