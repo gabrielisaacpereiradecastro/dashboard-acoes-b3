@@ -572,10 +572,19 @@ def _update_all() -> list[str]:
 # Enriquecimento com score
 # ────────────────────────────────────────────────────────────────
 
+_EMPTY_SCORES = {
+    "quality": None, "price": None, "diagnosis": None, "earnings_quality": None,
+    "breakdown_quality": {}, "breakdown_price": {},
+}
+
+
 def _enrich(entry: dict) -> dict:
     stock = entry["data"]
     s, label, breakdown = sc.calculate_score(stock)
-    scores = sc.calculate_scores(stock)  # Qualidade × Preço + diagnóstico
+    # getattr p/ resiliência ao hot-reload do Streamlit Cloud (módulo em cache
+    # sem a função nova → degrada sem derrubar o app inteiro; reboot resolve).
+    _calc = getattr(sc, "calculate_scores", None)
+    scores = _calc(stock) if _calc else dict(_EMPTY_SCORES)
     return {**stock, "score": s, "score_label": label, "breakdown": breakdown, "scores": scores}
 
 
@@ -5087,6 +5096,12 @@ div[data-testid="stPopover"] button:hover {
 
         enriched = _dedup_enriched(enriched)
         display_df, class_df = _build_table(enriched)
+        if display_df.empty or "Ticker" not in display_df.columns:
+            st.warning(
+                "Nenhuma ação pôde ser processada. Se você acabou de atualizar o app, "
+                "faça **Reboot** (Manage app → ⋮ → Reboot) para recarregar os módulos."
+            )
+            return
         tickers_ordered = display_df["Ticker"].tolist()
 
         display_df_show = display_df.set_index("Ticker")
