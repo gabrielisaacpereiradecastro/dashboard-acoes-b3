@@ -4338,13 +4338,17 @@ def _get_ciclo_data() -> dict:
     else:
         out["juro_real"] = None
 
-    out["ibov_pl"] = api.get_ibovespa_pl()
+    _ibov = getattr(api, "get_ibovespa_pl", None)
+    out["ibov_pl"] = _ibov() if _ibov else None
     out["ibov_pl_media"] = 12.0  # média histórica de longo prazo (referência, desde 2001)
 
-    # Expectativas do Focus (forward-looking)
-    out["focus_ipca"] = api.get_focus("IPCA")
-    out["focus_pib"] = api.get_focus("PIB Total")
-    out["focus_selic"] = api.get_focus("Selic")
+    # Expectativas do Focus (forward-looking). getattr com fallback: o Streamlit
+    # Cloud às vezes serve api.py stale (cache de .pyc) e get_focus seria recém-
+    # adicionada — sem o guard, o app inteiro quebraria com AttributeError.
+    _focus = getattr(api, "get_focus", None)
+    out["focus_ipca"] = _focus("IPCA") if _focus else None
+    out["focus_pib"] = _focus("PIB Total") if _focus else None
+    out["focus_selic"] = _focus("Selic") if _focus else None
 
     # Rastro do marcador — posição no relógio nos últimos ~6 meses
     ibc_full = _serie(api.SGS_IBC_BR, 18)
