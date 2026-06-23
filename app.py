@@ -4574,12 +4574,19 @@ def _show_ibov_small_section() -> None:
     st.caption(f"Retorno acumulado, base 100 no início do período ({per}).")
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
+    st.caption(
+        "Duas leituras: o **acumulado** mostra quanto as Small renderam a menos no período; "
+        "o **hoje vs média** mostra o quão descontadas elas estão agora frente à relação "
+        "típica com o Ibov nos últimos 5 anos."
+    )
     c1, c2 = st.columns(2)
-    c1.metric(f"Small vs Ibov no período ({per})", f"{gap:+.0f} pp")
-    c1.caption("Small Caps acima do Ibov" if gap >= 0 else "Small Caps abaixo do Ibov")
-    c2.metric("Small/Ibov vs média de 5 anos", f"{rel_vs_media:+.0f}%")
-    c2.caption("Small historicamente cara" if rel_vs_media > 3 else
-               ("Small historicamente barata" if rel_vs_media < -3 else "perto da média"))
+    c1.metric(f"Acumulado no período ({per})", f"{gap:+.0f} pp")
+    c1.caption(
+        f"retorno das Small {'acima' if gap >= 0 else 'abaixo'} do Ibov, em pontos "
+        "percentuais (diferença das duas linhas)")
+    c2.metric("Hoje vs relação média (5 anos)", f"{rel_vs_media:+.0f}%")
+    c2.caption("🟢 Small historicamente barata vs Ibov" if rel_vs_media < -3 else
+               ("🔴 Small historicamente cara vs Ibov" if rel_vs_media > 3 else "perto da média"))
     if rel_vs_media < -8:
         st.caption(
             f"📉 As Small Caps estão **{abs(rel_vs_media):.0f}% abaixo** da relação média de 5 anos "
