@@ -2546,14 +2546,14 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
                   line=dict(color="rgba(255,255,255,0.3)", width=1))
 
     max_w = max(p["weight"] for p in pts) or 1
-    sizes = [14 + 34 * (p["weight"] / max_w) for p in pts]
+    sizes = [12 + 22 * (p["weight"] / max_w) for p in pts]
     fig.add_trace(go.Scatter(
         x=[p["quality"] for p in pts], y=[p["price_score"] for p in pts],
         mode="markers+text",
         marker=dict(size=sizes, color="#42a5f5", opacity=0.75,
                     line=dict(color="#fff", width=1.5)),
-        text=[p["ticker"] for p in pts], textposition="middle center",
-        textfont=dict(size=9, color="#fff"),
+        text=[p["ticker"] for p in pts], textposition="top center",
+        textfont=dict(size=8, color="#cfe3ff"), cliponaxis=False,
         customdata=[[p["weight"] * 100] for p in pts],
         hovertemplate="%{text}<br>Qualidade %{x:.0f} · Preço %{y:.0f}"
                       "<br>%{customdata[0]:.1f}% da carteira<extra></extra>"))
@@ -2564,19 +2564,22 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
     if qc is not None and pc is not None:
         fig.add_trace(go.Scatter(
             x=[qc], y=[pc], mode="markers+text",
-            marker=dict(size=22, color="#ffeb3b", symbol="star",
+            marker=dict(size=20, color="#ffeb3b", symbol="star",
                         line=dict(color="#000", width=1.5)),
             text=["carteira"], textposition="bottom center",
             textfont=dict(size=10, color="#ffeb3b", family="Arial Black"),
+            cliponaxis=False,
             hovertemplate=f"Carteira (pond.)<br>Qualidade {qc:.0f} · Preço {pc:.0f}<extra></extra>"))
 
+    # Folga nos eixos para a bolha inteira (e o rótulo) caberem dentro da
+    # área visível. Mais folga na vertical, que é o eixo curto.
     fig.update_layout(
-        height=360, margin=dict(l=8, r=8, t=8, b=28),
+        height=460, margin=dict(l=8, r=8, t=8, b=28),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False,
-        xaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False,
+        xaxis=dict(range=[-7, 107], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  menor qualidade      maior qualidade  →",
                               font=dict(size=10, color="#9e9e9e"))),
-        yaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False,
+        yaxis=dict(range=[-12, 112], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  mais cara      mais barata  →",
                               font=dict(size=10, color="#9e9e9e"))))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
