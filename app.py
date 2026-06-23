@@ -4340,10 +4340,27 @@ def _get_ciclo_data() -> dict:
 
     out["ibov_pl"] = api.get_ibovespa_pl()
     out["ibov_pl_media"] = 12.0  # média histórica de longo prazo (referência, desde 2001)
+
+    # Expectativas do Focus (forward-looking)
+    out["focus_ipca"] = api.get_focus("IPCA")
+    out["focus_pib"] = api.get_focus("PIB Total")
+    out["focus_selic"] = api.get_focus("Selic")
+
+    # Rastro do marcador — posição no relógio nos últimos ~6 meses
+    ibc_full = _serie(api.SGS_IBC_BR, 18)
+    ipca_full = _serie(api.SGS_IPCA_12M, 13)
+    trail = []
+    for off in range(5, -1, -1):  # mais antigo → mais recente
+        ie = -1 - off
+        if len(ibc_full) >= 13 + off and len(ipca_full) >= 7 + off and ibc_full[ie - 12] > 0:
+            yoy = (ibc_full[ie] / ibc_full[ie - 12] - 1) * 100
+            mom = ipca_full[ie] - ipca_full[ie - 6]
+            trail.append((max(-1.0, min(1.0, yoy / 4.0)), max(-1.0, min(1.0, mom / 2.0))))
+    out["trail"] = trail
     return out
 
 
-def _show_ciclo_relogio(mx: float, my: float, fase: str) -> None:
+def _show_ciclo_relogio(mx: float, my: float, fase: str, trail: Optional[list] = None) -> None:
     """Desenha o 'relógio do ciclo' (quadrante Crescimento × Inflação) com o marcador."""
     quad = {  # (x0,y0,x1,y1, cor, chave)
         "aquecimento":   (0, 0, 1, 1, "#bf360c"),
@@ -4371,11 +4388,19 @@ def _show_ciclo_relogio(mx: float, my: float, fase: str) -> None:
                   line=dict(color="rgba(255,255,255,0.35)", width=1))
     fig.add_shape(type="line", x0=0, y0=-1, x1=0, y1=1,
                   line=dict(color="rgba(255,255,255,0.35)", width=1))
-    # marcador
+    # rastro dos últimos meses (caminho até a posição atual)
+    if trail and len(trail) > 1:
+        fig.add_trace(go.Scatter(
+            x=[t[0] for t in trail], y=[t[1] for t in trail],
+            mode="lines+markers",
+            line=dict(color="rgba(255,235,59,0.45)", width=2, dash="dot"),
+            marker=dict(size=7, color="rgba(255,235,59,0.55)"),
+            hoverinfo="skip"))
+    # marcador atual
     fig.add_trace(go.Scatter(
         x=[mx], y=[my], mode="markers",
         marker=dict(size=22, color="#ffeb3b", line=dict(color="#000", width=2), symbol="circle"),
-        hovertemplate="Posição estimada<extra></extra>"))
+        hovertemplate="Posição atual<extra></extra>"))
     fig.update_layout(
         height=420, margin=dict(l=10, r=10, t=10, b=30),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -4407,7 +4432,7 @@ def _show_ciclo_tab() -> None:
         if fase:
             mx = max(-1.0, min(1.0, (d["ibc_yoy"] or 0) / 4.0))
             my = max(-1.0, min(1.0, (d["ipca_mom"] or 0) / 2.0))
-            _show_ciclo_relogio(mx, my, fase)
+            _show_ciclo_relogio(mx, my, fase, trail=d.get("trail"))
         else:
             st.info("⚠️ Dados macro do Banco Central indisponíveis no momento. Tente mais tarde.")
     with col_t:
@@ -4459,6 +4484,39 @@ def _show_ciclo_tab() -> None:
               ("subindo" if d.get("credito_dir", 0) > 0.1 else
                "caindo" if d.get("credito_dir", 0) < -0.1 else "estável"),
               delta_color="off")
+
+    st.divider()
+
+    # ── Expectativas do Focus (forward-looking) ────────────────────
+    st.markdown("##### Expectativas do mercado — Boletim Focus (BC)")
+    ano = _now_bsb().year
+    prox = ano + 1
+    fi = d.get("focus_ipca") or {}
+    fp = d.get("focus_pib") or {}
+    fs = d.get("focus_selic") or {}
+    def _exp(dic, casas=2):
+        a = dic.get(ano)
+        p = dic.get(prox)
+        val = f"{a:.{casas}f}%" if a is not None else "—"
+        delta = f"{prox}: {p:.{casas}f}%" if p is not None else ""
+        return val, delta
+    fc1, fc2, fc3 = st.columns(3)
+    _v, _dl = _exp(fi); fc1.metric(f"IPCA esperado {ano}", _v, _dl, delta_color="off")
+    _v, _dl = _exp(fp); fc2.metric(f"PIB esperado {ano}", _v, _dl, delta_color="off")
+    _v, _dl = _exp(fs); fc3.metric(f"Selic esperada (fim {ano})", _v, _dl, delta_color="off")
+    # Interpretação do caminho da Selic (substitui a curva de juros)
+    _selic_now = d.get("selic")
+    _selic_prox = fs.get(prox)
+    if _selic_now is not None and _selic_prox is not None:
+        if _selic_prox < _selic_now - 0.25:
+            st.caption(f"📉 O mercado projeta **queda da Selic** (de {_selic_now:.2f}% para "
+                       f"~{_selic_prox:.2f}% até o fim de {prox}) — viés de **afrouxamento "
+                       "monetário** à frente, historicamente favorável a ações e duration.")
+        elif _selic_prox > _selic_now + 0.25:
+            st.caption(f"📈 O mercado projeta **alta da Selic** (para ~{_selic_prox:.2f}% até "
+                       f"o fim de {prox}) — viés de **aperto monetário**.")
+        else:
+            st.caption("➡️ O mercado projeta **Selic estável** à frente.")
 
     st.divider()
 

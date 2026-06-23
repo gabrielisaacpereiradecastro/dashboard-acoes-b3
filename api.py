@@ -189,6 +189,39 @@ def get_sgs(codigo: int, ultimos: int = 1, dias: Optional[int] = None) -> Option
     return None
 
 
+_FOCUS_URL = ("https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/"
+              "odata/ExpectativasMercadoAnuais")
+
+
+def get_focus(indicador: str, top: int = 6) -> Optional[dict]:
+    """Mediana das expectativas do boletim Focus (BC) por ano de referência.
+
+    indicador: 'IPCA', 'PIB Total', 'Selic', 'Câmbio'. API pública (Olinda),
+    sem chave. Retorna {ano(int): mediana(float)} ou None.
+    """
+    import urllib.parse
+    try:
+        # URL montada à mão (OData é sensível à codificação de aspas/espaços)
+        filtro = urllib.parse.quote(f"Indicador eq '{indicador}'", safe="'")
+        url = (f"{_FOCUS_URL}?%24filter={filtro}&%24orderby=Data%20desc"
+               f"&%24top={top}&%24format=json&%24select=DataReferencia,Mediana")
+        r = requests.get(url, timeout=12)
+        if not r.ok:
+            return None
+        out: dict = {}
+        for v in r.json().get("value", []):
+            try:
+                ano = int(v["DataReferencia"])
+            except (TypeError, ValueError, KeyError):
+                continue
+            if ano not in out and v.get("Mediana") is not None:  # mais recente vem 1º
+                out[ano] = float(v["Mediana"])
+        return out or None
+    except Exception:
+        pass
+    return None
+
+
 def get_ibovespa_pl() -> Optional[float]:
     """Raspa o P/L atual do Ibovespa do Investidor10 (sem auth).
 
