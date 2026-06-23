@@ -128,13 +128,15 @@ SECTOR_REMAP: dict[str, str] = {
     # Saúde
     "SMFT3": "Saúde e Bem-Estar",
     "PGMN3": "Farmácias e Drogarias",
-    "DEXP3": "Farmácias e Drogarias",
     "RADL3": "Farmácias e Drogarias",
     "PNVL3": "Farmácias e Drogarias",
     "SBFG3": "Varejo Esportivo",
     "FLRY3": "Saúde - Diagnósticos",
     "DASA3": "Saúde - Diagnósticos",
     "HAPV3": "Saúde - Planos e Hospitais",
+    "BALM4": "Saúde - Equipamentos Médicos",  # Baumer (era "Metalurgia" na B3)
+    # Química
+    "DEXP3": "Produtos Químicos",  # Dexxos/Elekeiroz (estava errado como Farmácia)
     # Metalurgia
     "GGBR4": "Metalurgia e Siderurgia",
     "CSNA3": "Metalurgia e Siderurgia",
