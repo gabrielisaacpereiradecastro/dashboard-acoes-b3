@@ -575,7 +575,19 @@ def _update_all() -> list[str]:
 def _enrich(entry: dict) -> dict:
     stock = entry["data"]
     s, label, breakdown = sc.calculate_score(stock)
-    return {**stock, "score": s, "score_label": label, "breakdown": breakdown}
+    scores = sc.calculate_scores(stock)  # Qualidade × Preço + diagnóstico
+    return {**stock, "score": s, "score_label": label, "breakdown": breakdown, "scores": scores}
+
+
+def _score_band(v) -> str:
+    """Mapeia um score 0-100 para o rótulo de faixa (para colorir)."""
+    if v is None:
+        return ""
+    if v >= 80:   return "Excelente"
+    elif v >= 60: return "Bom"
+    elif v >= 40: return "Razoável"
+    elif v >= 20: return "Atenção"
+    return "Evitar"
 
 
 # ────────────────────────────────────────────────────────────────
@@ -627,14 +639,17 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             "Potencial": _pot_cls, "Var.Dia": "",
         }
 
-        score = s.get("score")
-        label = s.get("score_label", "")
-        if score is None:
-            display_row["Score"] = "⚠ Bancário"
-            class_row["Score"] = "NA"
-        else:
-            display_row["Score"] = f"{score:.0f} — {label}"
-            class_row["Score"] = label
+        # Scores separados: Qualidade × Preço (atratividade) + Diagnóstico
+        _scores = s.get("scores") or sc.calculate_scores(s)
+        _q = _scores.get("quality")
+        _p = _scores.get("price")
+        _diag = _scores.get("diagnosis")  # (rótulo, cor) ou None
+        display_row["Qualidade"]    = f"{_q:.0f}" if _q is not None else "—"
+        class_row["Qualidade"]      = _score_band(_q)
+        display_row["Atratividade"] = f"{_p:.0f}" if _p is not None else "—"
+        class_row["Atratividade"]   = _score_band(_p)
+        display_row["Diagnóstico"]  = _diag[0] if _diag else "—"
+        class_row["Diagnóstico"]    = _diag[0] if _diag else ""
 
         for ind in SCORED_COLS_ORDER:
             col_name = INDICATOR_LABELS.get(ind, ind)
@@ -679,8 +694,13 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         "Evitar":         "#7f0000",
         "Setor Bancário": "#37474f",
         "NA":             "#37474f",
+        # Diagnóstico Qualidade × Preço
+        "🟢 Boa e barata":      "#1b5e20",
+        "🟡 Boa, mas cara":     "#7b5800",
+        "🟠 Barata, mas fraca": "#bf360c",
+        "🔴 Fraca e cara":      "#7f0000",
     }
-    colored_cols = {"Score", "P/VP", "PSR", "Balanço", "Potencial"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
+    colored_cols = {"Qualidade", "Atratividade", "Diagnóstico", "P/VP", "PSR", "Balanço", "Potencial"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
     # Pandas >= 2.x: _update_ctx lança KeyError se index ou columns não forem únicos.
     # Retorna sem cores em vez de travar o app.
@@ -699,7 +719,7 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
     for col in display_df.columns:
         if col not in colored_cols:
             continue
-        is_score = col == "Score"
+        is_score = col in ("Qualidade", "Atratividade", "Diagnóstico")
 
         # Default-args capturam os valores por cópia (evita bug de closure em loop)
         def _col_style(
@@ -4893,7 +4913,18 @@ div[data-testid="stPopover"] button:hover {
             selection_mode="single-row",
             height=min(42 + 35 * len(enriched), 600),
             column_config={
-                "Score":           st.column_config.TextColumn("Score", width="medium"),
+                "Qualidade":       st.column_config.TextColumn(
+                    "Qualidade", width="small",
+                    help="Qualidade do negócio (0-100): ROE, solidez, margem e crescimento. "
+                         "Maior = melhor empresa."),
+                "Atratividade":    st.column_config.TextColumn(
+                    "Preço", width="small",
+                    help="Atratividade do preço (0-100): EV/EBITDA, P/L, P/FCF (bancos: P/VP, P/L). "
+                         "Maior = mais barata."),
+                "Diagnóstico":     st.column_config.TextColumn(
+                    "Diagnóstico", width="medium",
+                    help="Combina Qualidade × Preço: 'Boa e barata' (oportunidade) · 'Boa, mas "
+                         "cara' · 'Barata, mas fraca' (⚠ possível value trap) · 'Fraca e cara'."),
                 "Empresa":         st.column_config.TextColumn("Empresa", width="medium"),
                 "Setor":           st.column_config.TextColumn("Setor", width="medium"),
                 "Balanço":         st.column_config.TextColumn("Balanço", width="small"),
