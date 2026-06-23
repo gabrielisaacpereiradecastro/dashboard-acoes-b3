@@ -4264,22 +4264,23 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
 # ────────────────────────────────────────────────────────────────
 
 # Fase do ciclo: (rótulo, cor, descrição, o que historicamente favoreceu)
+# Descrições focam na dinâmica crescimento × inflação (o que o relógio mede).
+# A política monetária NÃO é afirmada aqui — vem dinâmica do Focus na caixa da fase,
+# para não contradizer a expectativa real do mercado.
 _CICLO_FASES = {
     "recuperacao": ("🌱 Recuperação", "#1b5e20",
-        "Atividade acelerando com inflação baixa ou em queda. A política monetária tende a "
-        "afrouxar (cortes de juros). É a fase mais favorável a tomar risco.",
+        "Atividade acelerando com inflação baixa ou em queda — classicamente a fase mais "
+        "favorável a tomar risco.",
         "Ações — especialmente nomes de crescimento e cíclicas de consumo."),
     "aquecimento": ("🔥 Aquecimento", "#bf360c",
-        "Economia forte e inflação subindo. O Banco Central tende a apertar os juros para "
-        "esfriar. Fim de ciclo de alta.",
+        "Atividade ainda crescendo e inflação voltando a subir — a economia 'esquenta'. "
+        "Classicamente, fim de ciclo de alta.",
         "Commodities e cíclicas de materiais/energia (mineração, petróleo, siderurgia)."),
     "estagflacao": ("🥶 Estagflação", "#37474f",
-        "Atividade enfraquecendo com inflação ainda alta — o cenário mais difícil para risco. "
-        "Juros altos pressionam tudo.",
-        "Caixa e pós-fixado (CDI/Selic); reduzir risco, aumentar reservas."),
+        "Atividade enfraquecendo com inflação ainda alta — o cenário mais difícil para risco.",
+        "Caixa e pós-fixado (CDI/Selic); perfil de menor risco e mais reservas."),
     "desaceleracao": ("❄️ Desaceleração", "#1f3a5f",
-        "Atividade e inflação caindo juntas. Os juros começam a ceder, antecipando a "
-        "recuperação.",
+        "Atividade e inflação caindo juntas — o ciclo arrefece e prepara a próxima recuperação.",
         "Renda fixa pré-fixada e títulos longos (duration); começar a montar posição em ações."),
 }
 
@@ -4465,6 +4466,20 @@ def _show_ciclo_tab() -> None:
                 unsafe_allow_html=True)
             st.markdown(f"**Leitura atual:** {desc}")
             st.markdown(f"**Historicamente favoreceu:** {favorece}")
+            # Política monetária REAL (Focus) — reconcilia com a fase clássica
+            _fs = d.get("focus_selic") or {}
+            _prox = _now_bsb().year + 1
+            _sn, _sp = d.get("selic"), _fs.get(_prox)
+            if _sn is not None and _sp is not None:
+                if _sp < _sn - 0.25:
+                    st.markdown(f"📉 **Juros (Focus):** o mercado espera **queda** da Selic "
+                                f"(~{_sp:.1f}% até {_prox}) — viés de afrouxamento à frente.")
+                elif _sp > _sn + 0.25:
+                    st.markdown(f"📈 **Juros (Focus):** o mercado espera **alta** da Selic "
+                                f"(~{_sp:.1f}% até {_prox}) — viés de aperto à frente.")
+                else:
+                    st.markdown(f"➡️ **Juros (Focus):** o mercado espera Selic **estável** "
+                                f"(~{_sp:.1f}%).")
             st.caption(
                 "Eixos: crescimento = IBC-Br (proxy do PIB) na comparação anual; inflação = "
                 "tendência do IPCA 12m nos últimos 6 meses.")
