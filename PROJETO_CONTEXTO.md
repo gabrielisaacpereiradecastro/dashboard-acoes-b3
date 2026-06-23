@@ -5,9 +5,9 @@
 > que o assistente entenda a arquitetura, decisões já tomadas e o estado atual sem precisar
 > reler todo o histórico de conversas — economiza tempo e tokens.
 
-> **Última atualização:** 23/06/2026 — reformulação do motor de valuation (híbrido por setor),
-> correções de setor (BALM4, DEXP3), Small Caps via SMAL11, nova **aba de Ciclo de Mercado**
-> (dados do Banco Central). Documento agora versionado no git.
+> **Última atualização:** 23/06/2026 — motor de valuation híbrido por setor; **score separado
+> em Qualidade × Preço** (seção 6); aba de Ciclo de Mercado (BC); refinos de bancos (ROE
+> normalizado). Documento versionado no git.
 
 ---
 
@@ -94,30 +94,50 @@ Gerenciamento de listas (criar/excluir) fica dentro de um `st.expander("⚙️ G
 
 ---
 
-## 6. Sistema de Score (ações, não-bancos)
+## 6. Sistema de Score — DOIS scores separados: Qualidade × Preço
 
-Score de **0 a 100**, calculado a partir de 10 indicadores ponderados:
+**Decisão (jun/2026):** o score único antigo confundia "boa empresa" com "bom momento de
+entrada". Foi separado em **dois scores 0-100 com pontuação CONTÍNUA** (interpolada, sem
+efeito-degrau) — alinhado à Fórmula Mágica do Greenblatt e a uma matriz qualidade-valor.
+Vale para **todos os setores, inclusive bancos** (que antes ficavam sem score).
 
-| Indicador | Peso | Excelente | Bom | Razoável | Atenção | Proibitivo |
-|---|---|---|---|---|---|---|
-| Dívida Líq./EBITDA | 25% | ≤0,5x (ou negativo) | 0,5–1,5x | 1,5–2,5x | 2,5–3,5x | >3,5x |
-| ROE | 20% | ≥25% | 15–25% | 10–15% | 5–10% | <5% |
-| EV/EBITDA | 15% | ≤5x | 5–8x | 8–12x | 12–16x | >16x |
-| P/L | 10% | 5–10x | 10–15x | 15–20x | 20–30x | >30x ou negativo |
-| Margem EBITDA | 10% | ≥30% | 20–30% | 12–20% | 6–12% | <6% |
-| CAGR Lucro 5a | 5% | ≥15% | 8–15% | 0–8% | -10–0% | <-10% |
-| P/FCF | 5% | ≤8x | 8–15x | 15–22x | 22–30x | >30x |
-| Dividend Yield | 5% | ≥8% | 5–8% | 3–5% | 1–3% | <1% |
-| Liquidez diária | 5% | >R$5M | R$3–5M | R$1–3M | R$500k–1M | <R$500k |
-| CAGR Receita 5a | 5% | ≥12% | 6–12% | 0–6% | -5–0% | <-5% |
+**🏅 QUALIDADE** ("é boa empresa?") — pesos não-banco / banco:
+| Indicador | Não-banco | Banco |
+|---|---|---|
+| ROE | 30% | 50% |
+| Dív.Líq/EBITDA | 25% | — |
+| Margem EBITDA | 20% | — |
+| CAGR Lucro 5a | 15% | 30% |
+| CAGR Receita 5a | 10% | 20% |
+
+**💰 PREÇO** ("está barata?", score alto = mais barata) — pesos não-banco / banco:
+| Indicador | Não-banco | Banco |
+|---|---|---|
+| EV/EBITDA | 40% | — |
+| P/L | 35% | 40% |
+| P/FCF | 25% | — |
+| P/VP | — | 60% |
+
+**Diagnóstico (matriz 2×2, corte em 55):** combina os dois scores →
+🟢 Boa e barata · 🟡 Boa, mas cara · 🟠 Barata, mas fraca (⚠ value trap) · 🔴 Fraca e cara.
+
+**Pontuação contínua:** cada indicador tem uma *curva* de anchors `(valor, score)` em
+`score.py` (`_CURVES`), interpolada linearmente. Funções: `score_indicator()`,
+`calculate_scores()`. Ajuste setorial nas curvas (ROE/Dív/Margem/PVP têm variantes
+banco/utility/varejo).
 
 **Regras especiais:**
-- Indicador N/D → peso redistribuído proporcionalmente entre os demais (nunca penaliza)
-- **Bancos não recebem score geral** — aparecem com aviso "⚠️ Bancário"; indicadores
-  aplicáveis (ROE, P/L, Mg.EBITDA, Liquidez) continuam visíveis e coloridos
-- **P/L abaixo de 5x** → classificado como "Inconclusivo" (não "Atenção"), com aviso de
-  possível value trap; peso redistribuído como se fosse N/D
-- Resultado final: 80–100 Excelente🟢 / 60–79 Bom🟩 / 40–59 Razoável🟡 / 20–39 Atenção🟠 / 0–19 Evitar🔴
+- Indicador N/D → peso redistribuído (nunca penaliza).
+- **P/L < 5x** → inconclusivo (excluído, possível value trap). EV/EBITDA ou P/FCF negativos → 0.
+- Dív.Líq/EBITDA negativa (caixa líquido) → 100.
+
+**UI:** tabela tem colunas **Qualidade · Preço · Diagnóstico** (a cotação da ação virou
+**"Cotação"** para não colidir com o score "Preço"). A aba Detalhe tem um painel com os dois
+scores + um **mapa visual 2×2** (Qualidade × Preço com a ação posicionada). DY e Liquidez
+saíram do score (viraram informativos/filtro).
+
+`calculate_score` (singular, score único antigo) ainda existe no `score.py` mas não é mais
+usado na UI principal — pode ser removido no futuro.
 
 **Indicadores informativos (cor, mas SEM peso no score):** P/VP, PSR, ROA, ROIC, Margem
 Líquida, Margem Bruta, LPA, VPA, Liquidez Corrente, Cobertura de Juros, Payout, Governança.
