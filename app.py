@@ -629,13 +629,13 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             "Empresa":   s.get("trade_name") or s.get("corporate_name", ""),
             "Setor":     sector,
             "Balanço":   _fmt_quarter(ref_date),
-            "Preço":     _fmt_price(_price_now),
+            "Cotação":   _fmt_price(_price_now),
             "Potencial": _pot_disp,
             "Var.Dia":   _fmt_pct(s.get("daily_change_pct")),
         }
         class_row = {
             "Ticker": s.get("ticker", ""), "Empresa": "", "Setor": "",
-            "Balanço": _quarter_staleness(ref_date), "Preço": "",
+            "Balanço": _quarter_staleness(ref_date), "Cotação": "",
             "Potencial": _pot_cls, "Var.Dia": "",
         }
 
