@@ -2541,6 +2541,18 @@ def _show_score_panel(s: dict) -> None:
             cp.caption(f"**{_ptier}**")
         if p is not None:
             cp.progress(int(p))
+        _eq = scores.get("earnings_quality")
+        if _eq:
+            _eq_colors = {"ruim": "#bf360c", "fraca": "#7b5800",
+                          "ok": "#2e7d32", "forte": "#1b5e20"}
+            _ec = _eq_colors.get(_eq["level"], "#37474f")
+            _haircut = ("" if _eq["penalty"] >= 1.0
+                        else f" · −{(1 - _eq['penalty']) * 100:.0f}% na Qualidade")
+            st.markdown(
+                f"<div style='background:{_ec};padding:6px 12px;border-radius:6px;color:#fff;"
+                f"font-size:0.85rem;margin:6px 0'>🧮 Qualidade do lucro: "
+                f"{_eq['label']}{_haircut}</div>",
+                unsafe_allow_html=True)
         st.caption(
             "**Qualidade** = ROE, solidez, margem e crescimento. **Preço** = EV/EBITDA, P/L, "
             "P/FCF (bancos: P/VP e P/L). Quanto **maior o Preço, mais barata** a ação.")

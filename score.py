@@ -473,10 +473,46 @@ def _diagnose(q, p, thr: float = SCORE_GOOD_THRESHOLD):
     }
 
 
+def earnings_quality(stock: dict) -> dict | None:
+    """Qualidade do lucro: quanto do lucro vira caixa livre (FCL/Lucro).
+
+    Derivado dos múltiplos já disponíveis: FCL/Lucro = P/L ÷ P/FCF
+    (ambos = valor de mercado / X). Sinaliza lucro "de papel" (não vira caixa).
+    Não se aplica a bancos. Retorna {ratio, level, label, penalty} ou None.
+
+    - penalty: fator multiplicativo aplicado ao score de Qualidade (≤ 1.0).
+    """
+    sector = stock.get("sector", "")
+    if is_bank(sector):
+        return None
+    pl = stock.get("pl")
+    p_fcf = stock.get("p_fcf")
+    if pl is None or p_fcf is None or pl <= 0:
+        return None  # prejuízo/sem dado: tratado em outros pontos
+
+    if p_fcf <= 0:  # FCL negativo: lucro não vira caixa
+        return {"ratio": None, "level": "ruim", "penalty": 0.70,
+                "label": "⚠ FCL negativo — lucro não vira caixa"}
+
+    ratio = pl / p_fcf  # = FCL / Lucro
+    if ratio < 0.4:
+        return {"ratio": ratio, "level": "ruim", "penalty": 0.78,
+                "label": f"⚠ Baixa conversão em caixa ({ratio*100:.0f}% do lucro)"}
+    if ratio < 0.7:
+        return {"ratio": ratio, "level": "fraca", "penalty": 0.90,
+                "label": f"Conversão em caixa moderada ({ratio*100:.0f}% do lucro)"}
+    if ratio <= 1.5:
+        return {"ratio": ratio, "level": "ok", "penalty": 1.0,
+                "label": f"Lucro vira caixa ({ratio*100:.0f}% do lucro)"}
+    return {"ratio": ratio, "level": "forte", "penalty": 1.0,
+            "label": f"Caixa supera o lucro ({ratio*100:.0f}%)"}
+
+
 def calculate_scores(stock: dict) -> dict:
-    """Retorna {quality, price, diagnosis(=(rótulo,cor)|None), breakdown_quality, breakdown_price}.
+    """Retorna {quality, price, diagnosis, earnings_quality, breakdown_quality, breakdown_price}.
 
     Funciona para TODOS os setores (bancos têm pesos próprios). Pontuação contínua.
+    A Qualidade sofre haircut quando o lucro não se converte em caixa (lucro de papel).
     """
     sector = stock.get("sector", "")
     bank = is_bank(sector)
@@ -485,10 +521,16 @@ def calculate_scores(stock: dict) -> dict:
 
     q, bq = _composite(stock, qw, sector)
     p, bp = _composite(stock, pw, sector)
+
+    eq = earnings_quality(stock)
+    if q is not None and eq is not None and eq["penalty"] < 1.0:
+        q = q * eq["penalty"]
+
     return {
         "quality": round(q, 1) if q is not None else None,
         "price":   round(p, 1) if p is not None else None,
         "diagnosis": _diagnose(q, p),
+        "earnings_quality": eq,
         "breakdown_quality": bq,
         "breakdown_price": bp,
     }
