@@ -524,11 +524,17 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         _rh = data.get("roe_historico") or []
         _rh_pos = [r for r in _rh if r is not None]
         _med = _st.median(_rh_pos) if _rh_pos else None
-        _med8 = _st.median(_rh_pos[:8]) if len(_rh_pos) >= 1 else None  # ~2 anos
         print(f"[CALIB-ROE] {t} | roe_atual={data.get('roe')} | vpa={data.get('vpa')} | "
-              f"n_hist={len(_rh_pos)} | roe_hist={_rh_pos} | "
-              f"mediana_total={_med} | mediana_8t={_med8}",
+              f"n_hist={len(_rh_pos)} | roe_hist={_rh_pos} | mediana={_med}",
               file=sys.stderr); sys.stderr.flush()
+        # Teste direto do endpoint (revela se api.py está stale OU se retorna vazio)
+        _ghist = getattr(api, "get_fundamentals_history", None)
+        try:
+            _raw = _ghist(t, 4) if _ghist else "FUNCAO_AUSENTE(api.py_stale)"
+        except Exception as _e:
+            _raw = f"EXC:{type(_e).__name__}:{_e}"
+        print(f"[CALIB-ROE-RAW] {t} | func_existe={_ghist is not None} | "
+              f"resposta={str(_raw)[:320]}", file=sys.stderr); sys.stderr.flush()
 
     # Força o ticker armazenado a ser o que o usuário digitou.
     # A Bolsai pode retornar fund["ticker"] = "ITUB4" mesmo para a query "ITUB3" —
