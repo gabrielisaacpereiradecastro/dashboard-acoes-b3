@@ -1487,6 +1487,36 @@ def _geral_base_price(s: dict) -> Optional[float]:
     return _ev_ebitda_price(s, mult)
 
 
+def _growth_context(s: dict, fair_mult: Optional[float]) -> Optional[str]:
+    """Nota de contexto para nomes de crescimento (markdown) ou None.
+
+    Dispara quando a ação negocia a múltiplo premium vs o setor OU tem CAGR alto
+    — sinais de que o mercado precifica lucro futuro. O alvo (sobre o resultado
+    atual) tende a subestimar esses nomes; a nota deixa isso explícito.
+    """
+    cagr = s.get("cagr_earnings_5y")
+    cagr_label = "lucro"
+    if cagr is None:
+        cagr = s.get("cagr_revenue_5y")
+        cagr_label = "receita"
+    ev = s.get("ev_ebitda")
+    premium = ev is not None and fair_mult and ev > 1.3 * fair_mult
+    growth = cagr is not None and cagr >= 15
+    if not (premium or growth):
+        return None
+    bits = []
+    if premium and ev:
+        bits.append(f"negocia a **{ev:.1f}×** EV/EBITDA vs ~{fair_mult:.0f}× de referência do setor")
+    if growth:
+        bits.append(f"cresceu **{cagr:.0f}%/ano** ({cagr_label}, 5 anos)")
+    return (
+        "📈 **Nome de crescimento** — " + "; ".join(bits) + ". O preço-alvo acima usa o "
+        "**resultado atual** e tende a ser um **piso conservador**: o mercado e os analistas "
+        "precificam o lucro **futuro**, que este modelo não projeta. Use o histórico de "
+        "crescimento e a sustentabilidade para julgar — não conclua 'caro/barato' só pelo alvo."
+    )
+
+
 # EV/EBITDA through-cycle por sub-setor cíclico (aplicado sobre EBITDA mid-cycle).
 # Múltiplos da pesquisa de mercado (Itaú BBA Vale ~4×, etc.).
 CICLICA_EV_EBITDA_BUCKETS = [
@@ -1945,6 +1975,9 @@ def _show_shopping_valuation(s: dict) -> None:
         f"EBITDA: **R$ {ebitda/1000:.0f} mi** · Dívida líq.: **R$ {net_debt/1000:.0f} mi**"
         + (f" · EV/EBITDA atual: **{ev_atual:.1f}×**" if ev_atual else "")
     )
+    _gc = _growth_context(s, SHOPPING_FAIR_EV_EBITDA)
+    if _gc:
+        st.info(_gc)
 
     mult_base = st.slider(
         "EV/EBITDA justo de referência (×)",
@@ -2031,6 +2064,9 @@ def _show_geral_valuation(s: dict) -> None:
         f"EBITDA: **R$ {ebitda/1000:.0f} mi** · Dívida líq.: **R$ {net_debt/1000:.0f} mi**"
         + (f" · EV/EBITDA atual: **{ev_atual:.1f}×**" if ev_atual else "")
     )
+    _gc = _growth_context(s, mult_setor)
+    if _gc:
+        st.info(_gc)
 
     mult_base = st.slider(
         "EV/EBITDA justo de referência (×)",
@@ -2141,6 +2177,10 @@ def _show_cyclical_valuation(s: dict) -> None:
         if p is not None and price and price > 0:
             return f"{(p / price - 1) * 100:+.1f}%"
         return None
+
+    _gc = _growth_context(s, mult_setor)
+    if _gc:
+        st.info(_gc)
 
     mult_base = st.slider(
         "EV/EBITDA through-cycle (×)",
