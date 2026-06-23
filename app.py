@@ -4115,8 +4115,8 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     def _fmt_pnl_r(v: Optional[float]) -> str:
         if v is None:
             return "—"
-        s = "+" if v >= 0 else ""
-        return f"{s}R$ {abs(v):,.0f}".replace(",", ".")
+        sign = "+" if v >= 0 else "-"
+        return f"{sign}R$ {abs(v):,.0f}".replace(",", ".")
 
     def _fmt_pnl_pct(v: Optional[float]) -> str:
         if v is None:
@@ -4142,7 +4142,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     def _color_pnl(val: str) -> str:
         if val.startswith("+"):
             return "color:#4caf50;font-weight:600"
-        if val.startswith("-") or (val not in ("—", "") and float(val.replace("R$ ","").replace(".","").replace(",",".").replace("+","") or 0) < 0):
+        if val.startswith("-"):
             return "color:#ef5350;font-weight:600"
         return ""
 
