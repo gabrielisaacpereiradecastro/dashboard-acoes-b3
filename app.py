@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import math
-import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -517,24 +516,6 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         f"  |  cagr_revenue_5y={raw_fund.get('cagr_revenue_5y')!r}"
     )
     log.append(f"📋 Total de campos retornados por /fundamentals: {len(raw_fund)}")
-
-    # ── CALIB-ROE temporário: normalização do ROE p/ bancos (vs BTG) ──
-    if sc.is_bank(data.get("sector", "")):
-        import statistics as _st
-        _rh = data.get("roe_historico") or []
-        _rh_pos = [r for r in _rh if r is not None]
-        _med = _st.median(_rh_pos) if _rh_pos else None
-        print(f"[CALIB-ROE] {t} | roe_atual={data.get('roe')} | vpa={data.get('vpa')} | "
-              f"n_hist={len(_rh_pos)} | roe_hist={_rh_pos} | mediana={_med}",
-              file=sys.stderr); sys.stderr.flush()
-        # Teste direto do endpoint (revela se api.py está stale OU se retorna vazio)
-        _ghist = getattr(api, "get_fundamentals_history", None)
-        try:
-            _raw = _ghist(t, 4) if _ghist else "FUNCAO_AUSENTE(api.py_stale)"
-        except Exception as _e:
-            _raw = f"EXC:{type(_e).__name__}:{_e}"
-        print(f"[CALIB-ROE-RAW] {t} | func_existe={_ghist is not None} | "
-              f"resposta={str(_raw)[:320]}", file=sys.stderr); sys.stderr.flush()
 
     # Força o ticker armazenado a ser o que o usuário digitou.
     # A Bolsai pode retornar fund["ticker"] = "ITUB4" mesmo para a query "ITUB3" —
@@ -1647,13 +1628,40 @@ def _dcf_conservative_price(s: dict, wacc: float = 0.12, g5: float = 0.10, perp_
     return max(0.0, equity_k * 1000 / shares)
 
 
-def _gordon_conservative_price(s: dict, ke: float = 0.12, g: float = 0.04) -> Optional[float]:
-    """Preço alvo para bancos — Gordon Growth cenário Conservador (g×0.7, Ke×1.08).
-    Ke_base=12% reflete Selic + prêmio de risco bancário para bancos privados grandes."""
+# Bancos com participação relevante do governo → prêmio de governança no Ke
+_BANCOS_ESTATAIS = {"BBAS3", "BBAS11", "BAZA3", "BRSR3", "BRSR6", "BNBR3"}
+
+
+def _bank_ke(ticker: str) -> float:
+    """Ke do Gordon: 15% para bancos estatais (risco de governança/interferência),
+    12% para bancos privados grandes (Selic + prêmio de risco bancário)."""
+    return 0.15 if (ticker or "").upper() in _BANCOS_ESTATAIS else 0.12
+
+
+def _bank_roe_norm(s: dict) -> Optional[float]:
+    """ROE normalizado = max(ROE atual, mediana dos últimos 8 trimestres).
+
+    Suaviza um trimestre atípico (ex.: BBAS3 caiu a 6,6% na crise do agro, com
+    mediana ~12%) sem rebaixar bancos saudáveis cujo ROE atual já é alto (o max
+    preserva o ROE corrente quando ele está acima da mediana — ex.: ITUB4).
+    """
     roe = s.get("roe")
+    hist = [r for r in (s.get("roe_historico") or []) if r is not None]
+    if len(hist) >= 4:
+        import statistics
+        med = statistics.median(hist[:8])
+        return max(roe, med) if roe is not None else med
+    return roe
+
+
+def _gordon_conservative_price(s: dict, g: float = 0.04) -> Optional[float]:
+    """Preço alvo para bancos — Gordon Growth cenário Conservador (g×0.7, Ke×1.08).
+    Usa ROE normalizado e Ke por tipo de banco (estatal vs privado)."""
+    roe = _bank_roe_norm(s)
     vpa = s.get("vpa")
     if roe is None or vpa is None or vpa <= 0:
         return None
+    ke = _bank_ke(s.get("ticker", ""))
     roe_f = roe / 100
     g_cons  = g  * 0.7
     ke_cons = ke * 1.08  # conservador: +8% sobre Ke base
@@ -1691,12 +1699,13 @@ def _dcf_base_price(s: dict, wacc: Optional[float] = None, g5: float = 0.10,
     return max(0.0, equity_k * 1000 / shares)
 
 
-def _gordon_base_price(s: dict, ke: float = 0.12, g: float = 0.04) -> Optional[float]:
-    """Preço alvo bancos — Gordon Growth cenário Base/Esperado (Ke e g sem ajuste de cenário)."""
-    roe = s.get("roe")
+def _gordon_base_price(s: dict, g: float = 0.04) -> Optional[float]:
+    """Preço alvo bancos — Gordon Growth Base/Esperado. ROE normalizado + Ke por tipo."""
+    roe = _bank_roe_norm(s)
     vpa = s.get("vpa")
     if roe is None or vpa is None or vpa <= 0:
         return None
+    ke = _bank_ke(s.get("ticker", ""))
     roe_f = roe / 100
     if ke <= g:
         return None
@@ -1712,13 +1721,11 @@ def _gordon_base_price(s: dict, ke: float = 0.12, g: float = 0.04) -> Optional[f
 
 def _show_gordon_growth(s: dict) -> None:
     """Valuation para bancos via Gordon Growth (P/VP justificado pelo ROE)."""
-    roe   = s.get("roe")
+    roe_spot = s.get("roe")
+    roe   = _bank_roe_norm(s)   # normalizado (max do atual com a mediana de 8 trimestres)
     vpa   = s.get("vpa")
     price = s.get("close_price")
     ticker = s.get("ticker", "")
-
-    # Tickers com participação relevante do governo federal
-    _BANCOS_ESTATAIS = {"BBAS3", "BBAS11", "BAZA3", "BRSR3", "BRSR6", "BNBR3"}
 
     st.divider()
     st.subheader("📐 Valuation — Gordon Growth (P/VP Justificado)")
@@ -1739,14 +1746,22 @@ def _show_gordon_growth(s: dict) -> None:
         st.warning("⚠️ ROE ou VPA não disponível — Gordon Growth não pode ser calculado.")
         return
 
-    st.caption(f"ROE base: **{roe:.1f}%** · VPA: **R$ {vpa:.2f}**")
+    # ROE normalizado (suaviza trimestre atípico). Mostra o spot quando difere.
+    if roe_spot is not None and abs(roe - roe_spot) > 0.2:
+        st.caption(
+            f"ROE usado: **{roe:.1f}%** (normalizado — mediana de até 8 trimestres; "
+            f"ROE do último período: {roe_spot:.1f}%) · VPA: **R$ {vpa:.2f}**")
+    else:
+        st.caption(f"ROE base: **{roe:.1f}%** · VPA: **R$ {vpa:.2f}**")
 
+    _ke_default = _bank_ke(ticker) * 100   # 15% estatal, 12% privado
     col_ke, col_g = st.columns(2)
     with col_ke:
         ke = st.slider(
             "Ke — Custo do Capital Próprio (%)",
-            min_value=8.0, max_value=25.0, value=12.0, step=0.5,
+            min_value=8.0, max_value=25.0, value=_ke_default, step=0.5,
             key=f"gg_ke_{ticker}",
+            help="12% para bancos privados grandes; 15% para estatais (prêmio de governança).",
         ) / 100
     with col_g:
         g = st.slider(
