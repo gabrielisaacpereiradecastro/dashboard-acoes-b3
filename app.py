@@ -4640,34 +4640,64 @@ def _show_ciclo_tab() -> None:
     # ── Indicadores macro (BC) ─────────────────────────────────────
     st.markdown("##### Indicadores (Banco Central)")
 
-    # Caption direcional: seta-emoji coerente com o texto (📈 sobe / 📉 cai / ➡️ estável)
-    def _dir_cap(v, up, down, flat, thr=0.1):
+    # Tendência (seta coerente + palavra) e nível vs referência econômica
+    def _trend(v, up, down, flat, thr=0.1):
+        if v is None:
+            return flat
+        if v > thr:
+            return f"↑ {up}"
+        if v < -thr:
+            return f"↓ {down}"
+        return f"→ {flat}"
+
+    def _faixa(v, faixas):
+        """faixas = [(limite_min, rótulo), ...] decrescente; retorna o 1º cujo v >= limite."""
         if v is None:
             return ""
-        if v > thr:
-            return f"📈 {up}"
-        if v < -thr:
-            return f"📉 {down}"
-        return f"➡️ {flat}"
+        for lim, rot in faixas:
+            if v >= lim:
+                return rot
+        return faixas[-1][1]
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
+
     _selic = d.get("selic")
     c1.metric("Selic (meta)", f"{_selic:.2f}%" if _selic is not None else "—")
-    c1.caption(_dir_cap(d.get("selic_dir"), "subindo 12m", "caindo 12m", "estável 12m"))
+    if _selic is not None:
+        _niv = _faixa(_selic, [(9, "🔴 muito restritiva"), (7.5, "🟠 acima do neutro"),
+                               (6, "🟡 perto do neutro"), (-99, "🟢 estimulativa")])
+        c1.caption(f"{_niv} · {_trend(d.get('selic_dir'), 'subindo', 'caindo', 'estável')}")
+
     _ipca = d.get("ipca")
     c2.metric("IPCA (12m)", f"{_ipca:.2f}%" if _ipca is not None else "—")
-    c2.caption(_dir_cap(d.get("ipca_mom"), "acelerando", "desacelerando", "estável"))
+    if _ipca is not None:
+        _niv = _faixa(_ipca, [(4.5, "🔴 acima do teto da meta"), (3, "🟠 acima do centro (3%)"),
+                              (-99, "🟢 na meta ou abaixo")])
+        c2.caption(f"{_niv} · {_trend(d.get('ipca_mom'), 'acelerando', 'desacelerando', 'estável')}")
+
     _jr = d.get("juro_real")
     c3.metric("Juro real", f"{_jr:.2f}%" if _jr is not None else "—")
-    c3.caption("Selic acima da inflação" if (_jr or 0) > 0 else "Selic abaixo da inflação")
+    if _jr is not None:
+        c3.caption(_faixa(_jr, [(6, "🔴 muito restritivo"), (4.5, "🟠 restritivo"),
+                                (3, "🟡 perto do neutro"), (-99, "🟢 estimulativo")]))
+
     _ibc = d.get("ibc_yoy")
     c4.metric("Atividade (IBC-Br a/a)", f"{_ibc:+.1f}%" if _ibc is not None else "—")
-    c4.caption("📈 expandindo" if (_ibc or 0) >= 0 else "📉 contraindo")
+    if _ibc is not None:
+        c4.caption(_faixa(_ibc, [(2.5, "🟢 acima do potencial"), (1.2, "🟡 perto do potencial"),
+                                 (0, "🟠 abaixo do potencial"), (-99, "🔴 contraindo")]))
+
     _usd = d.get("usd")
     c5.metric("USD/BRL", f"R$ {_usd:.2f}" if _usd is not None else "—")
+
     _cred = d.get("credito_pib")
     c6.metric("Crédito/PIB", f"{_cred:.1f}%" if _cred is not None else "—")
-    c6.caption(_dir_cap(d.get("credito_dir"), "subindo", "caindo", "estável"))
+    c6.caption(_trend(d.get("credito_dir"), "subindo", "caindo", "estável"))
+
+    st.caption(
+        "Referências (não médias históricas): Selic neutra ~7,5% · meta de inflação 3% "
+        "(teto 4,5%) · juro real neutro ~4,5% · crescimento potencial ~1,8%."
+    )
 
     st.divider()
 
