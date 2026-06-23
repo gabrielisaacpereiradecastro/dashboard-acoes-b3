@@ -6,7 +6,7 @@ import os
 import requests
 from typing import Optional
 
-from config import SECTOR_REMAP, SETORES_CICLICOS
+from config import SECTOR_REMAP, SETORES_CICLICOS, BANK_KEYWORDS
 
 BASE_URL = "https://api.usebolsai.com/api/v1"
 _TIMEOUT = 15  # segundos
@@ -135,6 +135,11 @@ def get_financials(ticker: str, statement_type: Optional[str] = None) -> Optiona
 def get_stock_history(ticker: str, limit: int = 1260) -> Optional[dict]:
     """GET /stocks/{ticker}/history — Pro plan. Default 1260 ≈ 5 anos."""
     return _get(f"stocks/{ticker.upper()}/history", params={"limit": limit})
+
+
+def get_fundamentals_history(ticker: str, limit: int = 20) -> Optional[dict]:
+    """GET /fundamentals/{ticker}/history — histórico trimestral de indicadores (Pro)."""
+    return _get(f"fundamentals/{ticker.upper()}/history", params={"limit": limit})
 
 
 def get_macro_series(series: str) -> Optional[dict]:
@@ -357,10 +362,11 @@ def get_all_stock_data(ticker: str) -> dict:
     # 2 — Informações da empresa (setor, nome de pregão)
     company = get_company_info(t)
 
-    # Setor final (remapeado) + flag cíclica — decide se vale buscar o DRE
-    # para montar o EBIT histórico (usado no EBITDA mid-cycle das cíclicas).
+    # Setor final (remapeado) + flags de setor (decidem buscas extras)
     _sector_final = SECTOR_REMAP.get(t, (company or {}).get("sector", "") or "")
-    _is_cyclical_sec = any(kw in _sector_final.lower() for kw in SETORES_CICLICOS)
+    _sl = _sector_final.lower()
+    _is_cyclical_sec = any(kw in _sl for kw in SETORES_CICLICOS)
+    _is_bank_sec = any(kw in _sl for kw in BANK_KEYWORDS)
 
     # 3 — Estatísticas de preço (variação diária, volume médio 52 semanas)
     stats = get_stock_stats(t)
@@ -482,6 +488,19 @@ def get_all_stock_data(ticker: str) -> dict:
                 _fin_exp_mil = _fin_exp_dre[max(_fin_exp_dre)]
             _ebit_historico = dict(_ebit_dre)
 
+    # ROE histórico (bancos) — para normalizar o Gordon Growth (suaviza trimestre atípico)
+    _roe_historico: list = []
+    if _is_bank_sec:
+        _fh = get_fundamentals_history(t, limit=20)
+        if _fh:
+            for _h in (_fh.get("history") or []):
+                _r = _h.get("roe")
+                if _r is not None:
+                    try:
+                        _roe_historico.append(round(float(_r), 2))
+                    except (TypeError, ValueError):
+                        continue
+
     # PSR = Market Cap / Receita Líquida Anual
     _psr: Optional[float] = None
     _mc = fund.get("market_cap")
@@ -544,6 +563,7 @@ def get_all_stock_data(ticker: str) -> dict:
             "fcl":              _fcl_k,          # FCL mais recente em R$ mil
             "fcl_historico":    _fcl_historico,  # {ano: FCL R$ mil} para normalização cíclica
             "ebit_historico":   _ebit_historico, # {ano: EBIT R$ mil} p/ EBITDA mid-cycle (cíclicas)
+            "roe_historico":    _roe_historico,  # [ROE %] trimestral p/ normalizar Gordon (bancos)
             "interest_coverage": _interest_coverage,
         }
     )

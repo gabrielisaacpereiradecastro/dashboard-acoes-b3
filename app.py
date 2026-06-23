@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -516,6 +517,18 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         f"  |  cagr_revenue_5y={raw_fund.get('cagr_revenue_5y')!r}"
     )
     log.append(f"📋 Total de campos retornados por /fundamentals: {len(raw_fund)}")
+
+    # ── CALIB-ROE temporário: normalização do ROE p/ bancos (vs BTG) ──
+    if sc.is_bank(data.get("sector", "")):
+        import statistics as _st
+        _rh = data.get("roe_historico") or []
+        _rh_pos = [r for r in _rh if r is not None]
+        _med = _st.median(_rh_pos) if _rh_pos else None
+        _med8 = _st.median(_rh_pos[:8]) if len(_rh_pos) >= 1 else None  # ~2 anos
+        print(f"[CALIB-ROE] {t} | roe_atual={data.get('roe')} | vpa={data.get('vpa')} | "
+              f"n_hist={len(_rh_pos)} | roe_hist={_rh_pos} | "
+              f"mediana_total={_med} | mediana_8t={_med8}",
+              file=sys.stderr); sys.stderr.flush()
 
     # Força o ticker armazenado a ser o que o usuário digitou.
     # A Bolsai pode retornar fund["ticker"] = "ITUB4" mesmo para a query "ITUB3" —
