@@ -1490,11 +1490,11 @@ def _geral_base_price(s: dict) -> Optional[float]:
 # EV/EBITDA through-cycle por sub-setor cíclico (aplicado sobre EBITDA mid-cycle).
 # Múltiplos da pesquisa de mercado (Itaú BBA Vale ~4×, etc.).
 CICLICA_EV_EBITDA_BUCKETS = [
-    (["petróleo", "petroleo", "petro", "combustível", "combustivel"], 4.0, "Petróleo e Gás"),
+    (["petróleo", "petroleo", "petro", "combustível", "combustivel"], 5.0, "Petróleo e Gás"),
     (["mineração", "mineracao", "minério", "minerio", "extração mineral",
-      "extracao mineral"], 4.5, "Mineração"),
-    (["metalurgia", "siderurgia"], 5.0, "Siderurgia / Metalurgia"),
-    (["papel e celulose", "celulose", "papel"], 6.0, "Papel e Celulose"),
+      "extracao mineral"], 6.0, "Mineração"),
+    (["metalurgia", "siderurgia"], 6.5, "Siderurgia / Metalurgia"),
+    (["papel e celulose", "celulose", "papel"], 7.0, "Papel e Celulose"),
     (["açúcar", "acucar", "álcool", "alcool", "agricultura", "agropecuária",
       "agropecuaria", "sucroalcooleiro"], 5.0, "Agro / Açúcar e Álcool"),
 ]
@@ -1540,23 +1540,30 @@ def _ebitda_midcycle(s: dict) -> tuple[Optional[float], int, Optional[float], fl
     return ebit_mid * ratio, n, ebit_mid, ratio
 
 
-def _cyclical_base_price(s: dict) -> Optional[float]:
-    """Preço justo para cíclicas — EV/EBITDA through-cycle sobre EBITDA mid-cycle.
+def _cyclical_ebitda_base(s: dict) -> Optional[float]:
+    """EBITDA base para cíclicas = max(EBITDA atual, EBITDA mid-cycle).
 
-    Se não houver histórico de EBIT suficiente, cai para o EBITDA atual (e o
-    detalhe sinaliza baixa confiança).
+    Nunca normaliza para baixo (o múltiplo through-cycle já é o desconto de
+    ciclicidade — normalizar o EBITDA também seria dupla-contagem), mas usa a
+    mediana histórica quando ela for MAIOR (protege em vales do ciclo).
     """
+    ebitda_cur = s.get("ebitda")
     ebitda_mid, _n, _e, _r = _ebitda_midcycle(s)
-    if ebitda_mid is None:
-        ebitda_mid = s.get("ebitda")  # fallback: EBITDA atual
-    if ebitda_mid is None or ebitda_mid <= 0:
+    candidatos = [v for v in (ebitda_cur, ebitda_mid) if v is not None and v > 0]
+    return max(candidatos) if candidatos else None
+
+
+def _cyclical_base_price(s: dict) -> Optional[float]:
+    """Preço justo para cíclicas — EV/EBITDA through-cycle sobre o EBITDA base."""
+    ebitda_base = _cyclical_ebitda_base(s)
+    if ebitda_base is None or ebitda_base <= 0:
         return None
     shares = s.get("shares_outstanding")
     if not shares or shares <= 0:
         return None
     mult, _ = _ciclica_bucket(s.get("sector", ""))
     net_debt = s.get("net_debt") or 0.0
-    return max(0.0, (mult * ebitda_mid - net_debt) * 1000 / shares)
+    return max(0.0, (mult * ebitda_base - net_debt) * 1000 / shares)
 
 
 def _dcf_params(sector: str) -> tuple[float, float]:
@@ -2053,51 +2060,48 @@ def _show_cyclical_valuation(s: dict) -> None:
     mult_setor, bucket_label = _ciclica_bucket(sector)
     ebitda_mid, n_anos, ebit_mid, ratio = _ebitda_midcycle(s)
 
+    # Base = max(EBITDA atual, mid-cycle): o múltiplo baixo já desconta o ciclo,
+    # então não se normaliza para baixo; a mediana só entra se for MAIOR (vale).
+    ebitda_base = _cyclical_ebitda_base(s)
+
     st.divider()
-    st.subheader("📐 Valuation — EV/EBITDA mid-cycle (cíclica)")
+    st.subheader("📐 Valuation — EV/EBITDA through-cycle (cíclica)")
     st.info(
         f"ℹ️ Sub-setor cíclico: **{bucket_label}** → EV/EBITDA through-cycle "
-        f"**{mult_setor:.1f}×**. Para commodities, o mercado aplica o múltiplo sobre "
-        "um **EBITDA normalizado** (médio do ciclo), não sobre o resultado pontual."
+        f"**{mult_setor:.1f}×**. O múltiplo baixo já é o desconto de ciclicidade; "
+        "a base é o **maior** entre EBITDA atual e o médio do ciclo (protege em vales "
+        "sem punir picos moderados)."
     )
 
     if not shares or shares <= 0:
         st.warning("⚠️ Nº de ações indisponível — valuation não aplicável.")
         return
-
-    insuficiente = ebitda_mid is None
-    if insuficiente:
-        ebitda_mid = ebitda_cur  # fallback
-        st.warning(
-            f"🟠 **Histórico de EBIT insuficiente** ({n_anos} ano(s), mín. 5) para "
-            "normalizar o ciclo. Usando o EBITDA atual — o resultado pode estar "
-            "distorcido pelo momento do ciclo de commodity."
-        )
-    else:
-        st.warning(
-            "🟠 **Referência through-cycle.** Usa o EBITDA médio do ciclo, não o atual. "
-            "Pode divergir de analistas que apostam numa alta/queda **específica** do "
-            "preço da commodity (deck de preços que não modelamos). Trate como valor "
-            "justo de longo prazo, não preço-alvo de 12 meses."
-        )
-
-    if ebitda_mid is None or ebitda_mid <= 0:
+    if ebitda_base is None or ebitda_base <= 0:
         st.warning("⚠️ EBITDA indisponível ou negativo — valuation não aplicável.")
         return
 
-    # Comparativo EBITDA atual vs mid-cycle
-    if not insuficiente and ebitda_cur:
+    st.warning(
+        "🟠 **Referência through-cycle.** Pode divergir de analistas que apostam numa "
+        "alta/queda **específica** do preço da commodity (deck de preços que não "
+        "modelamos). Empresas muito alavancadas ou em forte crescimento (EBITDA forward "
+        "≫ atual) tendem a ler conservador aqui. Valor justo de longo prazo, não alvo de 12m."
+    )
+
+    # Comparativo EBITDA atual vs mid-cycle vs base usada
+    if ebitda_mid is not None and ebitda_cur:
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("EBITDA atual", f"R$ {ebitda_cur/1000:.0f} mi")
         col_b.metric(f"EBITDA mid-cycle ({n_anos}a)", f"R$ {ebitda_mid/1000:.0f} mi")
-        _delta = (ebitda_mid / ebitda_cur - 1) * 100 if ebitda_cur else 0
-        col_c.metric("Posição no ciclo", "vale" if _delta > 5 else ("pico" if _delta < -5 else "neutro"),
-                     f"{_delta:+.0f}% vs atual")
+        col_c.metric("Base usada (maior)", f"R$ {ebitda_base/1000:.0f} mi")
     else:
-        st.caption(f"EBITDA base: **R$ {ebitda_mid/1000:.0f} mi** · Dívida líq.: **R$ {net_debt/1000:.0f} mi**")
+        st.caption(
+            f"EBITDA base: **R$ {ebitda_base/1000:.0f} mi** · "
+            f"Dívida líq.: **R$ {net_debt/1000:.0f} mi**"
+            + ("" if ebitda_mid is not None else "  ·  ⚠️ sem histórico de EBIT (usando atual)")
+        )
 
     def _price_at(mult: float) -> float:
-        return max(0.0, (mult * ebitda_mid - net_debt) * 1000 / shares)
+        return max(0.0, (mult * ebitda_base - net_debt) * 1000 / shares)
 
     def _upside(p: Optional[float]) -> Optional[str]:
         if p is not None and price and price > 0:
