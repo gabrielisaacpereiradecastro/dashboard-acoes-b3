@@ -4560,14 +4560,14 @@ def _show_ibov_small_section() -> None:
     fig.add_trace(go.Scatter(x=d.index, y=d["Small_n"], name="Small Caps",
                              line=dict(color="#ffb74d", width=2)))
     fig.update_layout(
-        height=320, margin=dict(l=0, r=0, t=30, b=0),
+        height=320, margin=dict(l=0, r=0, t=34, b=0),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(showgrid=False, color="#9e9e9e"),
         yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e",
                    title=dict(text="base 100", font=dict(size=10, color="#9e9e9e"))),
-        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0, font=dict(color="#e8eaf6")),
-        title=dict(text=f"Retorno acumulado (base 100) — {per}", font=dict(size=12, color="#e8eaf6")),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(color="#e8eaf6")),
     )
+    st.caption(f"Retorno acumulado, base 100 no início do período ({per}).")
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     c1, c2 = st.columns(2)
