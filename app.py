@@ -4471,15 +4471,19 @@ def _show_ciclo_relogio(mx: float, my: float, fase: str, trail: Optional[list] =
         fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1,
                       line=dict(color="rgba(255,255,255,0.15)", width=1),
                       fillcolor=cor, opacity=0.6 if ativo else 0.16, layer="below")
+    # Rótulos nas bordas (longe do centro, onde fica o marcador): fase em negrito
+    # + o que historicamente favorece, com prefixo explícito.
     labels = [
-        (0.5, 0.5, "🔥 Aquecimento<br>commodities"),
-        (-0.5, 0.5, "🥶 Estagflação<br>caixa / pós"),
-        (0.5, -0.5, "🌱 Recuperação<br>ações"),
-        (-0.5, -0.5, "❄️ Desaceleração<br>renda fixa"),
+        (0.5, 0.86, "<b>🔥 Aquecimento</b>", "favorece commodities"),
+        (-0.5, 0.86, "<b>🥶 Estagflação</b>", "favorece caixa / pós-fixado"),
+        (0.5, -0.78, "<b>🌱 Recuperação</b>", "favorece ações"),
+        (-0.5, -0.78, "<b>❄️ Desaceleração</b>", "favorece renda fixa"),
     ]
-    for x, y, t in labels:
-        fig.add_annotation(x=x, y=y, text=t, showarrow=False,
-                           font=dict(size=11, color="#e8eaf6"))
+    for x, y, nome, favor in labels:
+        fig.add_annotation(x=x, y=y, text=nome, showarrow=False,
+                           font=dict(size=12, color="#ffffff"))
+        fig.add_annotation(x=x, y=y, yshift=-15, text=favor, showarrow=False,
+                           font=dict(size=9.5, color="#b9c0cf"))
     # eixos
     fig.add_shape(type="line", x0=-1, y0=0, x1=1, y1=0,
                   line=dict(color="rgba(255,255,255,0.35)", width=1))
