@@ -1192,6 +1192,24 @@ def _fetch_bova11_history(n_days: int) -> Optional[pd.DataFrame]:
         return None
 
 
+@st.cache_data(ttl=3600 * 6, show_spinner=False)
+def _fetch_ibov_vs_small(years: int = 5) -> Optional[pd.DataFrame]:
+    """Histórico diário de BOVA11 (Ibov) e SMAL11 (Small Caps) alinhado, via yfinance."""
+    try:
+        start = (datetime.now() - timedelta(days=365 * years + 30)).strftime("%Y-%m-%d")
+        ibov = yf.Ticker("BOVA11.SA").history(start=start)["Close"]
+        small = yf.Ticker("SMAL11.SA").history(start=start)["Close"]
+        if ibov.empty or small.empty:
+            return None
+        df = pd.DataFrame({"Ibov": ibov, "Small": small}).dropna()
+        if len(df) < 30:
+            return None
+        df.index = pd.to_datetime(df.index).tz_localize(None)
+        return df
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_price_history(ticker: str) -> Optional[pd.DataFrame]:
     try:
@@ -4511,6 +4529,62 @@ def _show_ciclo_relogio(mx: float, my: float, fase: str, trail: Optional[list] =
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
+def _show_ibov_small_section() -> None:
+    """Gráfico Ibovespa × Small Caps ao longo do tempo + força relativa vs média."""
+    st.markdown("##### Ibovespa × Small Caps — desempenho relativo")
+    df = _fetch_ibov_vs_small(5)
+    if df is None or df.empty:
+        st.caption("Histórico indisponível no momento (fonte externa).")
+        return
+
+    per = st.radio("Período", ["1A", "3A", "5A"], horizontal=True, index=1,
+                   key="ibovsmall_per", label_visibility="collapsed")
+    dias = {"1A": 365, "3A": 365 * 3, "5A": 365 * 5}[per]
+    corte = df.index.max() - pd.Timedelta(days=dias)
+    d = df[df.index >= corte].copy()
+    if len(d) < 5:
+        d = df.copy()
+
+    # Normaliza base 100 no início do recorte (comparação de retorno acumulado)
+    d["Ibov_n"] = d["Ibov"] / d["Ibov"].iloc[0] * 100
+    d["Small_n"] = d["Small"] / d["Small"].iloc[0] * 100
+    gap = d["Small_n"].iloc[-1] - d["Ibov_n"].iloc[-1]  # quanto Small (sub/sobre)performou
+
+    # Força relativa Small/Ibov vs a média de 5 anos (responde "gap > média histórica?")
+    ratio5 = df["Small"] / df["Ibov"]
+    rel_vs_media = (ratio5.iloc[-1] / ratio5.mean() - 1) * 100
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=d.index, y=d["Ibov_n"], name="Ibovespa",
+                             line=dict(color="#42a5f5", width=2)))
+    fig.add_trace(go.Scatter(x=d.index, y=d["Small_n"], name="Small Caps",
+                             line=dict(color="#ffb74d", width=2)))
+    fig.update_layout(
+        height=320, margin=dict(l=0, r=0, t=30, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e",
+                   title=dict(text="base 100", font=dict(size=10, color="#9e9e9e"))),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0, font=dict(color="#e8eaf6")),
+        title=dict(text=f"Retorno acumulado (base 100) — {per}", font=dict(size=12, color="#e8eaf6")),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    c1, c2 = st.columns(2)
+    c1.metric(f"Small vs Ibov no período ({per})", f"{gap:+.0f} pp",
+              "Small acima" if gap >= 0 else "Small abaixo", delta_color="off")
+    c2.metric("Small/Ibov vs média de 5 anos", f"{rel_vs_media:+.0f}%",
+              "Small historicamente cara" if rel_vs_media > 3 else
+              ("Small historicamente barata" if rel_vs_media < -3 else "perto da média"),
+              delta_color="off")
+    if rel_vs_media < -8:
+        st.caption(
+            f"📉 As Small Caps estão **{abs(rel_vs_media):.0f}% abaixo** da relação média de 5 anos "
+            "com o Ibovespa — historicamente um nível de desconto relativo elevado (o que costuma "
+            "acontecer com juros altos, que penalizam mais as empresas menores e alavancadas)."
+        )
+
+
 def _show_ciclo_tab() -> None:
     st.markdown("### 🌐 Termômetro de Ciclo de Mercado")
     st.caption(
@@ -4653,6 +4727,9 @@ def _show_ciclo_tab() -> None:
     else:
         st.caption("P/L do Ibovespa indisponível no momento (fonte externa). "
                    "Referência de média histórica: ~12×.")
+
+    st.divider()
+    _show_ibov_small_section()
 
     st.divider()
     st.warning(
