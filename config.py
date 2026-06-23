@@ -28,6 +28,45 @@ CLASS_POINTS = {
     "Proibitivo": 0,
 }
 
+# ────────────────────────────────────────────────────────────────
+# Scores SEPARADOS: Qualidade (negócio) × Preço (valuation)
+# ────────────────────────────────────────────────────────────────
+
+# Não-bancos
+QUALITY_WEIGHTS = {
+    "roe":              0.30,
+    "net_debt_ebitda":  0.25,
+    "ebitda_margin":    0.20,
+    "cagr_earnings_5y": 0.15,
+    "cagr_revenue_5y":  0.10,
+}
+PRICE_WEIGHTS = {          # score alto = barata/atrativa
+    "ev_ebitda": 0.40,
+    "pl":        0.35,
+    "p_fcf":     0.25,
+}
+# Bancos (métricas próprias)
+QUALITY_WEIGHTS_BANK = {
+    "roe":              0.50,
+    "cagr_earnings_5y": 0.30,
+    "cagr_revenue_5y":  0.20,
+}
+PRICE_WEIGHTS_BANK = {
+    "pvp": 0.60,
+    "pl":  0.40,
+}
+
+# Limiar para a matriz de diagnóstico (≥ = boa/barata)
+SCORE_GOOD_THRESHOLD = 55
+
+# Matriz Qualidade × Preço → (rótulo, cor)
+DIAGNOSIS = {
+    ("boa",   "barata"): ("🟢 Boa e barata",      "#1b5e20"),
+    ("boa",   "cara"):   ("🟡 Boa, mas cara",     "#7b5800"),
+    ("fraca", "barata"): ("🟠 Barata, mas fraca", "#bf360c"),
+    ("fraca", "cara"):   ("🔴 Fraca e cara",      "#7f0000"),
+}
+
 # Faixas de Score final e rótulos
 SCORE_LEVELS = [
     (80, 101, "Excelente"),

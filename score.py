@@ -5,6 +5,8 @@ from __future__ import annotations
 from config import (
     INDICATOR_WEIGHTS, CLASS_POINTS, SCORE_LEVELS,
     BANK_KEYWORDS, UTILITY_KEYWORDS, RETAIL_KEYWORDS,
+    QUALITY_WEIGHTS, PRICE_WEIGHTS, QUALITY_WEIGHTS_BANK, PRICE_WEIGHTS_BANK,
+    DIAGNOSIS, SCORE_GOOD_THRESHOLD,
 )
 
 
@@ -352,3 +354,115 @@ def score_color(label: str) -> str:
     """Retorna hex color para o label de score."""
     from config import SCORE_COLORS
     return SCORE_COLORS.get(label, "#9e9e9e")
+
+
+# ────────────────────────────────────────────────────────────────
+# Pontuação CONTÍNUA por indicador + scores Qualidade × Preço
+# ────────────────────────────────────────────────────────────────
+
+# Curvas: anchors (valor, score 0-100). Score alto = melhor (qualidade alta
+# ou preço atrativo/barato). Interpolação linear entre anchors, clamp nas pontas.
+_CURVES = {
+    "roe":                  [(0, 0), (5, 25), (10, 50), (15, 75), (25, 100)],
+    "roe_bank":             [(0, 0), (6, 25), (10, 50), (14, 75), (18, 100)],
+    "net_debt_ebitda":      [(0.5, 100), (1.5, 75), (2.5, 50), (3.5, 25), (5, 0)],
+    "net_debt_ebitda_util": [(2, 100), (3, 75), (4, 50), (5, 25), (6.5, 0)],
+    "ebitda_margin":        [(6, 25), (12, 50), (20, 75), (30, 100)],
+    "ebitda_margin_retail": [(3, 25), (6, 50), (10, 75), (15, 100)],
+    "ebitda_margin_util":   [(10, 25), (20, 50), (30, 75), (40, 100)],
+    "cagr_earnings_5y":     [(-10, 10), (0, 50), (8, 75), (15, 100)],
+    "cagr_revenue_5y":      [(-5, 10), (0, 50), (6, 75), (12, 100)],
+    "ev_ebitda":            [(5, 100), (8, 75), (12, 50), (16, 25), (20, 0)],
+    "pl":                   [(10, 95), (15, 72), (20, 50), (30, 22), (40, 0)],
+    "p_fcf":                [(8, 100), (15, 75), (22, 50), (30, 25), (40, 0)],
+    "pvp":                  [(0.5, 100), (1, 90), (2, 60), (3, 40), (5, 15), (7, 0)],
+    "pvp_bank":             [(0.7, 100), (1.0, 80), (1.5, 55), (2.0, 35), (2.5, 15), (3, 5)],
+}
+
+
+def _interp(value: float, anchors: list) -> float:
+    if value <= anchors[0][0]:
+        return float(anchors[0][1])
+    if value >= anchors[-1][0]:
+        return float(anchors[-1][1])
+    for (v0, s0), (v1, s1) in zip(anchors, anchors[1:]):
+        if v0 <= value <= v1:
+            t = (value - v0) / (v1 - v0) if v1 != v0 else 0.0
+            return s0 + t * (s1 - s0)
+    return float(anchors[-1][1])
+
+
+def score_indicator(ind: str, value, sector: str):
+    """Pontuação contínua 0-100 do indicador, ou None se inaplicável/inconclusivo."""
+    if value is None:
+        return None
+    bank = is_bank(sector)
+    # Casos especiais
+    if ind in ("ev_ebitda", "p_fcf") and value < 0:
+        return 0.0
+    if ind == "pl":
+        if value < 0:
+            return 0.0
+        if value < 5:
+            return None  # value trap — inconclusivo
+    if ind == "net_debt_ebitda" and value < 0:
+        return 100.0  # caixa líquido > dívida = melhor situação
+
+    key = ind
+    if ind == "roe" and bank:
+        key = "roe_bank"
+    elif ind == "net_debt_ebitda" and is_utility(sector):
+        key = "net_debt_ebitda_util"
+    elif ind == "ebitda_margin" and is_retail(sector):
+        key = "ebitda_margin_retail"
+    elif ind == "ebitda_margin" and is_utility(sector):
+        key = "ebitda_margin_util"
+    elif ind == "pvp" and bank:
+        key = "pvp_bank"
+
+    anchors = _CURVES.get(key)
+    if not anchors:
+        return None
+    return round(_interp(value, anchors), 1)
+
+
+def _composite(stock: dict, weights: dict, sector: str):
+    """Média ponderada das pontuações; redistribui peso dos ausentes."""
+    ws = tw = 0.0
+    bd: dict = {}
+    for ind, w in weights.items():
+        sc = score_indicator(ind, stock.get(ind), sector)
+        bd[ind] = {"score": sc, "weight": w}
+        if sc is not None:
+            ws += sc * w
+            tw += w
+    return (ws / tw if tw > 0 else None), bd
+
+
+def _diagnose(q, p, thr: float = SCORE_GOOD_THRESHOLD):
+    if q is None or p is None:
+        return None
+    ql = "boa" if q >= thr else "fraca"
+    pl = "barata" if p >= thr else "cara"
+    return DIAGNOSIS[(ql, pl)]
+
+
+def calculate_scores(stock: dict) -> dict:
+    """Retorna {quality, price, diagnosis(=(rótulo,cor)|None), breakdown_quality, breakdown_price}.
+
+    Funciona para TODOS os setores (bancos têm pesos próprios). Pontuação contínua.
+    """
+    sector = stock.get("sector", "")
+    bank = is_bank(sector)
+    qw = QUALITY_WEIGHTS_BANK if bank else QUALITY_WEIGHTS
+    pw = PRICE_WEIGHTS_BANK if bank else PRICE_WEIGHTS
+
+    q, bq = _composite(stock, qw, sector)
+    p, bp = _composite(stock, pw, sector)
+    return {
+        "quality": round(q, 1) if q is not None else None,
+        "price":   round(p, 1) if p is not None else None,
+        "diagnosis": _diagnose(q, p),
+        "breakdown_quality": bq,
+        "breakdown_price": bp,
+    }
