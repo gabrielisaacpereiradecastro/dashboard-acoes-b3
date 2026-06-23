@@ -146,6 +146,63 @@ def get_macro_series(series: str) -> Optional[dict]:
     return _get(f"macro/{series}")
 
 
+# ────────────────────────────────────────────────────────────────
+# Macro do Banco Central (SGS) — API PÚBLICA, sem chave/autenticação
+# ────────────────────────────────────────────────────────────────
+
+_SGS_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{cod}/dados/ultimos/{n}"
+
+# Códigos das séries usadas no painel de Ciclo
+SGS_SELIC_META   = 432    # Meta Selic definida pelo Copom (% a.a.)
+SGS_IPCA_12M     = 13522  # IPCA acumulado 12 meses (%)
+SGS_IBC_BR       = 24364  # IBC-Br dessazonalizado (proxy mensal do PIB, índice)
+SGS_USD_BRL      = 1      # Dólar (venda)
+SGS_CREDITO_PIB  = 20622  # Saldo de crédito / PIB (%)
+
+
+def get_sgs(codigo: int, ultimos: int = 1) -> Optional[list]:
+    """Série temporal do SGS do Banco Central (pública, sem autenticação).
+
+    Retorna lista de dicts [{"data": "dd/mm/aaaa", "valor": "x.y"}] (mais
+    antigo → mais recente) ou None em caso de falha.
+    """
+    try:
+        r = requests.get(
+            _SGS_URL.format(cod=codigo, n=ultimos),
+            params={"formato": "json"}, timeout=12,
+        )
+        if r.ok:
+            return r.json()
+    except Exception:
+        pass
+    return None
+
+
+def get_ibovespa_pl() -> Optional[float]:
+    """Raspa o P/L atual do Ibovespa do Investidor10 (sem auth).
+
+    Fonte de terceiros — pode quebrar se o site mudar o HTML; retorna None
+    nesse caso (o painel exibe fallback gracioso). Média histórica de longo
+    prazo (~12×) é constante documentada no app, não vem daqui.
+    """
+    import re
+    try:
+        r = requests.get(
+            "https://investidor10.com.br/indices/pl-ibovespa/",
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=12,
+        )
+        if not r.ok:
+            return None
+        m = re.search(r'class="value">\s*([0-9]{1,2},[0-9]{2})\s*<', r.text)
+        if m:
+            val = float(m.group(1).replace(",", "."))
+            if 4 < val < 40:  # sanidade: P/L de índice fica nessa faixa
+                return val
+    except Exception:
+        pass
+    return None
+
+
 def get_screener(limit: int = 20, **filters) -> Optional[dict]:
     """GET /screener — Pro plan.
     Filtros aceitos: roe_min, pl_max, net_debt_ebitda_max, ebitda_margin_min, ev_ebitda_max.
