@@ -4571,12 +4571,11 @@ def _show_ibov_small_section() -> None:
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     c1, c2 = st.columns(2)
-    c1.metric(f"Small vs Ibov no período ({per})", f"{gap:+.0f} pp",
-              "Small acima" if gap >= 0 else "Small abaixo", delta_color="off")
-    c2.metric("Small/Ibov vs média de 5 anos", f"{rel_vs_media:+.0f}%",
-              "Small historicamente cara" if rel_vs_media > 3 else
-              ("Small historicamente barata" if rel_vs_media < -3 else "perto da média"),
-              delta_color="off")
+    c1.metric(f"Small vs Ibov no período ({per})", f"{gap:+.0f} pp")
+    c1.caption("Small Caps acima do Ibov" if gap >= 0 else "Small Caps abaixo do Ibov")
+    c2.metric("Small/Ibov vs média de 5 anos", f"{rel_vs_media:+.0f}%")
+    c2.caption("Small historicamente cara" if rel_vs_media > 3 else
+               ("Small historicamente barata" if rel_vs_media < -3 else "perto da média"))
     if rel_vs_media < -8:
         st.caption(
             f"📉 As Small Caps estão **{abs(rel_vs_media):.0f}% abaixo** da relação média de 5 anos "
@@ -4636,38 +4635,35 @@ def _show_ciclo_tab() -> None:
 
     # ── Indicadores macro (BC) ─────────────────────────────────────
     st.markdown("##### Indicadores (Banco Central)")
-    def _seta(v, casas=2, suf="", inv=False):
+
+    # Caption direcional: seta-emoji coerente com o texto (📈 sobe / 📉 cai / ➡️ estável)
+    def _dir_cap(v, up, down, flat, thr=0.1):
         if v is None:
-            return "—"
-        up = v > 0.01
-        down = v < -0.01
-        a = "↑" if (up and not inv) or (down and inv) else ("↓" if (down and not inv) or (up and inv) else "→")
-        return a
+            return ""
+        if v > thr:
+            return f"📈 {up}"
+        if v < -thr:
+            return f"📉 {down}"
+        return f"➡️ {flat}"
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     _selic = d.get("selic")
-    c1.metric("Selic (meta)", f"{_selic:.2f}%" if _selic is not None else "—",
-              ("subindo 12m" if d.get("selic_dir", 0) > 0.1 else
-               "caindo 12m" if d.get("selic_dir", 0) < -0.1 else "estável"),
-              delta_color="off")
+    c1.metric("Selic (meta)", f"{_selic:.2f}%" if _selic is not None else "—")
+    c1.caption(_dir_cap(d.get("selic_dir"), "subindo 12m", "caindo 12m", "estável 12m"))
     _ipca = d.get("ipca")
-    c2.metric("IPCA (12m)", f"{_ipca:.2f}%" if _ipca is not None else "—",
-              ("acelerando" if (d.get("ipca_mom") or 0) > 0.1 else
-               "desacelerando" if (d.get("ipca_mom") or 0) < -0.1 else "estável"),
-              delta_color="off")
+    c2.metric("IPCA (12m)", f"{_ipca:.2f}%" if _ipca is not None else "—")
+    c2.caption(_dir_cap(d.get("ipca_mom"), "acelerando", "desacelerando", "estável"))
     _jr = d.get("juro_real")
-    c3.metric("Juro real", f"{_jr:.2f}%" if _jr is not None else "—",
-              "Selic acima da inflação" if (_jr or 0) > 0 else "negativo", delta_color="off")
+    c3.metric("Juro real", f"{_jr:.2f}%" if _jr is not None else "—")
+    c3.caption("Selic acima da inflação" if (_jr or 0) > 0 else "Selic abaixo da inflação")
     _ibc = d.get("ibc_yoy")
-    c4.metric("Atividade (IBC-Br a/a)", f"{_ibc:+.1f}%" if _ibc is not None else "—",
-              "expandindo" if (_ibc or 0) >= 0 else "contraindo", delta_color="off")
+    c4.metric("Atividade (IBC-Br a/a)", f"{_ibc:+.1f}%" if _ibc is not None else "—")
+    c4.caption("📈 expandindo" if (_ibc or 0) >= 0 else "📉 contraindo")
     _usd = d.get("usd")
     c5.metric("USD/BRL", f"R$ {_usd:.2f}" if _usd is not None else "—")
     _cred = d.get("credito_pib")
-    c6.metric("Crédito/PIB", f"{_cred:.1f}%" if _cred is not None else "—",
-              ("subindo" if d.get("credito_dir", 0) > 0.1 else
-               "caindo" if d.get("credito_dir", 0) < -0.1 else "estável"),
-              delta_color="off")
+    c6.metric("Crédito/PIB", f"{_cred:.1f}%" if _cred is not None else "—")
+    c6.caption(_dir_cap(d.get("credito_dir"), "subindo", "caindo", "estável"))
 
     st.divider()
 
@@ -4682,12 +4678,12 @@ def _show_ciclo_tab() -> None:
         a = dic.get(ano)
         p = dic.get(prox)
         val = f"{a:.{casas}f}%" if a is not None else "—"
-        delta = f"{prox}: {p:.{casas}f}%" if p is not None else ""
-        return val, delta
+        cap = f"{prox}: {p:.{casas}f}%" if p is not None else ""
+        return val, cap
     fc1, fc2, fc3 = st.columns(3)
-    _v, _dl = _exp(fi); fc1.metric(f"IPCA esperado {ano}", _v, _dl, delta_color="off")
-    _v, _dl = _exp(fp); fc2.metric(f"PIB esperado {ano}", _v, _dl, delta_color="off")
-    _v, _dl = _exp(fs); fc3.metric(f"Selic esperada (fim {ano})", _v, _dl, delta_color="off")
+    _v, _cap = _exp(fi); fc1.metric(f"IPCA esperado {ano}", _v); fc1.caption(_cap)
+    _v, _cap = _exp(fp); fc2.metric(f"PIB esperado {ano}", _v); fc2.caption(_cap)
+    _v, _cap = _exp(fs); fc3.metric(f"Selic esperada (fim {ano})", _v); fc3.caption(_cap)
     # Interpretação do caminho da Selic (substitui a curva de juros)
     _selic_now = d.get("selic")
     _selic_prox = fs.get(prox)
@@ -4719,7 +4715,8 @@ def _show_ciclo_tab() -> None:
         cc1, cc2, cc3 = st.columns(3)
         cc1.metric("P/L atual", f"{pl:.1f}×")
         cc2.metric("Média histórica (~desde 2001)", f"{media:.1f}×")
-        cc3.metric("Posição", f"{gap:+.0f}%", tag, delta_color="off")
+        cc3.metric("Posição", f"{gap:+.0f}%")
+        cc3.caption(tag)
         st.markdown(
             f"<div style='background:{cor};color:#fff;padding:6px 12px;border-radius:6px;"
             f"font-size:0.9rem'>A bolsa negocia a <b>{pl:.1f}×</b> lucros, <b>{tag}</b> "
