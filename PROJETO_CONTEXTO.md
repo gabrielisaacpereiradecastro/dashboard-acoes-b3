@@ -6,8 +6,9 @@
 > reler todo o histórico de conversas — economiza tempo e tokens.
 
 > **Última atualização:** 23/06/2026 — motor de valuation híbrido por setor; **score separado
-> em Qualidade × Preço** (seção 6); aba de Ciclo de Mercado (BC); refinos de bancos (ROE
-> normalizado). Documento versionado no git.
+> em Qualidade × Preço** com **diagnóstico graduado (5 tiers)**, **checagem de qualidade do
+> lucro (FCL/Lucro)** e **Qualidade×Preço ponderado da carteira** (seção 6); aba de Ciclo de
+> Mercado (BC); refinos de bancos (ROE normalizado). Documento versionado no git.
 
 ---
 
@@ -118,13 +119,26 @@ Vale para **todos os setores, inclusive bancos** (que antes ficavam sem score).
 | P/FCF | 25% | — |
 | P/VP | — | 60% |
 
-**Diagnóstico (matriz 2×2, corte em 55):** combina os dois scores →
-🟢 Boa e barata · 🟡 Boa, mas cara · 🟠 Barata, mas fraca (⚠ value trap) · 🔴 Fraca e cara.
+**Diagnóstico GRADUADO (5 níveis por eixo, jun/2026):** o corte binário 55/56 era
+"simplista". Cada eixo agora tem 5 tiers (`config.py`: `QUALITY_TIERS`, `PRICE_TIERS`):
+- Qualidade (cortes ≥85/70/55/40): **Excelente · Ótima · Boa · Razoável · Fraca**
+- Preço (mesmos cortes): **Pechincha · Muito barata · Barata · Justa · Cara**
+
+O diagnóstico combina os tiers em um rótulo, ex.: *"Excelente · pechincha"*, *"Boa · justa"*.
+A **cor** ainda vem do veredito 2×2 (`VERDICT_COLORS`, corte 55) para preservar o alerta de
+value trap: 🟢 boa+barata · 🟡 boa+cara · 🟠 ⚠ barata mas fraca · 🔴 fraca+cara. Funções:
+`_tier()`, `_diagnose()` (retorna dict `{label, verdict, color, quality_tier, price_tier}`).
 
 **Pontuação contínua:** cada indicador tem uma *curva* de anchors `(valor, score)` em
 `score.py` (`_CURVES`), interpolada linearmente. Funções: `score_indicator()`,
 `calculate_scores()`. Ajuste setorial nas curvas (ROE/Dív/Margem/PVP têm variantes
 banco/utility/varejo).
+
+**Qualidade do lucro (FCL/Lucro, jun/2026):** `earnings_quality()` mede quanto do lucro vira
+caixa livre, derivado dos múltiplos já disponíveis: **FCL/Lucro = P/L ÷ P/FCF** (ambos =
+valor de mercado / X). Sinaliza lucro "de papel" e aplica **haircut na Qualidade**: FCL
+negativo −30% · conversão <40% −22% · 40–70% −10% · ≥70% sem penalidade. Não se aplica a
+bancos. Exibido como badge colorido no painel de Detalhe.
 
 **Regras especiais:**
 - Indicador N/D → peso redistribuído (nunca penaliza).
@@ -133,8 +147,14 @@ banco/utility/varejo).
 
 **UI:** tabela tem colunas **Qualidade · Preço · Diagnóstico** (a cotação da ação virou
 **"Cotação"** para não colidir com o score "Preço"). A aba Detalhe tem um painel com os dois
-scores + um **mapa visual 2×2** (Qualidade × Preço com a ação posicionada). DY e Liquidez
-saíram do score (viraram informativos/filtro).
+scores (com o tier ao lado de cada número) + um **mapa visual 2×2** (Qualidade × Preço com a
+ação posicionada). DY e Liquidez saíram do score (viraram informativos/filtro).
+
+**Carteira consolidada (📊 Análise da Carteira):** além dos médios ponderados (DY/P-L/Score/
+Dívida), exibe **Qualidade Pond.** e **Preço Pond.** (média ponderada pelo valor de cada
+posição, via `_weighted_avg_portfolio`) com diagnóstico graduado da carteira, e um **mapa 2×2
+de todas as posições** (`_show_portfolio_quality_price_map`): cada bolha é uma ação (tamanho ∝
+% da carteira) e a ⭐ marca o centroide ponderado.
 
 `calculate_score` (singular, score único antigo) ainda existe no `score.py` mas não é mais
 usado na UI principal — pode ser removido no futuro.
