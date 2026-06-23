@@ -4377,7 +4377,7 @@ def _show_ciclo_relogio(mx: float, my: float, fase: str, trail: Optional[list] =
         ativo = (k == fase)
         fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1,
                       line=dict(color="rgba(255,255,255,0.15)", width=1),
-                      fillcolor=cor, opacity=0.85 if ativo else 0.18, layer="below")
+                      fillcolor=cor, opacity=0.6 if ativo else 0.16, layer="below")
     labels = [
         (0.5, 0.5, "🔥 Aquecimento<br>commodities"),
         (-0.5, 0.5, "🥶 Estagflação<br>caixa / pós"),
@@ -4392,18 +4392,35 @@ def _show_ciclo_relogio(mx: float, my: float, fase: str, trail: Optional[list] =
                   line=dict(color="rgba(255,255,255,0.35)", width=1))
     fig.add_shape(type="line", x0=0, y0=-1, x1=0, y1=1,
                   line=dict(color="rgba(255,255,255,0.35)", width=1))
-    # rastro dos últimos meses (caminho até a posição atual)
-    if trail and len(trail) > 1:
+    # rastro dos últimos meses — gradiente do passado (apagado/pequeno) ao presente
+    if trail and len(trail) >= 2:
+        tx = [t[0] for t in trail]
+        ty = [t[1] for t in trail]
+        n = len(tx)
+        sizes = [6 + 8 * (i / (n - 1)) for i in range(n)]               # 6 → 14 px
+        cores = [f"rgba(255,255,255,{0.2 + 0.6 * (i / (n - 1)):.2f})"   # translúcido → opaco
+                 for i in range(n)]
+        # linha conectando os pontos (branca, fina)
         fig.add_trace(go.Scatter(
-            x=[t[0] for t in trail], y=[t[1] for t in trail],
-            mode="lines+markers",
-            line=dict(color="rgba(255,235,59,0.45)", width=2, dash="dot"),
-            marker=dict(size=7, color="rgba(255,235,59,0.55)"),
+            x=tx, y=ty, mode="lines",
+            line=dict(color="rgba(255,255,255,0.45)", width=2),
             hoverinfo="skip"))
-    # marcador atual
+        # pontos do rastro com gradiente (mostra a direção do tempo)
+        fig.add_trace(go.Scatter(
+            x=tx, y=ty, mode="markers",
+            marker=dict(size=sizes, color=cores,
+                        line=dict(color="rgba(0,0,0,0.35)", width=1)),
+            hoverinfo="skip"))
+        # rótulo do ponto mais antigo, para deixar a direção do tempo explícita
+        fig.add_annotation(x=tx[0], y=ty[0], text="há ~6m", showarrow=False,
+                           font=dict(size=9, color="#cfd3dc"), yshift=-13)
+    # marcador atual — grande, anel branco e rótulo "AGORA"
+    _txt_pos = "bottom center" if my > 0.45 else "top center"
     fig.add_trace(go.Scatter(
-        x=[mx], y=[my], mode="markers",
-        marker=dict(size=22, color="#ffeb3b", line=dict(color="#000", width=2), symbol="circle"),
+        x=[mx], y=[my], mode="markers+text",
+        marker=dict(size=28, color="#ffeb3b", line=dict(color="#ffffff", width=3), symbol="circle"),
+        text=["AGORA"], textposition=_txt_pos,
+        textfont=dict(size=13, color="#ffffff", family="Arial Black"),
         hovertemplate="Posição atual<extra></extra>"))
     fig.update_layout(
         height=420, margin=dict(l=10, r=10, t=10, b=30),
