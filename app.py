@@ -2467,6 +2467,91 @@ def _show_dcf(s: dict) -> None:
 # Visão de detalhe de uma ação
 # ────────────────────────────────────────────────────────────────
 
+def _show_quality_price_map(q: Optional[float], p: Optional[float]) -> None:
+    """Mapa 2×2 Qualidade × Preço com a ação posicionada."""
+    thr = 55
+    quads = [
+        (thr, thr, 100, 100, "#1b5e20", "🟢 Boa<br>e barata"),
+        (0, thr, thr, 100, "#bf360c", "🟠 Barata,<br>mas fraca"),
+        (thr, 0, 100, thr, "#7b5800", "🟡 Boa,<br>mas cara"),
+        (0, 0, thr, thr, "#7f0000", "🔴 Fraca<br>e cara"),
+    ]
+    active = None
+    if q is not None and p is not None:
+        active = ("🟢" if q >= thr and p >= thr else "🟠" if q < thr and p >= thr
+                  else "🟡" if q >= thr and p < thr else "🔴")
+    fig = go.Figure()
+    for x0, y0, x1, y1, cor, nome in quads:
+        on = active is not None and nome.startswith(active)
+        fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1, fillcolor=cor,
+                      opacity=0.55 if on else 0.15, layer="below",
+                      line=dict(color="rgba(255,255,255,0.15)", width=1))
+        fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=nome, showarrow=False,
+                           font=dict(size=10, color="#e8eaf6"))
+    fig.add_shape(type="line", x0=thr, y0=0, x1=thr, y1=100,
+                  line=dict(color="rgba(255,255,255,0.3)", width=1))
+    fig.add_shape(type="line", x0=0, y0=thr, x1=100, y1=thr,
+                  line=dict(color="rgba(255,255,255,0.3)", width=1))
+    if q is not None and p is not None:
+        fig.add_trace(go.Scatter(
+            x=[q], y=[p], mode="markers+text",
+            marker=dict(size=24, color="#ffeb3b", line=dict(color="#fff", width=3)),
+            text=["AQUI"], textposition="top center",
+            textfont=dict(size=11, color="#fff", family="Arial Black"),
+            hovertemplate=f"Qualidade {q:.0f} · Preço {p:.0f}<extra></extra>"))
+    fig.update_layout(
+        height=340, margin=dict(l=8, r=8, t=8, b=28),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False,
+        xaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False,
+                   title=dict(text="←  menor qualidade      maior qualidade  →",
+                              font=dict(size=10, color="#9e9e9e"))),
+        yaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False,
+                   title=dict(text="←  mais cara      mais barata  →",
+                              font=dict(size=10, color="#9e9e9e"))))
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+def _show_score_panel(s: dict) -> None:
+    """Painel de scores Qualidade × Preço + diagnóstico + mapa 2×2."""
+    scores = s.get("scores") or sc.calculate_scores(s)
+    q, p, diag = scores.get("quality"), scores.get("price"), scores.get("diagnosis")
+
+    st.subheader("📊 Qualidade × Preço")
+    if diag:
+        st.markdown(
+            f"<div style='background:{diag[1]};padding:10px 16px;border-radius:8px;color:#fff;"
+            f"font-size:1.2rem;font-weight:700;margin-bottom:8px'>{diag[0]}</div>",
+            unsafe_allow_html=True)
+    elif q is None and p is None:
+        st.info("Dados insuficientes para calcular os scores deste ticker.")
+        return
+
+    col_a, col_b = st.columns([1, 1.15])
+    with col_a:
+        cq, cp = st.columns(2)
+        cq.metric("Qualidade", f"{q:.0f}/100" if q is not None else "—")
+        if q is not None:
+            cq.progress(int(q))
+        cp.metric("Preço (atratividade)", f"{p:.0f}/100" if p is not None else "—")
+        if p is not None:
+            cp.progress(int(p))
+        st.caption(
+            "**Qualidade** = ROE, solidez, margem e crescimento. **Preço** = EV/EBITDA, P/L, "
+            "P/FCF (bancos: P/VP e P/L). Quanto **maior o Preço, mais barata** a ação.")
+        with st.expander("Ver o que puxou cada score"):
+            _bq = scores.get("breakdown_quality", {})
+            _bp = scores.get("breakdown_price", {})
+            for titulo, bd in [("🏅 Qualidade", _bq), ("💰 Preço", _bp)]:
+                st.markdown(f"**{titulo}**")
+                for ind, info in bd.items():
+                    nm = INDICATOR_LABELS.get(ind, ind)
+                    _sci = info.get("score")
+                    _sv = "—" if _sci is None else f"{_sci:.0f}"
+                    st.caption(f"{nm}: {_sv}/100 · peso {info['weight'] * 100:.0f}%")
+    with col_b:
+        _show_quality_price_map(q, p)
+
+
 def _show_detail(s: dict):
     sector = s.get("sector", "")
     bank = sc.is_bank(sector)
@@ -2509,19 +2594,8 @@ def _show_detail(s: dict):
 
     st.divider()
 
-    # ── Score ───────────────────────────────────────────────────
-    if bank:
-        st.warning(
-            "⚠️ **Setor bancário requer análise específica — score global não aplicável.**\n\n"
-            "Para bancos, priorize P/VP (ideal 1,0×–2,5×), ROE, Índice de Basileia e inadimplência."
-        )
-    else:
-        score_cor = SCORE_COLORS.get(label, "#9e9e9e")
-        st.markdown(
-            f"<h3 style='color:{score_cor}'>Score: {score:.0f}/100 — {label}</h3>",
-            unsafe_allow_html=True,
-        )
-        st.progress(int(score) if score else 0)
+    # ── Scores Qualidade × Preço + diagnóstico ──────────────────
+    _show_score_panel(s)
 
     # ── Alertas de mudança de classificação ────────────────────
     _t_alert = s.get("ticker", "")
