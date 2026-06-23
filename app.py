@@ -2511,6 +2511,69 @@ def _show_quality_price_map(q: Optional[float], p: Optional[float]) -> None:
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
+def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
+    """Mapa 2×2 com TODAS as posições (bolha ∝ peso) + centroide ponderado."""
+    thr = 55
+    pts = [p for p in positions
+           if p.get("quality") is not None and p.get("price_score") is not None]
+    if not pts:
+        return
+    quads = [
+        (thr, thr, 100, 100, "#1b5e20", "boa<br>e barata"),
+        (0, thr, thr, 100, "#bf360c", "barata,<br>mas fraca"),
+        (thr, 0, 100, thr, "#7b5800", "boa,<br>mas cara"),
+        (0, 0, thr, thr, "#7f0000", "fraca<br>e cara"),
+    ]
+    fig = go.Figure()
+    for x0, y0, x1, y1, cor, nome in quads:
+        fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1, fillcolor=cor,
+                      opacity=0.15, layer="below",
+                      line=dict(color="rgba(255,255,255,0.15)", width=1))
+        fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=nome, showarrow=False,
+                           font=dict(size=9, color="#9aa0b4"))
+    fig.add_shape(type="line", x0=thr, y0=0, x1=thr, y1=100,
+                  line=dict(color="rgba(255,255,255,0.3)", width=1))
+    fig.add_shape(type="line", x0=0, y0=thr, x1=100, y1=thr,
+                  line=dict(color="rgba(255,255,255,0.3)", width=1))
+
+    max_w = max(p["weight"] for p in pts) or 1
+    sizes = [14 + 34 * (p["weight"] / max_w) for p in pts]
+    fig.add_trace(go.Scatter(
+        x=[p["quality"] for p in pts], y=[p["price_score"] for p in pts],
+        mode="markers+text",
+        marker=dict(size=sizes, color="#42a5f5", opacity=0.75,
+                    line=dict(color="#fff", width=1.5)),
+        text=[p["ticker"] for p in pts], textposition="middle center",
+        textfont=dict(size=9, color="#fff"),
+        customdata=[[p["weight"] * 100] for p in pts],
+        hovertemplate="%{text}<br>Qualidade %{x:.0f} · Preço %{y:.0f}"
+                      "<br>%{customdata[0]:.1f}% da carteira<extra></extra>"))
+
+    # Centroide ponderado (★)
+    qc = _weighted_avg_portfolio(positions, "quality")
+    pc = _weighted_avg_portfolio(positions, "price_score")
+    if qc is not None and pc is not None:
+        fig.add_trace(go.Scatter(
+            x=[qc], y=[pc], mode="markers+text",
+            marker=dict(size=22, color="#ffeb3b", symbol="star",
+                        line=dict(color="#000", width=1.5)),
+            text=["carteira"], textposition="bottom center",
+            textfont=dict(size=10, color="#ffeb3b", family="Arial Black"),
+            hovertemplate=f"Carteira (pond.)<br>Qualidade {qc:.0f} · Preço {pc:.0f}<extra></extra>"))
+
+    fig.update_layout(
+        height=360, margin=dict(l=8, r=8, t=8, b=28),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False,
+        xaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False,
+                   title=dict(text="←  menor qualidade      maior qualidade  →",
+                              font=dict(size=10, color="#9e9e9e"))),
+        yaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False,
+                   title=dict(text="←  mais cara      mais barata  →",
+                              font=dict(size=10, color="#9e9e9e"))))
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.caption("Cada bolha é uma posição (tamanho ∝ % da carteira); a ⭐ é a média ponderada.")
+
+
 def _show_score_panel(s: dict) -> None:
     """Painel de scores Qualidade × Preço + diagnóstico + mapa 2×2."""
     scores = s.get("scores") or sc.calculate_scores(s)
@@ -4181,6 +4244,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         if qtd > 0 and price:
             pnl_r   = (price - pm) * qtd if pm > 0 else None
             pnl_pct = (price / pm - 1) * 100   if pm > 0 else None
+            _sc = e.get("scores") or {}
             positions.append({
                 "ticker":           t,
                 "qtd":              qtd,
@@ -4193,6 +4257,8 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
                 "dy":               e.get("dividend_yield"),
                 "pl":               e.get("pl") if (e.get("pl") or 0) > 0 else None,
                 "score":            e.get("score"),
+                "quality":          _sc.get("quality"),
+                "price_score":      _sc.get("price"),
                 "nd_ebitda":        e.get("net_debt_ebitda"),
                 "daily_change_pct": e.get("daily_change_pct"),
                 "weight":           0.0,
@@ -4288,6 +4354,36 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         f"{nd_pond:.2f}x" if nd_pond is not None else "N/D",
         help="Dívida Líquida/EBITDA médio ponderado (excluindo N/A bancário e N/D)",
     )
+
+    # ── Qualidade × Preço da carteira (ponderado) + mapa 2×2 ──────
+    q_pond = _weighted_avg_portfolio(positions, "quality")
+    p_pond = _weighted_avg_portfolio(positions, "price_score")
+    if q_pond is not None or p_pond is not None:
+        st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
+        st.markdown("#### 🎯 Qualidade × Preço da carteira")
+        _diag_pond = sc._diagnose(q_pond, p_pond)
+        if _diag_pond:
+            st.markdown(
+                f"<div style='background:{_diag_pond['color']};padding:8px 14px;border-radius:8px;"
+                f"color:#fff;font-size:1.05rem;font-weight:700;margin-bottom:8px'>"
+                f"Carteira: {_diag_pond['label']}</div>",
+                unsafe_allow_html=True)
+        cqp, cpp = st.columns(2)
+        cqp.metric(
+            "Qualidade Pond.",
+            f"{q_pond:.0f}/100" if q_pond is not None else "N/D",
+            help="Qualidade média ponderada pelo valor de cada posição",
+        )
+        if _diag_pond and _diag_pond["quality_tier"]:
+            cqp.caption(f"**{_diag_pond['quality_tier']}**")
+        cpp.metric(
+            "Preço Pond.",
+            f"{p_pond:.0f}/100" if p_pond is not None else "N/D",
+            help="Atratividade de preço média ponderada (maior = mais barata)",
+        )
+        if _diag_pond and _diag_pond["price_tier"]:
+            cpp.caption(f"**{_diag_pond['price_tier']}**")
+        _show_portfolio_quality_price_map(positions)
 
     # ── P&L total das posições com preço médio ────────────────────
     pnl_positions = [p for p in positions if p.get("pnl_reais") is not None]
