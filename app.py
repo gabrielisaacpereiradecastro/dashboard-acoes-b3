@@ -19,6 +19,7 @@ import yfinance as yf
 import api
 import score as sc
 import score_fii as sf
+import alerts as al
 from score import classify_psr as _classify_psr, classify_interest_coverage as _classify_interest_coverage
 import config as _cfg
 from config import (
@@ -3401,7 +3402,7 @@ def _sidebar():
         st.caption("Análise fundamentalista de ações brasileiras")
 
         # ── Navegação por área ─────────────────────────────────
-        _AREAS = ["📊 Ações", "🏢 FIIs", "🔎 Screener", "🌐 Ciclo"]
+        _AREAS = ["📊 Ações", "🏢 FIIs", "🔎 Screener", "🌐 Ciclo", "🔔 Alertas"]
         _cur_area = st.session_state.get("area", _AREAS[0])
         st.session_state.area = st.radio(
             "Navegação", _AREAS,
@@ -5373,6 +5374,185 @@ def _show_ciclo_tab() -> None:
 
 
 # ────────────────────────────────────────────────────────────────
+# Alertas
+# ────────────────────────────────────────────────────────────────
+
+def _target_price(s: dict) -> Optional[float]:
+    """Preço-alvo (cenário Base) pelo motor por setor — mesmo de _build_table."""
+    sector = s.get("sector", "")
+    if sc.is_bank(sector):
+        return _gordon_base_price(s)
+    if _is_insurer(sector):
+        return _insurer_base_price(s)
+    if _is_shopping(sector):
+        return _shopping_base_price(s)
+    if _is_cyclical(sector):
+        return _cyclical_base_price(s)
+    if _is_utility(sector):
+        return _dcf_base_price(s)
+    return _geral_base_price(s)
+
+
+def _alert_view(s: dict) -> dict:
+    """View achatada de uma ação com todos os fatores de alerta."""
+    scores = s.get("scores") or sc.calculate_scores(s)
+    price = s.get("close_price")
+    target = _target_price(s)
+    potencial = ((target / price - 1) * 100) if (target and price and price > 0) else None
+    return {
+        "ticker":           s.get("ticker", ""),
+        "close_price":      price,
+        "daily_change_pct": s.get("daily_change_pct"),
+        "dividend_yield":   s.get("dividend_yield"),
+        "pl":               s.get("pl"),
+        "pvp":              s.get("pvp"),
+        "roe":              s.get("roe"),
+        "potencial":        potencial,
+        "quality":          scores.get("quality"),
+        "price_score":      scores.get("price"),
+    }
+
+
+def _build_alert_views() -> dict:
+    """{ticker: view} para todos os tickers das listas de ações do usuário."""
+    views: dict = {}
+    for ldata in st.session_state.todas_listas.values():
+        for ticker, entry in ldata.items():
+            if ticker in views:
+                continue
+            data = entry.get("data", {})
+            if not data or data.get("error"):
+                continue
+            try:
+                views[ticker] = _alert_view(data)
+            except Exception:
+                pass
+    return views
+
+
+def _show_alertas_tab() -> None:
+    st.markdown("## 🔔 Alertas")
+    st.caption(
+        "Crie alertas com uma ou mais condições combinadas (E/OU). São avaliados "
+        "**ao abrir o app ou atualizar os dados** — o app não roda em segundo plano.")
+
+    views = _build_alert_views()
+    all_tickers = sorted(views.keys())
+    list_names = list(st.session_state.todas_listas.keys())
+    st.session_state.setdefault("_alert_conds", [])
+
+    # ── Criar novo alerta ─────────────────────────────────────────
+    with st.expander("➕ Criar novo alerta", expanded=not st.session_state.alertas):
+        nome = st.text_input("Nome (opcional)", key="_alert_nome",
+                              placeholder="ex: BBAS3 barata")
+
+        esc_tipo = st.radio("Escopo", ["Ações específicas", "Uma lista inteira"],
+                            horizontal=True, key="_alert_esc_tipo")
+        esc_tickers, esc_lista = [], ""
+        if esc_tipo == "Ações específicas":
+            esc_tickers = st.multiselect("Ações", all_tickers, key="_alert_tickers")
+        else:
+            esc_lista = st.selectbox("Lista", list_names, key="_alert_lista")
+
+        st.markdown("**Condições**")
+        cc1, cc2, cc3, cc4 = st.columns([3, 1.1, 1.6, 1.3])
+        _fopts = list(al.FACTORS.keys())
+        f_sel = cc1.selectbox("Fator", _fopts, key="_alert_fator",
+                              format_func=lambda k: al.FACTORS[k]["label"],
+                              label_visibility="collapsed")
+        op_sel = cc2.selectbox("Op", al.OPERADORES, key="_alert_op", label_visibility="collapsed")
+        val_sel = cc3.number_input("Valor", value=0.0, step=0.5, key="_alert_val",
+                                   label_visibility="collapsed")
+        cc4.markdown("")
+        if cc4.button("➕ Condição", key="_alert_add_cond", use_container_width=True):
+            st.session_state._alert_conds.append(
+                {"fator": f_sel, "operador": op_sel, "valor": float(val_sel)})
+            st.rerun()
+
+        if st.session_state._alert_conds:
+            for i, c in enumerate(st.session_state._alert_conds):
+                ck, cd = st.columns([6, 1])
+                ck.markdown(f"- **{al.cond_label(c)}**")
+                if cd.button("🗑", key=f"_alert_delc_{i}"):
+                    st.session_state._alert_conds.pop(i)
+                    st.rerun()
+        else:
+            st.caption("Adicione ao menos uma condição acima.")
+
+        combin = st.radio("Combinar condições", ["E", "OU"], horizontal=True, key="_alert_combin",
+                          help="E = todas precisam bater · OU = qualquer uma já dispara")
+
+        if st.button("✅ Criar alerta", type="primary", key="_alert_criar"):
+            if not st.session_state._alert_conds:
+                st.warning("Adicione ao menos uma condição.")
+            elif esc_tipo == "Ações específicas" and not esc_tickers:
+                st.warning("Selecione ao menos uma ação.")
+            else:
+                st.session_state.alertas.append({
+                    "id": str(int(time.time() * 1000)),
+                    "nome": nome.strip(),
+                    "ativo": True,
+                    "escopo_tipo": "tickers" if esc_tipo == "Ações específicas" else "lista",
+                    "escopo_tickers": list(esc_tickers),
+                    "escopo_lista": esc_lista,
+                    "combinador": combin,
+                    "condicoes": list(st.session_state._alert_conds),
+                    "criado_em": _now_bsb().isoformat(),
+                    "acks": [],
+                })
+                st.session_state._alert_conds = []
+                _save_all()
+                st.success("Alerta criado!")
+                st.rerun()
+
+    # ── Alertas vigentes ──────────────────────────────────────────
+    st.markdown("### Alertas vigentes")
+    if not st.session_state.alertas:
+        st.info("Nenhum alerta criado ainda. Use **➕ Criar novo alerta** acima.")
+        return
+
+    for idx, alert in enumerate(st.session_state.alertas):
+        ativo = alert.get("ativo", True)
+        scope_tk = al.scope_tickers(alert, st.session_state.todas_listas)
+        scope_views = [views[t] for t in scope_tk if t in views]
+        triggers = al.evaluate_alert(alert, scope_views) if ativo else []
+
+        if not ativo:
+            barra = ("#37474f", "⏸ Pausado")
+        elif triggers:
+            barra = ("#1b5e20", f"✓ Condição já atingida — {', '.join(d['ticker'] for d in triggers)}")
+        else:
+            barra = ("#1a1d2e", "🔍 Monitorando")
+
+        with st.container():
+            st.markdown(
+                f"<div style='background:{barra[0]};padding:8px 14px;border-radius:8px 8px 0 0;"
+                f"color:#fff;font-weight:600'>{barra[1]}</div>", unsafe_allow_html=True)
+            cinfo, cbtn = st.columns([5, 1.4])
+            with cinfo:
+                st.markdown(f"**{al.alert_label(alert)}**")
+                _join = " **E** " if alert.get("combinador") == "E" else " **OU** "
+                st.caption("Escopo: " + al.scope_label(alert) + "  ·  Condições: "
+                           + _join.join(al.cond_label(c) for c in alert.get("condicoes", [])))
+                if triggers:
+                    for d in triggers:
+                        _vals = " · ".join(f"{c['valor_fmt']}" for c in d["condicoes"])
+                        st.markdown(f"<span style='color:#81c784'>● {d['ticker']}: {_vals}</span>",
+                                    unsafe_allow_html=True)
+            with cbtn:
+                _lbl_toggle = "▶ Ativar" if not ativo else "⏸ Pausar"
+                if st.button(_lbl_toggle, key=f"_alert_toggle_{idx}", use_container_width=True):
+                    alert["ativo"] = not ativo
+                    _save_all()
+                    st.rerun()
+                if st.button("🗑 Excluir", key=f"_alert_excl_{idx}", use_container_width=True):
+                    st.session_state.alertas.pop(idx)
+                    _save_all()
+                    st.rerun()
+        st.markdown("")
+
+
+# ────────────────────────────────────────────────────────────────
 # App principal
 # ────────────────────────────────────────────────────────────────
 
@@ -5409,6 +5589,9 @@ footer {visibility: hidden;}
         return
     if _area == "🌐 Ciclo":
         _show_ciclo_tab()
+        return
+    if _area == "🔔 Alertas":
+        _show_alertas_tab()
         return
 
     # ── Área Ações ────────────────────────────────────────────
