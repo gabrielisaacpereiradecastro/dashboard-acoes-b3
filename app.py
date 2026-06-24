@@ -2699,7 +2699,11 @@ def _show_detail(s: dict):
                 _fmt_price(preco),
                 delta=f"{var:+.2f}%" if var is not None else None,
             )
-        st.metric("Market Cap", _fmt_mcap(s.get("market_cap")))
+        _pl_h = s.get("pl")
+        _dy_h = s.get("dividend_yield")
+        _mpl, _mdy = st.columns(2)
+        _mpl.metric("P/L", f"{_pl_h:.1f}x" if _pl_h is not None else "—")
+        _mdy.metric("DY", f"{_dy_h:.1f}%" if _dy_h is not None else "—")
 
     with c3:
         low52 = s.get("week_52_low")
