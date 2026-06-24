@@ -1278,7 +1278,19 @@ def _show_price_history_chart(s: dict) -> None:
             key=f"hist_period_{ticker}",
         )
     with ctrl_cols[1]:
-        show_ma   = st.checkbox("MM50", value=False, key=f"hist_ma_{ticker}")
+        show_ma   = st.checkbox(
+            "MM50", value=False, key=f"hist_ma_{ticker}",
+            help=(
+                "**Média Móvel de 50 dias** — média do preço dos últimos 50 pregões, "
+                "suaviza o ruído e mostra a **tendência de médio prazo** (~2,5 meses).\n\n"
+                "- Preço **acima** e linha subindo → tendência de alta; **abaixo** e caindo → baixa.\n"
+                "- Preço muito **distante** da linha → esticado (sobrecomprado/sobrevendido).\n"
+                "- Em tendências, costuma servir de **suporte/resistência** dinâmica.\n\n"
+                "É **análise técnica** (timing de preço), complementar ao resto do app, que é "
+                "**fundamentalista** (qualidade e valuation). Indicador *atrasado*: confirma "
+                "tendências, não prevê reversões, e dá sinais falsos em mercado lateral."
+            ),
+        )
     with ctrl_cols[2]:
         show_ibov = st.checkbox("📊 Comparar com Ibovespa", value=False, key=f"hist_ibov_{ticker}")
 
