@@ -4208,8 +4208,8 @@ def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
                        "(sem eixo de qualidade) — veja-os na tabela e nos alertas do Detalhe.")
 
 
-def _show_fii_lista() -> None:
-    """Conteúdo da sub-aba 'Minha lista' dentro da aba FIIs."""
+def _fii_list_selector() -> dict:
+    """Seletor de lista FII + gerenciar listas (acima das sub-abas). Retorna a lista ativa."""
 
     # ── Seletor de lista FII ─────────────────────────────────────
     fii_listas_keys = list(st.session_state.fiis_listas.keys())
@@ -4266,10 +4266,11 @@ def _show_fii_lista() -> None:
                         st.session_state.confirm_del_fii_lista = False
                         st.rerun()
 
-    fiis_atuais: dict = st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
+    return st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
 
-    st.divider()
 
+def _show_fii_tabela(fiis_atuais: dict) -> None:
+    """Tabela de FIIs: adicionar, filtrar, remover/atualizar, listar."""
     # ── Adicionar FII ─────────────────────────────────────────────
     col_in, col_btn = st.columns([4, 2])
     with col_in:
@@ -4365,18 +4366,19 @@ def _show_fii_lista() -> None:
     else:
         st.info(f"Nenhum FII do tipo '{_tipo_filtro}' na lista.")
 
-    # ── Detalhe (logo abaixo da tabela, sempre visível) ───────────
-    st.divider()
+
+def _show_fii_detail_tab(fiis_atuais: dict) -> None:
+    """Detalhe do FII — seletor no topo (igual ações)."""
     st.markdown("### 🔍 Detalhe do FII")
     _det_tickers = list(fiis_atuais.keys())  # as chaves SÃO os tickers
     if not _det_tickers:
-        st.info("Adicione um FII acima para ver o detalhe.")
+        st.info("Adicione um FII na aba 📋 Tabela para ver o detalhe.")
     else:
         try:
             _det_default = (_det_tickers.index(st.session_state.selected_fii)
                             if st.session_state.selected_fii in _det_tickers else 0)
             _det_chosen = st.selectbox(
-                "FII para detalhe", _det_tickers, index=_det_default,
+                "Selecione o FII", _det_tickers, index=_det_default,
                 key="fii_detalhe_sel",
                 format_func=lambda t: f"{t} — {fiis_atuais.get(t, {}).get('name', '')}",
             )
@@ -4385,8 +4387,9 @@ def _show_fii_lista() -> None:
         except Exception as _e:
             st.error(f"Erro ao montar o detalhe do FII: {_e}")
 
-    # ── Posições (qtd / preço médio) ──────────────────────────────
-    st.divider()
+
+def _show_fii_carteira(fiis_atuais: dict) -> None:
+    """Carteira de FIIs: editor de posições + análise consolidada."""
     from datetime import date as _date  # usado no parse de data_compra
     with st.expander("✏️ Editar posições (quantidade e preço médio)", expanded=False):
         _fii_pos_rows = []
@@ -4446,14 +4449,17 @@ def _show_fii_lista() -> None:
 
 def _show_fii_tab() -> None:
     st.markdown("## 🏢 Análise de FIIs")
-    tab_lista, tab_scr_fii = st.tabs(["📋 Minha lista", "🔎 Screener"])
-    with tab_lista:
-        _show_fii_lista()
-    with tab_scr_fii:
-        fiis_atuais_scr: dict = st.session_state.fiis_listas.get(
-            st.session_state.lista_fii_atual, {}
-        )
-        _show_fii_screener(fiis_atuais_scr)
+    fiis_atuais = _fii_list_selector()
+    tab_cart, tab_tab, tab_det, tab_scr = st.tabs(
+        ["📊 Carteira", "📋 Tabela", "🔍 Detalhe", "🔎 Screener"])
+    with tab_cart:
+        _show_fii_carteira(fiis_atuais)
+    with tab_tab:
+        _show_fii_tabela(fiis_atuais)
+    with tab_det:
+        _show_fii_detail_tab(fiis_atuais)
+    with tab_scr:
+        _show_fii_screener(fiis_atuais)
 
 
 # ────────────────────────────────────────────────────────────────
