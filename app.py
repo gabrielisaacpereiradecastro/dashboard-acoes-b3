@@ -304,6 +304,7 @@ def _save_all() -> None:
         "listas":           dict(st.session_state.get("todas_listas", {})),
         "screener_filtros": dict(st.session_state.get("screener_filtros", {})),
         "fiis_listas":      dict(st.session_state.get("fiis_listas", {})),
+        "alertas":          list(st.session_state.get("alertas", [])),
     }
     DATA_FILE.write_text(
         json.dumps(raw, ensure_ascii=False, indent=2),
@@ -457,6 +458,9 @@ def _init_state():
     if "lista_fii_atual" not in st.session_state:
         fii_keys = list(st.session_state.fiis_listas.keys())
         st.session_state.lista_fii_atual = fii_keys[0] if fii_keys else "🏢 FIIs"
+
+    if "alertas" not in st.session_state:
+        st.session_state.alertas = _load_usuario_data(usuario).get("alertas", [])
 
     if "selected_ticker" not in st.session_state:
         st.session_state.selected_ticker = None
@@ -3388,7 +3392,7 @@ def _sidebar():
                 "usuario_atual", "todas_listas", "lista_atual", "acoes",
                 "screener_filtros", "selected_ticker", "fiis_listas",
                 "lista_fii_atual", "selected_fii", "confirm_del_lista",
-                "confirm_del_fii_lista",
+                "confirm_del_fii_lista", "alertas",
             ]:
                 st.session_state.pop(_k, None)
             st.rerun()
