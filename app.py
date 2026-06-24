@@ -2519,7 +2519,7 @@ def _show_quality_price_map(q: Optional[float], p: Optional[float]) -> None:
                       opacity=0.55 if on else 0.15, layer="below",
                       line=dict(color="rgba(255,255,255,0.15)", width=1))
         fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=nome, showarrow=False,
-                           font=dict(size=10, color="#e8eaf6"))
+                           font=dict(size=14, color="#e8eaf6"))
     fig.add_shape(type="line", x0=thr, y0=0, x1=thr, y1=100,
                   line=dict(color="rgba(255,255,255,0.3)", width=1))
     fig.add_shape(type="line", x0=0, y0=thr, x1=100, y1=thr,
@@ -2528,16 +2528,17 @@ def _show_quality_price_map(q: Optional[float], p: Optional[float]) -> None:
         fig.add_trace(go.Scatter(
             x=[q], y=[p], mode="markers+text",
             marker=dict(size=24, color="#ffeb3b", line=dict(color="#fff", width=3)),
-            text=["AQUI"], textposition="top center",
+            text=["AQUI"], textposition="top center", cliponaxis=False,
             textfont=dict(size=11, color="#fff", family="Arial Black"),
             hovertemplate=f"Qualidade {q:.0f} · Preço {p:.0f}<extra></extra>"))
+    # Folga nos eixos p/ a bolha/rótulo "AQUI" caberem mesmo no canto (q/p ~100).
     fig.update_layout(
         height=340, margin=dict(l=8, r=8, t=8, b=28),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False,
-        xaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False,
+        xaxis=dict(range=[-6, 109], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  menor qualidade      maior qualidade  →",
                               font=dict(size=10, color="#9e9e9e"))),
-        yaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False,
+        yaxis=dict(range=[-8, 112], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  mais cara      mais barata  →",
                               font=dict(size=10, color="#9e9e9e"))))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
