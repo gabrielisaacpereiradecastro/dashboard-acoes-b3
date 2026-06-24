@@ -4096,13 +4096,20 @@ def _show_fii_screener(fiis_lista_atual: dict) -> None:
         c4, c5, c6 = st.columns(3)
         vac_max   = c4.number_input("Vacância máx. (%)",  min_value=0.0, max_value=100.0, value=30.0, step=1.0, key="fscr_vac_max")
         ina_max   = c5.number_input("Inadimp. máx. (%)",  min_value=0.0, max_value=100.0, value=10.0, step=0.5, key="fscr_ina_max")
-        score_min = c6.number_input("Score mínimo",       min_value=0,   max_value=100,   value=0,    step=5,   key="fscr_score_min")
-        c7, c8 = st.columns([2, 2])
         tipo_opcoes_scr = ["Todos"] + list(_FII_TYPE_LABELS.values())
-        tipo_scr = c7.selectbox("Tipo", tipo_opcoes_scr, key="fscr_tipo")
-        col_busca, col_limpa = c8.columns(2)
-        buscar = col_busca.button("🔍 Buscar", key="btn_fscr_buscar", use_container_width=True, type="primary")
-        limpar = col_limpa.button("♻ Limpar cache", key="btn_fscr_limpar", use_container_width=True)
+        tipo_scr  = c6.selectbox("Tipo", tipo_opcoes_scr, key="fscr_tipo")
+        c7, c8, c9 = st.columns(3)
+        qual_min  = c7.number_input(
+            "Score qualidade mín.", min_value=0, max_value=100, value=0, step=5,
+            key="fscr_qual_min", help="≥ este valor (exclui papel, que não tem nota de qualidade)")
+        price_min = c8.number_input(
+            "Score preço mín.", min_value=0, max_value=100, value=0, step=5,
+            key="fscr_price_min", help="≥ este valor (maior = mais barato/atrativo)")
+        with c9:
+            st.caption("")
+            col_busca, col_limpa = st.columns(2)
+            buscar = col_busca.button("🔍 Buscar", key="btn_fscr_buscar", use_container_width=True, type="primary")
+            limpar = col_limpa.button("♻ Limpar", key="btn_fscr_limpar", use_container_width=True)
 
     if limpar:
         _fetch_fii_screener_batch.clear()
@@ -4129,7 +4136,8 @@ def _show_fii_screener(fiis_lista_atual: dict) -> None:
         pvp = fii.get("pvp")
         vac = fii.get("vacancy_pct")
         ina = fii.get("delinquency_pct")
-        score, score_lbl, _ = sf.calculate_fii_score(fii)
+        _scf = sf.calculate_fii_scores(fii)
+        _q, _p = _scf.get("quality"), _scf.get("price")
 
         if dy_min > 0 and (dy is None or dy < dy_min):
             continue
@@ -4142,7 +4150,9 @@ def _show_fii_screener(fiis_lista_atual: dict) -> None:
             continue
         if ina_max < 100 and ina is not None and ina > ina_max:
             continue
-        if score_min > 0 and (score is None or score < score_min):
+        if qual_min > 0 and (_q is None or _q < qual_min):
+            continue
+        if price_min > 0 and (_p is None or _p < price_min):
             continue
         if tipo_scr != "Todos":
             ft = (fii.get("fund_type") or "").strip()
