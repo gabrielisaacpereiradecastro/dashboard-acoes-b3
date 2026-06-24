@@ -3450,6 +3450,101 @@ def _sidebar():
 
         st.divider()
 
+        # ── Atualização (aparece em todas as áreas) ─────────────
+        st.markdown("### Atualização")
+
+        oldest_update = None
+        for entry in st.session_state.acoes.values():
+            ua = entry.get("updated_at")
+            if ua:
+                try:
+                    dt = datetime.fromisoformat(ua)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    if oldest_update is None or dt < oldest_update:
+                        oldest_update = dt
+                except Exception:
+                    pass
+
+        if oldest_update:
+            ua_str = _fmt_updated(oldest_update.isoformat())
+            cor = _staleness_color(oldest_update.isoformat())
+            st.markdown(
+                f"<span style='color:{cor};font-size:0.85rem'>"
+                f"Última atualização: {ua_str}</span>",
+                unsafe_allow_html=True,
+            )
+            age_h = (datetime.now(timezone.utc) - oldest_update).total_seconds() / 3600
+            if age_h >= 48:
+                st.caption("🔴 Dados com mais de 48h — recomenda-se atualizar.")
+            elif age_h >= 24:
+                st.caption("🟠 Dados com mais de 24h.")
+        else:
+            st.caption("Nenhum dado carregado ainda.")
+
+        _fiis_atual_sb = st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
+
+        def _refresh_fiis(save: bool = True) -> None:
+            """Re-busca os FIIs da lista ativa, preservando posições."""
+            _fetch_fii.clear()
+            for _tt in list(_fiis_atual_sb.keys()):
+                with st.spinner(f"Atualizando {_tt}…"):
+                    _nd = _fetch_fii(_tt)
+                if not _nd.get("error"):
+                    _old = _fiis_atual_sb.get(_tt, {})
+                    _fiis_atual_sb[_tt] = {**_nd,
+                                           "qtd": _old.get("qtd", 0),
+                                           "preco_medio": _old.get("preco_medio", 0.0),
+                                           "data_compra": _old.get("data_compra", "")}
+            if save:
+                _save_all()
+
+        if st.button("🔄 Atualizar Ações", use_container_width=True,
+                     disabled=not st.session_state.acoes):
+            with st.spinner("Atualizando ações…"):
+                erros = _update_all()
+            st.session_state.flash_errors = erros
+            if not erros:
+                st.session_state.flash_success = "Ações atualizadas com sucesso!"
+            st.rerun()
+
+        if st.button("🔄 Atualizar FIIs", use_container_width=True,
+                     disabled=not _fiis_atual_sb,
+                     help=f"Atualiza os FIIs da lista '{st.session_state.lista_fii_atual}'"):
+            _refresh_fiis()
+            st.rerun()
+
+        if st.button("🔄 Atualizar Tudo", use_container_width=True, type="primary",
+                     disabled=not (st.session_state.acoes or _fiis_atual_sb),
+                     help="Atualiza ações e FIIs de uma vez"):
+            with st.spinner("Atualizando ações…"):
+                erros = _update_all() if st.session_state.acoes else []
+            if _fiis_atual_sb:
+                _refresh_fiis(save=False)
+            _save_all()
+            st.session_state.flash_errors = erros
+            if not erros:
+                st.session_state.flash_success = "Ações e FIIs atualizados!"
+            st.rerun()
+
+        with st.expander("📊 Uso da API (quota)"):
+            usage = api.check_api_usage()
+            if usage:
+                used = usage.get("used_today", 0)
+                limit = usage.get("daily_limit", 200)
+                remaining = usage.get("remaining", limit - used)
+                st.progress(used / limit if limit else 0,
+                            text=f"{used}/{limit} requisições hoje")
+                st.caption(f"Restantes: {remaining}")
+            else:
+                st.caption("Indisponível (verifique a API Key).")
+
+        # ── Controles de Ações só aparecem na área Ações ────────
+        if st.session_state.get("area", "📊 Ações") != "📊 Ações":
+            return
+
+        st.divider()
+
         # ── Seletor de lista ──────────────────────────────────
         listas_keys = list(st.session_state.todas_listas.keys())
         cur_idx = listas_keys.index(st.session_state.lista_atual) if st.session_state.lista_atual in listas_keys else 0
@@ -3611,102 +3706,6 @@ def _sidebar():
                             st.rerun()
                 else:
                     st.caption("Nenhuma empresa encontrada para este setor.")
-
-        st.divider()
-
-        # ── Atualização ────────────────────────────────────────
-        st.markdown("### Atualização")
-
-        oldest_update = None
-        for entry in st.session_state.acoes.values():
-            ua = entry.get("updated_at")
-            if ua:
-                try:
-                    dt = datetime.fromisoformat(ua)
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    if oldest_update is None or dt < oldest_update:
-                        oldest_update = dt
-                except Exception:
-                    pass
-
-        if oldest_update:
-            ua_str = _fmt_updated(oldest_update.isoformat())
-            cor = _staleness_color(oldest_update.isoformat())
-            st.markdown(
-                f"<span style='color:{cor};font-size:0.85rem'>"
-                f"Última atualização: {ua_str}</span>",
-                unsafe_allow_html=True,
-            )
-            age_h = (datetime.now(timezone.utc) - oldest_update).total_seconds() / 3600
-            if age_h >= 48:
-                st.caption("🔴 Dados com mais de 48h — recomenda-se atualizar.")
-            elif age_h >= 24:
-                st.caption("🟠 Dados com mais de 24h.")
-        else:
-            st.caption("Nenhum dado carregado ainda.")
-
-        _fiis_atual_sb = st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
-
-        def _refresh_fiis(save: bool = True) -> None:
-            """Re-busca os FIIs da lista ativa, preservando posições."""
-            _fetch_fii.clear()
-            for _tt in list(_fiis_atual_sb.keys()):
-                with st.spinner(f"Atualizando {_tt}…"):
-                    _nd = _fetch_fii(_tt)
-                if not _nd.get("error"):
-                    _old = _fiis_atual_sb.get(_tt, {})
-                    _fiis_atual_sb[_tt] = {**_nd,
-                                           "qtd": _old.get("qtd", 0),
-                                           "preco_medio": _old.get("preco_medio", 0.0),
-                                           "data_compra": _old.get("data_compra", "")}
-            if save:
-                _save_all()
-
-        if st.button("🔄 Atualizar Ações", use_container_width=True,
-                     disabled=not st.session_state.acoes):
-            with st.spinner("Atualizando ações…"):
-                erros = _update_all()
-            st.session_state.flash_errors = erros
-            if not erros:
-                st.session_state.flash_success = "Ações atualizadas com sucesso!"
-            st.rerun()
-
-        if st.button("🔄 Atualizar FIIs", use_container_width=True,
-                     disabled=not _fiis_atual_sb,
-                     help=f"Atualiza os FIIs da lista '{st.session_state.lista_fii_atual}'"):
-            _refresh_fiis()
-            st.rerun()
-
-        if st.button("🔄 Atualizar Tudo", use_container_width=True, type="primary",
-                     disabled=not (st.session_state.acoes or _fiis_atual_sb),
-                     help="Atualiza ações e FIIs de uma vez"):
-            with st.spinner("Atualizando ações…"):
-                erros = _update_all() if st.session_state.acoes else []
-            if _fiis_atual_sb:
-                _refresh_fiis(save=False)
-            _save_all()
-            st.session_state.flash_errors = erros
-            if not erros:
-                st.session_state.flash_success = "Ações e FIIs atualizados!"
-            st.rerun()
-
-        # ── Uso da API ─────────────────────────────────────────
-        with st.expander("📊 Uso da API (quota)"):
-            usage = api.check_api_usage()
-            if usage:
-                used = usage.get("used_today", 0)
-                limit = usage.get("daily_limit", 200)
-                remaining = usage.get("remaining", limit - used)
-                st.progress(used / limit if limit else 0,
-                            text=f"{used}/{limit} requisições hoje")
-                st.caption(f"Restantes: {remaining}")
-            else:
-                st.caption("Indisponível (verifique a API Key).")
-
-        # Lista de ações salvas só faz sentido na área de Ações
-        if st.session_state.get("area", "📊 Ações") != "📊 Ações":
-            return
 
         st.divider()
 
