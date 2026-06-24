@@ -3792,15 +3792,19 @@ def _fii_table_html(fiis_data: list[dict]) -> str:
         pvp_bg = BG_COLORS.get(pvp_cls, "#37474f")
         html += f"<td style='padding:6px 10px;text-align:center;background:{pvp_bg};border-radius:4px'>{pvp_disp}</td>"
 
-        # Vacância
-        vac_cls, vac_disp = sf.classify_fii_vacancy(fii.get("vacancy_pct"))
-        vac_bg = BG_COLORS.get(vac_cls, "#37474f")
-        html += f"<td style='padding:6px 10px;text-align:center;background:{vac_bg};border-radius:4px'>{vac_disp}</td>"
-
-        # Inadimplência
-        ina_cls, ina_disp = sf.classify_fii_delinquency(fii.get("delinquency_pct"))
-        ina_bg = BG_COLORS.get(ina_cls, "#37474f")
-        html += f"<td style='padding:6px 10px;text-align:center;background:{ina_bg};border-radius:4px'>{ina_disp}</td>"
+        # Vacância e Inadimplência — N/A para papel (não tem imóvel físico)
+        _is_paper_row = scf.get("paper", False)
+        if _is_paper_row:
+            for _ in range(2):
+                html += ("<td style='padding:6px 10px;text-align:center;background:#37474f;"
+                         "border-radius:4px;color:#b0bec5;font-size:0.8rem'>N/A</td>")
+        else:
+            vac_cls, vac_disp = sf.classify_fii_vacancy(fii.get("vacancy_pct"))
+            vac_bg = BG_COLORS.get(vac_cls, "#37474f")
+            html += f"<td style='padding:6px 10px;text-align:center;background:{vac_bg};border-radius:4px'>{vac_disp}</td>"
+            ina_cls, ina_disp = sf.classify_fii_delinquency(fii.get("delinquency_pct"))
+            ina_bg = BG_COLORS.get(ina_cls, "#37474f")
+            html += f"<td style='padding:6px 10px;text-align:center;background:{ina_bg};border-radius:4px'>{ina_disp}</td>"
 
         # Liquidez
         liq_cls, liq_disp = sf.classify_fii_liquidity(fii.get("liquidity"))
@@ -4346,15 +4350,15 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
         st.info("Nenhum FII na lista. Adicione um ticker acima.")
         return
 
-    # ── Remover / atualizar ───────────────────────────────────────
+    # ── Remover ───────────────────────────────────────────────────
+    st.markdown("**🗑 Remover FII da lista**")
     col_rem, col_att, _ = st.columns([2, 1, 1.5])
     with col_rem:
         _fii_tickers = list(fiis_atuais.keys())
         _rem_sel = st.selectbox(
-            "🗑 Remover FII da lista", ["—"] + _fii_tickers, key="fii_remover_sel",
-            help="Escolha o FII e clique em 'Remover' à direita.")
+            "Remover FII", ["—"] + _fii_tickers, key="fii_remover_sel",
+            label_visibility="collapsed")
     with col_att:
-        st.caption("")  # alinha verticalmente com o selectbox rotulado
         if st.button("🗑 Remover", key="btn_rem_fii", use_container_width=True):
             if _rem_sel != "—":
                 fiis_atuais.pop(_rem_sel, None)
