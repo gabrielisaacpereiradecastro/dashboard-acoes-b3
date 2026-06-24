@@ -3027,25 +3027,43 @@ def _show_detail(s: dict):
         "Rec. Líq. (R$ mi)":   "**Receita Líquida** — Faturamento após deduções fiscais e devoluções, em R$ milhões. Principal linha de crescimento; base para cálculo das margens.",
         "Lucro Líq. (R$ mi)":  "**Lucro Líquido** — Resultado final após todas as despesas, juros e impostos, em R$ milhões. Lucro negativo (prejuízo) classifica o P/L como Proibitivo.",
         "Cob. de Juros":       "**Cobertura de Juros** = EBIT / Despesa Financeira. Indica quantas vezes o lucro operacional cobre os juros da dívida. Abaixo de 1× significa que a empresa não gera lucro suficiente para pagar os juros — sinal grave de risco financeiro.",
+        "Div. Yield":          "**Dividend Yield** — Dividendos pagos nos últimos 12 meses / preço da ação. Quanto a ação rende em proventos por ano. Especialmente relevante em seguradoras e empresas maduras pagadoras.",
     }
     st.divider()
     with st.expander("📋 Outros indicadores", expanded=False):
         _gross_margin = s.get("gross_margin")
         _int_cov = s.get("interest_coverage")
         cls_cov, disp_cov = _classify_interest_coverage(_int_cov, sector)
-        items = [
-            ("Margem Líquida",      f"{net_margin:.1f}%" if net_margin is not None else "N/D"),
-            ("Margem Bruta",        f"{_gross_margin:.1f}%" if _gross_margin is not None else "N/D"),
-            ("ROA",                 f"{roa:.1f}%" if roa is not None else "N/D"),
-            ("ROIC",                f"{roic:.1f}%" if roic is not None else "N/D"),
-            ("LPA",                 f"R$ {s['lpa']:.2f}" if s.get("lpa") else "N/D"),
-            ("VPA",                 f"R$ {s['vpa']:.2f}" if s.get("vpa") else "N/D"),
-            ("Liq. Corrente",       f"{s['current_ratio']:.2f}x" if s.get("current_ratio") else "N/D"),
-            ("EBITDA (R$ mi)",      f"{s['ebitda']/1000:.0f}" if s.get("ebitda") else "N/D"),
-            ("Rec. Líq. (R$ mi)",   f"{s['net_revenue']/1000:.0f}" if s.get("net_revenue") else "N/D"),
-            ("Lucro Líq. (R$ mi)",  f"{s['net_income']/1000:.0f}" if s.get("net_income") else "N/D"),
-            ("Cob. de Juros",       disp_cov),
-        ]
+        _dy = s.get("dividend_yield")
+        if _is_insurer(sector):
+            # Seguradora não tem DRE convencional: margens/receita/EBITDA/cobertura
+            # de juros não se aplicam (ficavam todos N/D). Mostra só o que faz
+            # sentido + dividendos (relevante no setor).
+            st.caption("ℹ️ Margens, Receita, EBITDA e Cobertura de Juros foram omitidos — "
+                       "seguradora não reporta DRE convencional. Foco em rentabilidade "
+                       "e dividendos.")
+            items = [
+                ("ROA",                 f"{roa:.1f}%" if roa is not None else "N/D"),
+                ("ROIC",                f"{roic:.1f}%" if roic is not None else "N/D"),
+                ("Div. Yield",          f"{_dy:.1f}%" if _dy is not None else "N/D"),
+                ("LPA",                 f"R$ {s['lpa']:.2f}" if s.get("lpa") else "N/D"),
+                ("VPA",                 f"R$ {s['vpa']:.2f}" if s.get("vpa") else "N/D"),
+                ("Lucro Líq. (R$ mi)",  f"{s['net_income']/1000:.0f}" if s.get("net_income") else "N/D"),
+            ]
+        else:
+            items = [
+                ("Margem Líquida",      f"{net_margin:.1f}%" if net_margin is not None else "N/D"),
+                ("Margem Bruta",        f"{_gross_margin:.1f}%" if _gross_margin is not None else "N/D"),
+                ("ROA",                 f"{roa:.1f}%" if roa is not None else "N/D"),
+                ("ROIC",                f"{roic:.1f}%" if roic is not None else "N/D"),
+                ("LPA",                 f"R$ {s['lpa']:.2f}" if s.get("lpa") else "N/D"),
+                ("VPA",                 f"R$ {s['vpa']:.2f}" if s.get("vpa") else "N/D"),
+                ("Liq. Corrente",       f"{s['current_ratio']:.2f}x" if s.get("current_ratio") else "N/D"),
+                ("EBITDA (R$ mi)",      f"{s['ebitda']/1000:.0f}" if s.get("ebitda") else "N/D"),
+                ("Rec. Líq. (R$ mi)",   f"{s['net_revenue']/1000:.0f}" if s.get("net_revenue") else "N/D"),
+                ("Lucro Líq. (R$ mi)",  f"{s['net_income']/1000:.0f}" if s.get("net_income") else "N/D"),
+                ("Cob. de Juros",       disp_cov),
+            ]
         cols = st.columns(3)
         for i, (lbl, val) in enumerate(items):
             with cols[i % 3]:
