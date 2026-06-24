@@ -3636,20 +3636,10 @@ def _sidebar():
         else:
             st.caption("Nenhum dado carregado ainda.")
 
-        if st.button("🔄 Atualizar Todos", use_container_width=True,
-                     disabled=not st.session_state.acoes):
-            with st.spinner("Atualizando todos os tickers…"):
-                erros = _update_all()
-            st.session_state.flash_errors = erros
-            if not erros:
-                st.session_state.flash_success = "Todos os dados atualizados com sucesso!"
-            st.rerun()
-
-        # Atualizar FIIs da lista ativa (mesmo lugar do refresh de ações)
         _fiis_atual_sb = st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
-        if st.button("🔄 Atualizar FIIs", use_container_width=True,
-                     disabled=not _fiis_atual_sb,
-                     help=f"Atualiza os FIIs da lista '{st.session_state.lista_fii_atual}'"):
+
+        def _refresh_fiis(save: bool = True) -> None:
+            """Re-busca os FIIs da lista ativa, preservando posições."""
             _fetch_fii.clear()
             for _tt in list(_fiis_atual_sb.keys()):
                 with st.spinner(f"Atualizando {_tt}…"):
@@ -3660,7 +3650,35 @@ def _sidebar():
                                            "qtd": _old.get("qtd", 0),
                                            "preco_medio": _old.get("preco_medio", 0.0),
                                            "data_compra": _old.get("data_compra", "")}
+            if save:
+                _save_all()
+
+        if st.button("🔄 Atualizar Ações", use_container_width=True,
+                     disabled=not st.session_state.acoes):
+            with st.spinner("Atualizando ações…"):
+                erros = _update_all()
+            st.session_state.flash_errors = erros
+            if not erros:
+                st.session_state.flash_success = "Ações atualizadas com sucesso!"
+            st.rerun()
+
+        if st.button("🔄 Atualizar FIIs", use_container_width=True,
+                     disabled=not _fiis_atual_sb,
+                     help=f"Atualiza os FIIs da lista '{st.session_state.lista_fii_atual}'"):
+            _refresh_fiis()
+            st.rerun()
+
+        if st.button("🔄 Atualizar Tudo", use_container_width=True, type="primary",
+                     disabled=not (st.session_state.acoes or _fiis_atual_sb),
+                     help="Atualiza ações e FIIs de uma vez"):
+            with st.spinner("Atualizando ações…"):
+                erros = _update_all() if st.session_state.acoes else []
+            if _fiis_atual_sb:
+                _refresh_fiis(save=False)
             _save_all()
+            st.session_state.flash_errors = erros
+            if not erros:
+                st.session_state.flash_success = "Ações e FIIs atualizados!"
             st.rerun()
 
         # ── Uso da API ─────────────────────────────────────────
@@ -4655,6 +4673,12 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
                 f"R$ {abs(var_reais):,.2f}"
                 .replace(",", "X").replace(".", ",").replace("X", ".")
             )
+            # Quando esses preços foram atualizados (a variação reflege aquele momento)
+            _ups = [acoes.get(p["ticker"], {}).get("updated_at") for p in positions]
+            _ups = [u for u in _ups if u]
+            _upd_line = (
+                f"<div style='font-size:0.72rem;color:#6b7280;margin-top:4px'>"
+                f"atualizado em {_fmt_updated(max(_ups))}</div>" if _ups else "")
             st.markdown(
                 f"""
 <div style="padding:10px 0 4px 0">
@@ -4667,6 +4691,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
   <div style="font-size:0.95rem;color:{var_color};margin-top:4px">
     {sign_r}{reais_abs_fmt}
   </div>
+  {_upd_line}
 </div>""",
                 unsafe_allow_html=True,
             )
