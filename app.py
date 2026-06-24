@@ -4103,6 +4103,90 @@ def _show_fii_screener(fiis_lista_atual: dict) -> None:
             st.rerun()
 
 
+def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
+    """Análise consolidada da carteira de FIIs (posições com qtd > 0)."""
+    _calc = getattr(sf, "calculate_fii_scores", None)
+    positions = []
+    for t, f in fiis_dict.items():
+        qtd = int(f.get("qtd", 0) or 0)
+        price = f.get("close_price")
+        if qtd <= 0 or not price:
+            continue
+        pm = float(f.get("preco_medio", 0) or 0)
+        scf = _calc(f) if _calc else {}
+        positions.append({
+            "ticker": t, "qtd": qtd, "price": price, "value": qtd * price,
+            "preco_medio": pm if pm > 0 else None,
+            "pnl_reais": (price - pm) * qtd if pm > 0 else None,
+            "pnl_pct":   (price / pm - 1) * 100 if pm > 0 else None,
+            "dy": f.get("dividend_yield"), "pvp": f.get("pvp"),
+            "vacancy": f.get("vacancy_pct"), "delinquency": f.get("delinquency_pct"),
+            "quality": scf.get("quality"), "price_score": scf.get("price"),
+            "paper": scf.get("paper", False),
+            "daily_change_pct": f.get("daily_change_pct"), "weight": 0.0,
+        })
+    if not positions:
+        return
+
+    st.divider()
+    st.markdown("## 📊 Análise da Carteira de FIIs")
+    total = sum(p["value"] for p in positions)
+    for p in positions:
+        p["weight"] = p["value"] / total
+
+    # Valor total + P&L
+    col_v, col_pnl = st.columns(2)
+    col_v.metric("💰 Valor Total", f"R$ {total:,.0f}".replace(",", "."))
+    pnl_pos = [p for p in positions if p.get("pnl_reais") is not None]
+    if pnl_pos:
+        tot_pnl = sum(p["pnl_reais"] for p in pnl_pos)
+        tot_custo = sum((p["preco_medio"] or 0) * p["qtd"] for p in pnl_pos)
+        pnl_pct = (tot_pnl / tot_custo * 100) if tot_custo > 0 else None
+        _c = "#4caf50" if tot_pnl >= 0 else "#ef5350"
+        _sig = "+" if tot_pnl >= 0 else "-"
+        col_pnl.markdown(
+            f"<div style='padding:8px 0'><div style='font-size:0.8rem;color:#9ea3b0'>"
+            f"💼 Lucro/Prejuízo não realizado</div>"
+            f"<div style='font-size:1.5rem;font-weight:700;color:{_c}'>"
+            f"{_sig}R$ {abs(tot_pnl):,.0f}".replace(",", ".") +
+            (f" <span style='font-size:1rem'>({_sig}{abs(pnl_pct):.1f}%)</span>" if pnl_pct is not None else "")
+            + "</div></div>", unsafe_allow_html=True)
+
+    # Indicadores ponderados
+    dy_p  = _weighted_avg_portfolio(positions, "dy")
+    pvp_p = _weighted_avg_portfolio(positions, "pvp")
+    vac_p = _weighted_avg_portfolio(positions, "vacancy")
+    ina_p = _weighted_avg_portfolio(positions, "delinquency")
+    cA, cB, cC, cD = st.columns(4)
+    cA.metric("DY Pond.", f"{dy_p:.1f}%" if dy_p is not None else "N/D",
+              help="Dividend Yield médio ponderado pelo valor de cada posição")
+    cB.metric("P/VP Pond.", f"{pvp_p:.2f}x" if pvp_p is not None else "N/D")
+    cC.metric("Vacância Pond.", f"{vac_p:.1f}%" if vac_p is not None else "N/D",
+              help="Só FIIs de tijolo; papel não tem vacância")
+    cD.metric("Inadimpl. Pond.", f"{ina_p:.1f}%" if ina_p is not None else "N/D")
+
+    # Qualidade × Preço ponderado + mapa 2×2
+    q_p = _weighted_avg_portfolio(positions, "quality")
+    p_p = _weighted_avg_portfolio(positions, "price_score")
+    if q_p is not None or p_p is not None:
+        st.markdown("#### 🎯 Qualidade × Preço da carteira")
+        _diag = sf._diagnose_fii(q_p, p_p, paper=(q_p is None)) if hasattr(sf, "_diagnose_fii") else None
+        if _diag:
+            st.markdown(
+                f"<div style='background:{_diag['color']};padding:8px 14px;border-radius:8px;"
+                f"color:#fff;font-size:1.05rem;font-weight:700;margin-bottom:8px'>"
+                f"Carteira: {_diag['label']}</div>", unsafe_allow_html=True)
+        cq, cp = st.columns(2)
+        cq.metric("Qualidade Pond.", f"{q_p:.0f}/100" if q_p is not None else "N/D",
+                  help="Média ponderada — só FIIs de tijolo (papel não tem nota de qualidade)")
+        cp.metric("Preço Pond.", f"{p_p:.0f}/100" if p_p is not None else "N/D")
+        _n_paper = sum(1 for p in positions if p["paper"])
+        _show_portfolio_quality_price_map(positions)
+        if _n_paper:
+            st.caption(f"⚠ {_n_paper} FII(s) de papel não aparecem no mapa "
+                       "(sem eixo de qualidade) — veja-os na tabela e nos alertas do Detalhe.")
+
+
 def _show_fii_lista() -> None:
     """Conteúdo da sub-aba 'Minha lista' dentro da aba FIIs."""
 
@@ -4185,7 +4269,8 @@ def _show_fii_lista() -> None:
                 if _fii_data.get("error"):
                     st.error(_fii_data["error"])
                 else:
-                    fiis_atuais[_t] = _fii_data
+                    fiis_atuais[_t] = {**_fii_data, "qtd": 0,
+                                       "preco_medio": 0.0, "data_compra": ""}
                     st.success(f"{_t} adicionado.")
                     st.rerun()
 
@@ -4225,7 +4310,12 @@ def _show_fii_lista() -> None:
                 with st.spinner(f"Atualizando {_tt}…"):
                     _nd = _fetch_fii(_tt)
                 if not _nd.get("error"):
-                    fiis_atuais[_tt] = _nd
+                    _old = fiis_atuais.get(_tt, {})
+                    fiis_atuais[_tt] = {**_nd,
+                                        "qtd": _old.get("qtd", 0),
+                                        "preco_medio": _old.get("preco_medio", 0.0),
+                                        "data_compra": _old.get("data_compra", "")}
+            _save_all()
             st.rerun()
 
     st.divider()
@@ -4238,6 +4328,59 @@ def _show_fii_lista() -> None:
         )
     else:
         st.info(f"Nenhum FII do tipo '{_tipo_filtro}' na lista.")
+
+    # ── Posições (qtd / preço médio) ──────────────────────────────
+    with st.expander("✏️ Editar posições (quantidade e preço médio)", expanded=False):
+        _fii_pos_rows = []
+        for _t, _f in fiis_atuais.items():
+            _dc_raw = _f.get("data_compra", "")
+            try:
+                _dc_val = _date.fromisoformat(_dc_raw) if _dc_raw else None
+            except ValueError:
+                _dc_val = None
+            _fii_pos_rows.append({
+                "Ticker": _t,
+                "Quantidade": int(_f.get("qtd", 0) or 0),
+                "Preço Médio (R$)": float(_f.get("preco_medio", 0) or 0),
+                "Data de Compra": _dc_val,
+            })
+        _fii_pos_df = pd.DataFrame(_fii_pos_rows)
+        _fii_edited = st.data_editor(
+            _fii_pos_df,
+            column_config={
+                "Ticker": st.column_config.TextColumn("Ticker", disabled=True, width="small"),
+                "Quantidade": st.column_config.NumberColumn(
+                    "Qtd", min_value=0, max_value=10_000_000, step=1, width="small"),
+                "Preço Médio (R$)": st.column_config.NumberColumn(
+                    "Preço Médio (R$)", min_value=0.0, format="%.2f", width="medium",
+                    help="Opcional — para calcular lucro/prejuízo"),
+                "Data de Compra": st.column_config.DateColumn("Data de Compra", width="medium"),
+            },
+            hide_index=True, use_container_width=True, key="fii_qty_data_editor",
+        )
+        if st.button("💾 Salvar posições", key="btn_salvar_fii_qtd"):
+            _changed = False
+            for _, _row in _fii_edited.iterrows():
+                _t = str(_row["Ticker"])
+                _nq = int(_row["Quantidade"] or 0)
+                _npm = float(_row["Preço Médio (R$)"] or 0)
+                _dco = _row["Data de Compra"]
+                _ndc = _dco.isoformat() if _dco is not None else ""
+                if _t in fiis_atuais:
+                    _o = fiis_atuais[_t]
+                    if (_o.get("qtd", 0) != _nq or _o.get("preco_medio", 0) != _npm
+                            or _o.get("data_compra", "") != _ndc):
+                        _o["qtd"], _o["preco_medio"], _o["data_compra"] = _nq, _npm, _ndc
+                        _changed = True
+            if _changed:
+                _save_all()
+                st.success("Posições salvas.")
+                st.rerun()
+            else:
+                st.info("Nenhuma alteração detectada.")
+
+    # ── Análise consolidada da carteira de FIIs ───────────────────
+    _show_fii_portfolio_analysis(fiis_atuais)
 
     st.divider()
 
