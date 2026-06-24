@@ -3122,7 +3122,7 @@ def _comparison_table(selected_tickers: list[str], stocks: list[dict]) -> None:
     """Renderiza tabela indicador × ação com células coloridas por classificação."""
     all_inds = list(SCORED_COLS_ORDER) + ["pvp", "psr"]
 
-    th = "padding:8px 10px;color:#e8eaf6;border-bottom:2px solid #333;background:#1a1d2e;font-weight:600"
+    th = "padding:9px 10px;color:#8b94a7;border-bottom:1px solid #232b3a;background:#151b26;font-weight:600;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em"
     html = "<div style='overflow-x:auto'>"
     html += "<table style='width:100%;border-collapse:collapse;font-size:0.87rem'>"
     html += "<thead><tr>"
@@ -3808,7 +3808,7 @@ def _fmt_fii_val(key: str, fii: dict):
 
 def _fii_table_html(fiis_data: list[dict]) -> str:
     """Renderiza tabela de FIIs com células coloridas por classificação."""
-    th = "padding:8px 10px;color:#e8eaf6;border-bottom:2px solid #333;background:#1a1d2e;font-weight:600"
+    th = "padding:9px 10px;color:#8b94a7;border-bottom:1px solid #232b3a;background:#151b26;font-weight:600;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em"
     html = "<div style='overflow-x:auto'>"
     html += "<table style='width:100%;border-collapse:collapse;font-size:0.87rem'>"
     html += "<thead><tr>"
@@ -4249,7 +4249,7 @@ def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
         tot_pnl = sum(p["pnl_reais"] for p in pnl_pos)
         tot_custo = sum((p["preco_medio"] or 0) * p["qtd"] for p in pnl_pos)
         pnl_pct = (tot_pnl / tot_custo * 100) if tot_custo > 0 else None
-        _c = "#4caf50" if tot_pnl >= 0 else "#ef5350"
+        _c = "#34d399" if tot_pnl >= 0 else "#f87171"
         _sig = "+" if tot_pnl >= 0 else "-"
         col_pnl.markdown(
             f"<div style='padding:8px 0'><div style='font-size:0.8rem;color:#9ea3b0'>"
@@ -4696,7 +4696,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         if var_pond_pct is not None:
             valor_ontem   = total_valor / (1 + var_pond_pct / 100)
             var_reais     = total_valor - valor_ontem
-            var_color     = "#4caf50" if var_pond_pct >= 0 else "#ef5350"
+            var_color     = "#34d399" if var_pond_pct >= 0 else "#f87171"
             icon          = "📈" if var_pond_pct >= 0 else "📉"
             sign_pct      = "+" if var_pond_pct >= 0 else ""
             sign_r        = "+" if var_reais >= 0 else "-"
@@ -4790,16 +4790,16 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         total_pnl = sum(p["pnl_reais"] for p in pnl_positions)
         total_custo = sum((p["preco_medio"] or 0) * p["qtd"] for p in pnl_positions)
         total_pnl_pct = (total_pnl / total_custo * 100) if total_custo > 0 else None
-        pnl_color = "#4caf50" if total_pnl >= 0 else "#ef5350"
+        pnl_color = "#34d399" if total_pnl >= 0 else "#f87171"
         sign = "+" if total_pnl >= 0 else ""
         pnl_fmt = f"R$ {abs(total_pnl):,.0f}".replace(",", ".")
         pct_fmt = f"{sign}{total_pnl_pct:.1f}%" if total_pnl_pct is not None else ""
         st.markdown(
-            f"""<div style='margin-top:12px;padding:10px 14px;border-radius:8px;
-            background:#1a1d2e;border-left:4px solid {pnl_color}'>
-            <span style='color:#9ea3b0;font-size:0.85rem'>💼 Lucro/Prejuízo não realizado
+            f"""<div style='margin-top:12px;padding:14px 16px;border-radius:12px;
+            background:#151b26;border:1px solid #232b3a;border-left:4px solid {pnl_color}'>
+            <span style='color:#8b94a7;font-size:0.85rem'>💼 Lucro/Prejuízo não realizado
             ({len(pnl_positions)} posição{'ões' if len(pnl_positions)>1 else ''})</span><br>
-            <span style='color:{pnl_color};font-size:1.4rem;font-weight:700'>
+            <span style='color:{pnl_color};font-size:1.5rem;font-weight:600'>
             {sign}{pnl_fmt}</span>
             <span style='color:{pnl_color};font-size:1rem;margin-left:10px'>{pct_fmt}</span>
             </div>""",
