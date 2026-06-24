@@ -4326,12 +4326,15 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
         st.info("Nenhum FII na lista. Adicione um ticker acima.")
         return
 
-    # ── Botão remover ─────────────────────────────────────────────
+    # ── Remover / atualizar ───────────────────────────────────────
     col_rem, col_att = st.columns([3, 1])
     with col_rem:
         _fii_tickers = list(fiis_atuais.keys())
-        _rem_sel = st.selectbox("Remover FII", ["—"] + _fii_tickers, key="fii_remover_sel", label_visibility="collapsed")
+        _rem_sel = st.selectbox(
+            "🗑 Remover FII da lista", ["—"] + _fii_tickers, key="fii_remover_sel",
+            help="Escolha o FII e clique em 'Remover' à direita.")
     with col_att:
+        st.caption("")  # alinha verticalmente com o selectbox rotulado
         if st.button("🗑 Remover", key="btn_rem_fii", use_container_width=True):
             if _rem_sel != "—":
                 fiis_atuais.pop(_rem_sel, None)
