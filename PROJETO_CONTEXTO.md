@@ -111,13 +111,20 @@ Vale para **todos os setores, inclusive bancos** (que antes ficavam sem score).
 | CAGR Lucro 5a | 15% | 30% |
 | CAGR Receita 5a | 10% | 20% |
 
-**💰 PREÇO** ("está barata?", score alto = mais barata) — pesos não-banco / banco:
-| Indicador | Não-banco | Banco |
-|---|---|---|
-| EV/EBITDA | 40% | — |
-| P/L | 35% | 40% |
-| P/FCF | 25% | — |
-| P/VP | — | 60% |
+**💰 PREÇO** ("está barata?", score alto = mais barata) — pesos não-banco / banco / seguradora:
+| Indicador | Não-banco | Banco | Seguradora |
+|---|---|---|---|
+| EV/EBITDA | 40% | — | — |
+| P/L | 35% | 40% | 70% |
+| P/FCF | 25% | — | — |
+| P/VP | — | 60% | 30% |
+
+**Seguradoras (jun/2026):** `is_insurer()` (via `INSURER_KEYWORDS`) dá pesos próprios — antes
+eram pontuadas como empresa comum e penalizadas por EV/EBITDA/Mg.EBITDA (métricas que não se
+aplicam: seguradora não tem DRE convencional, EBITDA < lucro líquido). Qualidade = ROE 60% +
+CAGR Lucro 25% + CAGR Receita 15%; Preço = P/L 70% + P/VP 30% (curva `pvp_insurer` própria,
+pois são asset-light com ROE altíssimo → P/VP ~5-6x é "justo"). EV/EBITDA, Dív.Líq/EBITDA,
+Mg.EBITDA e Cob.Juros viram N/A (como bancos); sem checagem de qualidade do lucro.
 
 **Diagnóstico GRADUADO (5 níveis por eixo, jun/2026):** o corte binário 55/56 era
 "simplista". Cada eixo agora tem 5 tiers (`config.py`: `QUALITY_TIERS`, `PRICE_TIERS`):
