@@ -3409,6 +3409,12 @@ def _sidebar():
             index=_AREAS.index(_cur_area) if _cur_area in _AREAS else 0,
             label_visibility="collapsed",
         )
+        _badge_n = st.session_state.get("_alert_badge_n", 0)
+        if _badge_n:
+            st.markdown(
+                f"<div style='background:#1b5e20;color:#fff;padding:5px 10px;border-radius:6px;"
+                f"font-size:0.85rem;margin:2px 0 6px'>🔔 {_badge_n} alerta(s) disparado(s) "
+                f"— veja em <b>Alertas</b></div>", unsafe_allow_html=True)
         st.divider()
 
         # ── Status da API (discreto) ───────────────────────────
@@ -5552,6 +5558,50 @@ def _show_alertas_tab() -> None:
         st.markdown("")
 
 
+def _eval_alerts_global() -> tuple[list[dict], bool]:
+    """Avalia todos os alertas ativos. Retorna (resultados_nao_vistos, acks_mudou).
+
+    resultados = [{alert, triggered, novos}] só dos alertas com disparo NÃO visto.
+    Sincroniza acks: remove tickers que pararam de disparar (condição resetou).
+    """
+    if not st.session_state.get("alertas"):
+        return [], False
+    views = _build_alert_views()
+    resultados, mudou = [], False
+    for alert in st.session_state.alertas:
+        if not alert.get("ativo", True):
+            continue
+        scope_tk = al.scope_tickers(alert, st.session_state.todas_listas)
+        scope_views = [views[t] for t in scope_tk if t in views]
+        trigs = al.evaluate_alert(alert, scope_views)
+        trig_tickers = [d["ticker"] for d in trigs]
+        acks = alert.get("acks", [])
+        new_acks = [a for a in acks if a in trig_tickers]  # reseta acks de quem parou
+        if new_acks != acks:
+            alert["acks"] = new_acks
+            mudou = True
+        novos = [t for t in trig_tickers if t not in alert.get("acks", [])]
+        if novos:
+            resultados.append({"alert": alert, "triggered": trigs, "novos": novos})
+    return resultados, mudou
+
+
+def _show_alert_banner(resultados: list[dict]) -> None:
+    """Banner no topo com os alertas recém-disparados (não vistos)."""
+    linhas = [f"<b>{al.alert_label(r['alert'])}</b> → {', '.join(r['novos'])}"
+              for r in resultados]
+    st.markdown(
+        f"<div style='background:#1b5e20;padding:10px 16px;border-radius:8px;color:#fff;"
+        f"margin-bottom:8px'>🔔 <b>{len(resultados)} alerta(s) disparado(s)</b><br>"
+        + "<br>".join(linhas) + "</div>",
+        unsafe_allow_html=True)
+    if st.button("✓ Marcar como visto", key="_alert_ack_all"):
+        for r in resultados:
+            r["alert"]["acks"] = [d["ticker"] for d in r["triggered"]]
+        _save_all()
+        st.rerun()
+
+
 # ────────────────────────────────────────────────────────────────
 # App principal
 # ────────────────────────────────────────────────────────────────
@@ -5577,7 +5627,17 @@ footer {visibility: hidden;}
         return
 
     _init_state()
+
+    # Avalia alertas antes do sidebar (alimenta o badge); salva se acks mudaram
+    _alert_res, _alert_changed = _eval_alerts_global()
+    if _alert_changed:
+        _save_all()
+    st.session_state._alert_badge_n = len(_alert_res)
+
     _sidebar()
+
+    if _alert_res:
+        _show_alert_banner(_alert_res)
 
     # ── Navegação por área (FIIs/Screener/Ciclo independem de ações) ──
     _area = st.session_state.get("area", "📊 Ações")
