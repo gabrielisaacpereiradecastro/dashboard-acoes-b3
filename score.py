@@ -4,7 +4,6 @@ Lógica de classificação de indicadores e cálculo do Score final (0-100).
 from __future__ import annotations
 import config as _cfg
 from config import (
-    INDICATOR_WEIGHTS, CLASS_POINTS, SCORE_LEVELS,
     BANK_KEYWORDS, UTILITY_KEYWORDS, RETAIL_KEYWORDS,
     QUALITY_WEIGHTS, PRICE_WEIGHTS, QUALITY_WEIGHTS_BANK, PRICE_WEIGHTS_BANK,
     QUALITY_TIERS, PRICE_TIERS, VERDICT_COLORS, SCORE_GOOD_THRESHOLD,
@@ -225,7 +224,7 @@ def classify_cagr_revenue(value, sector: str) -> tuple[str, str]:
 
 
 def classify_pvp(value, sector: str) -> tuple[str, str]:
-    """P/VP — informativo (sem peso no score). Escala diferente para bancos."""
+    """P/VP — escala por setor (bancos e seguradoras têm referências próprias)."""
     if value is None:
         return "ND", "N/D"
     display = f"{value:.2f}×"
@@ -233,6 +232,13 @@ def classify_pvp(value, sector: str) -> tuple[str, str]:
     if is_bank(sector):
         if value <= 1.5:    return "Bom", display
         elif value <= 2.5:  return "Razoável", display
+        else:               return "Proibitivo", display
+    elif is_insurer(sector):
+        # Seguradora é asset-light com ROE altíssimo → P/VP alto é normal.
+        if value <= 4:      return "Excelente", display
+        elif value <= 7:    return "Bom", display
+        elif value <= 10:   return "Razoável", display
+        elif value <= 13:   return "Atenção", display
         else:               return "Proibitivo", display
     else:
         if value < 1.0:     return "Bom", display
@@ -299,86 +305,6 @@ def classify_all(stock: dict) -> dict[str, tuple[str, str]]:
         ind: fn(stock.get(ind), sector)
         for ind, fn in CLASSIFIERS.items()
     }
-
-
-# ────────────────────────────────────────────────────────────────
-# Score final
-# ────────────────────────────────────────────────────────────────
-
-def calculate_score(stock: dict) -> tuple[float | None, str, dict]:
-    """
-    Retorna (score, label, breakdown).
-
-    - score: 0-100 ou None para bancos
-    - label: 'Excelente', 'Bom', 'Razoável', 'Atenção', 'Evitar'
-             ou 'Setor Bancário'
-    - breakdown: {indicador: {classification, display, points, weight, contribution}}
-    """
-    sector = stock.get("sector", "")
-
-    if is_bank(sector):
-        # Spec: bancos não recebem score final
-        classifications = classify_all(stock)
-        breakdown = {
-            ind: {
-                "classification": cls,
-                "display": disp,
-                "points": None,
-                "weight": INDICATOR_WEIGHTS[ind],
-                "contribution": None,
-            }
-            for ind, (cls, disp) in classifications.items()
-        }
-        return None, "Setor Bancário", breakdown
-
-    classifications = classify_all(stock)
-    breakdown: dict = {}
-    weighted_sum = 0.0
-    total_weight = 0.0
-
-    for ind, (cls, disp) in classifications.items():
-        w = INDICATOR_WEIGHTS[ind]
-        if cls in ("ND", "NA", "Inconclusivo"):
-            breakdown[ind] = {
-                "classification": cls,
-                "display": disp,
-                "points": None,
-                "weight": w,
-                "contribution": None,
-            }
-            continue
-
-        pts = CLASS_POINTS.get(cls, 0)
-        contribution = pts * w
-        weighted_sum += contribution
-        total_weight += w
-        breakdown[ind] = {
-            "classification": cls,
-            "display": disp,
-            "points": pts,
-            "weight": w,
-            "contribution": contribution,
-        }
-
-    if total_weight == 0:
-        return 0.0, "Sem dados", breakdown
-
-    # Normaliza redistribuindo pesos dos indicadores ausentes
-    score = weighted_sum / total_weight
-
-    label = "Evitar"
-    for low, high, lbl in SCORE_LEVELS:
-        if low <= score < high:
-            label = lbl
-            break
-
-    return round(score, 1), label, breakdown
-
-
-def score_color(label: str) -> str:
-    """Retorna hex color para o label de score."""
-    from config import SCORE_COLORS
-    return SCORE_COLORS.get(label, "#9e9e9e")
 
 
 # ────────────────────────────────────────────────────────────────

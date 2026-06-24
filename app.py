@@ -22,7 +22,7 @@ import score_fii as sf
 from score import classify_psr as _classify_psr, classify_interest_coverage as _classify_interest_coverage
 import config as _cfg
 from config import (
-    BG_COLORS, COLOR_EMOJI, INDICATOR_LABELS, INDICATOR_WEIGHTS,
+    BG_COLORS, COLOR_EMOJI, INDICATOR_LABELS,
     SCORE_COLORS, SECTOR_REMAP, SETORES_CICLICOS, UTILITY_KEYWORDS,
 )
 
@@ -580,12 +580,11 @@ _EMPTY_SCORES = {
 
 def _enrich(entry: dict) -> dict:
     stock = entry["data"]
-    s, label, breakdown = sc.calculate_score(stock)
     # getattr p/ resiliência ao hot-reload do Streamlit Cloud (módulo em cache
     # sem a função nova → degrada sem derrubar o app inteiro; reboot resolve).
     _calc = getattr(sc, "calculate_scores", None)
     scores = _calc(stock) if _calc else dict(_EMPTY_SCORES)
-    return {**stock, "score": s, "score_label": label, "breakdown": breakdown, "scores": scores}
+    return {**stock, "scores": scores}
 
 
 def _score_band(v) -> str:
@@ -597,6 +596,11 @@ def _score_band(v) -> str:
     elif v >= 40: return "Razoável"
     elif v >= 20: return "Atenção"
     return "Evitar"
+
+
+def _score_color_hex(v) -> str:
+    """Cor (hex) para um score 0-100 — usada em badges compactas."""
+    return SCORE_COLORS.get(_score_band(v), "#9e9e9e")
 
 
 # ────────────────────────────────────────────────────────────────
@@ -855,11 +859,10 @@ def _radar_chart(stocks_data: list[dict], names: list[str]) -> go.Figure:
     fig = go.Figure()
 
     for stock, name, (line_color, fill_color) in zip(stocks_data, names, RADAR_COLORS):
-        breakdown = stock.get("breakdown", {})
+        _sec_r = stock.get("sector", "")
         values = []
         for ind in RADAR_INDICATORS:
-            bd = breakdown.get(ind, {})
-            pts = bd.get("points")
+            pts = sc.score_indicator(ind, stock.get(ind), _sec_r)
             values.append(pts if pts is not None else 0)
         values_closed = values + [values[0]]
 
@@ -2649,9 +2652,7 @@ def _show_detail(s: dict):
     sector = s.get("sector", "")
     bank = sc.is_bank(sector)
     classifications = sc.classify_all(s)
-    score = s.get("score")
-    label = s.get("score_label", "")
-    breakdown = s.get("breakdown", {})
+    scores = s.get("scores") or sc.calculate_scores(s)
 
     # ── Cabeçalho ──────────────────────────────────────────────
     c1, c2, c3 = st.columns([3, 2, 2])
@@ -2706,55 +2707,65 @@ def _show_detail(s: dict):
     # ── Gráfico de preço histórico ──────────────────────────────
     _show_price_history_chart(s)
 
-    # ── Indicadores com score ───────────────────────────────────
+    # ── Indicadores por score (Qualidade × Preço) ──────────────
     st.divider()
-    st.subheader("Indicadores com Score")
+    st.subheader("Indicadores por Score")
+    st.caption("Cada indicador alimenta a **Qualidade** (negócio) ou o **Preço** "
+               "(atratividade). A pontuação 0–100 é contínua; o peso é dentro do "
+               "respectivo eixo.")
 
-    for ind in SCORED_COLS_ORDER:
-        cls, disp = classifications.get(ind, ("ND", "N/D"))
-        label_ind = INDICATOR_LABELS.get(ind, ind)
-        emoji = COLOR_EMOJI.get(cls, "⬜")
-        peso = INDICATOR_WEIGHTS[ind]
-        bd = breakdown.get(ind, {})
-        pts = bd.get("points")
-        contrib = bd.get("contribution")
-        bg = BG_COLORS.get(cls, "#37474f")
-        info = INDICATOR_INFO.get(ind, {})
+    _bd_q = scores.get("breakdown_quality", {})
+    _bd_p = scores.get("breakdown_price", {})
+    for _titulo, _bd in [("🏅 Qualidade", _bd_q), ("💰 Preço (atratividade)", _bd_p)]:
+        if not _bd:
+            continue
+        st.markdown(f"#### {_titulo}")
+        for ind, binfo in _bd.items():
+            if ind == "pvp":  # P/VP não está no classify_all
+                cls, disp = sc.classify_pvp(s.get("pvp"), sector)
+            else:
+                cls, disp = classifications.get(ind, ("ND", "N/D"))
+            label_ind = INDICATOR_LABELS.get(ind, ind)
+            emoji = COLOR_EMOJI.get(cls, "⬜")
+            peso = binfo.get("weight", 0.0)
+            pts = binfo.get("score")
+            bg = BG_COLORS.get(cls, "#37474f")
+            info = INDICATOR_INFO.get(ind, {})
 
-        with st.container():
-            # Layout: [nome] [ℹ️] [(peso X%)] [valor colorido] [pontuação]
-            ca, cb, cc, cd, ce = st.columns([2.0, 0.28, 1.1, 2, 3])
-            with ca:
-                st.markdown(f"**{label_ind}**")
-            with cb:
-                if info:
-                    with st.popover("ℹ️"):
-                        st.markdown(f"**{label_ind}**")
-                        st.markdown(f"**O que mede:** {info.get('o_que_mede', '')}")
-                        st.markdown(f"**Por que importa:** {info.get('por_que_importa', '')}")
-                        st.markdown(f"**Interpretação:** {info.get('interpretacao', '')}")
-                        st.markdown(f"**Faixa ideal:** {info.get('faixa_ideal', '')}")
-                        st.caption(f"⚠ {info.get('atencao', '')}")
-                        insight = _sector_insight(ind, sector)
-                        if insight:
-                            st.divider()
-                            st.markdown(f"📊 **Contexto setorial:** {insight}")
-            with cc:
-                st.markdown(f"*(peso {peso*100:.0f}%)*")
-            with cd:
-                st.markdown(
-                    f"<div style='background:{bg};color:#fff;padding:6px 12px;"
-                    f"border-radius:6px;text-align:center;font-weight:700;font-size:1.05rem'>"
-                    f"{emoji} {disp}</div>",
-                    unsafe_allow_html=True,
-                )
-            with ce:
-                if pts is not None and contrib is not None:
-                    st.caption(f"Pontuação: {pts}/100 → contribuição: {contrib:.1f} pts")
-                    st.progress(int(pts))
-                elif cls in ("ND", "NA"):
-                    st.caption("Não disponível — peso redistribuído entre demais indicadores")
-        st.markdown("")
+            with st.container():
+                # Layout: [nome] [ℹ️] [(peso X%)] [valor colorido] [pontuação]
+                ca, cb, cc, cd, ce = st.columns([2.0, 0.28, 1.1, 2, 3])
+                with ca:
+                    st.markdown(f"**{label_ind}**")
+                with cb:
+                    if info:
+                        with st.popover("ℹ️"):
+                            st.markdown(f"**{label_ind}**")
+                            st.markdown(f"**O que mede:** {info.get('o_que_mede', '')}")
+                            st.markdown(f"**Por que importa:** {info.get('por_que_importa', '')}")
+                            st.markdown(f"**Interpretação:** {info.get('interpretacao', '')}")
+                            st.markdown(f"**Faixa ideal:** {info.get('faixa_ideal', '')}")
+                            st.caption(f"⚠ {info.get('atencao', '')}")
+                            insight = _sector_insight(ind, sector)
+                            if insight:
+                                st.divider()
+                                st.markdown(f"📊 **Contexto setorial:** {insight}")
+                with cc:
+                    st.markdown(f"*(peso {peso*100:.0f}%)*")
+                with cd:
+                    st.markdown(
+                        f"<div style='background:{bg};color:#fff;padding:6px 12px;"
+                        f"border-radius:6px;text-align:center;font-weight:700;font-size:1.05rem'>"
+                        f"{emoji} {disp}</div>",
+                        unsafe_allow_html=True,
+                    )
+                with ce:
+                    if pts is not None:
+                        st.caption(f"Pontuação: {pts:.0f}/100 · peso {peso*100:.0f}%")
+                        st.progress(int(pts))
+                    else:
+                        st.caption("Não disponível/inconclusivo — peso redistribuído")
+            st.markdown("")
 
     # ── Radar dos 6 indicadores principais ─────────────────────
     if not bank:
@@ -3087,10 +3098,11 @@ def _comparison_table(selected_tickers: list[str], stocks: list[dict]) -> None:
 # ────────────────────────────────────────────────────────────────
 
 _SCREENER_PRESETS: dict = {
-    "🏆 Fundamentalista": {"roe_min": 15, "pl_max": 15, "nd_max": 2, "mg_min": 12, "ev_max": 15, "score_min": 65, "excl_bancos": True},
-    "💰 Dividendos":      {"roe_min": 12, "pl_max": 20, "nd_max": 3, "mg_min": 10, "ev_max": 20, "score_min": 55, "excl_bancos": False},
-    "🚀 Crescimento":     {"roe_min": 18, "pl_max": 25, "nd_max": 2, "mg_min": 15, "ev_max": 20, "score_min": 60, "excl_bancos": True},
-    "🎯 Elite ≥ 80":      {"roe_min": 0,  "pl_max": 50, "nd_max": 5, "mg_min":  0, "ev_max": 20, "score_min": 80, "excl_bancos": False},
+    "🏆 Fundamentalista": {"roe_min": 15, "pl_max": 15, "nd_max": 2, "mg_min": 12, "ev_max": 15, "qual_min": 65, "price_min": 0,  "excl_bancos": True},
+    "💰 Dividendos":      {"roe_min": 12, "pl_max": 20, "nd_max": 3, "mg_min": 10, "ev_max": 20, "qual_min": 55, "price_min": 0,  "excl_bancos": False},
+    "🚀 Crescimento":     {"roe_min": 18, "pl_max": 25, "nd_max": 2, "mg_min": 15, "ev_max": 20, "qual_min": 60, "price_min": 0,  "excl_bancos": True},
+    "🎯 Qualidade ≥ 80":  {"roe_min": 0,  "pl_max": 50, "nd_max": 5, "mg_min":  0, "ev_max": 20, "qual_min": 80, "price_min": 0,  "excl_bancos": False},
+    "🔥 Barganhas":       {"roe_min": 0,  "pl_max": 50, "nd_max": 5, "mg_min":  0, "ev_max": 20, "qual_min": 55, "price_min": 70, "excl_bancos": False},
 }
 
 
@@ -3100,7 +3112,9 @@ def _apply_scr_preset(params: dict) -> None:
     st.session_state.scr_nd_max    = int(params.get("nd_max", 2))
     st.session_state.scr_mg_min    = int(params.get("mg_min", 12))
     st.session_state.scr_ev_max    = int(params.get("ev_max", 8))
-    st.session_state.scr_score_min = int(params.get("score_min", 60))
+    # compat: filtros salvos antigos tinham só "score_min" (mapeia p/ Qualidade)
+    st.session_state.scr_qual_min  = int(params.get("qual_min", params.get("score_min", 0)))
+    st.session_state.scr_price_min = int(params.get("price_min", 0))
     st.session_state.scr_excl_bancos = bool(params.get("excl_bancos", True))
 
 
@@ -3148,12 +3162,15 @@ def _show_screener():
         with c2:
             mg_min    = st.slider("Mg. EBITDA mínima (%)", 0, 50,  12, key="scr_mg_min")
             ev_max    = st.slider("EV/EBITDA máximo (x)",  0, 20,   8, key="scr_ev_max")
-            score_min = st.slider("Score mínimo",          0, 100, 60, key="scr_score_min")
         with c3:
+            qual_min  = st.slider("Qualidade mínima",      0, 100,  0, key="scr_qual_min",
+                                  help="Score de Qualidade (negócio) ≥ este valor")
+            price_min = st.slider("Preço mínimo (atrat.)", 0, 100,  0, key="scr_price_min",
+                                  help="Score de Preço (atratividade; maior = mais barata) ≥ este valor")
             excl_bancos = st.checkbox("Excluir bancos", value=True, key="scr_excl_bancos")
             st.caption(
-                "Filtros enviados para a API Bolsai Pro. "
-                "Score mínimo e exclusão de bancos são aplicados localmente."
+                "Filtros de múltiplos vão para a API; Qualidade, Preço e exclusão "
+                "de bancos são aplicados localmente."
             )
 
         # Salvar filtro atual
@@ -3168,7 +3185,8 @@ def _show_screener():
                 if _nome:
                     st.session_state.screener_filtros[_nome] = {
                         "roe_min": roe_min, "pl_max": pl_max, "nd_max": nd_max,
-                        "mg_min": mg_min, "ev_max": ev_max, "score_min": score_min,
+                        "mg_min": mg_min, "ev_max": ev_max,
+                        "qual_min": qual_min, "price_min": price_min,
                         "excl_bancos": excl_bancos,
                     }
                     _save_all()
@@ -3222,13 +3240,23 @@ def _show_screener():
             "pvp":              raw.get("pvp"),
             "net_margin":       raw.get("net_margin"),
         }
-        scr_score, scr_label, scr_bd = sc.calculate_score(stock)
-        if score_min == 0 or (scr_score is not None and scr_score >= score_min):
-            enriched_scr.append({**stock, "score": scr_score, "score_label": scr_label, "breakdown": scr_bd})
+        scr_scores = sc.calculate_scores(stock)
+        _q, _p = scr_scores.get("quality"), scr_scores.get("price")
+        if qual_min > 0 and (_q is None or _q < qual_min):
+            continue
+        if price_min > 0 and (_p is None or _p < price_min):
+            continue
+        enriched_scr.append({**stock, "scores": scr_scores})
 
+    _crit = []
+    if qual_min > 0:
+        _crit.append(f"Qualidade ≥ {qual_min}")
+    if price_min > 0:
+        _crit.append(f"Preço ≥ {price_min}")
+    _crit_str = (" com " + " e ".join(_crit)) if _crit else ""
     st.info(
         f"**{total}** ações analisadas pela Bolsai. "
-        f"Exibindo **{len(enriched_scr)}** com score ≥ {score_min}"
+        f"Exibindo **{len(enriched_scr)}**{_crit_str}"
         + (" (bancos excluídos)." if excl_bancos else ".")
     )
 
@@ -3573,9 +3601,10 @@ def _sidebar():
         else:
             for ticker, entry in list(st.session_state.acoes.items()):
                 data = entry.get("data", {})
-                s, lbl, _ = sc.calculate_score({**data})
-                score_str = f"{s:.0f}" if s is not None else "Ban."
-                cor_score = SCORE_COLORS.get(lbl, "#9e9e9e")
+                _sc_side = sc.calculate_scores({**data})
+                _q_side, _p_side = _sc_side.get("quality"), _sc_side.get("price")
+                _q_str = f"{_q_side:.0f}" if _q_side is not None else "—"
+                _p_str = f"{_p_side:.0f}" if _p_side is not None else "—"
 
                 col_a, col_b, col_c = st.columns([3, 2, 1])
                 with col_a:
@@ -3583,8 +3612,9 @@ def _sidebar():
                         st.session_state.selected_ticker = ticker
                 with col_b:
                     st.markdown(
-                        f"<span style='color:{cor_score};font-size:0.9rem'>"
-                        f"{score_str} {lbl[:4] if lbl else ''}</span>",
+                        f"<span style='font-size:0.8rem'>"
+                        f"<span style='color:{_score_color_hex(_q_side)}'>Q {_q_str}</span> · "
+                        f"<span style='color:{_score_color_hex(_p_side)}'>P {_p_str}</span></span>",
                         unsafe_allow_html=True,
                     )
                 with col_c:
@@ -5040,7 +5070,10 @@ footer {visibility: hidden;}
             st.warning(f"Erro ao processar {ticker}: {ex}")
 
     enriched.sort(
-        key=lambda x: (x.get("score") is not None, x.get("score") or -1),
+        key=lambda x: (
+            (x.get("scores") or {}).get("quality") is not None,
+            (x.get("scores") or {}).get("quality") or -1,
+        ),
         reverse=True,
     )
 
@@ -5235,7 +5268,7 @@ div[data-testid="stPopover"] button:hover {
                 if _tk not in _all_stocks_map:
                     _raw = _entry.get("data", {})
                     if _raw and not _raw.get("error"):
-                        # _enrich adiciona score/breakdown necessários para o radar
+                        # _enrich adiciona os scores; o radar usa score_indicator
                         _all_stocks_map[_tk] = (_lname, _enrich(_entry))
 
         if not _all_stocks_map:

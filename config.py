@@ -5,29 +5,6 @@ Configurações centralizadas: pesos, limites por indicador, cores e classifica�
 # Base URL da API Bolsai
 BASE_URL = "https://api.usebolsai.com/api/v1"
 
-# Pesos de cada indicador no score final (devem somar 1.0)
-INDICATOR_WEIGHTS = {
-    "net_debt_ebitda":  0.25,
-    "roe":              0.20,
-    "ev_ebitda":        0.15,
-    "pl":               0.10,
-    "ebitda_margin":    0.10,
-    "cagr_earnings_5y": 0.05,
-    "p_fcf":            0.05,
-    "dividend_yield":   0.05,
-    "liquidity":        0.05,
-    "cagr_revenue_5y":  0.05,
-}
-
-# Pontos internos por classificação (0-100)
-CLASS_POINTS = {
-    "Excelente": 100,
-    "Bom":       75,
-    "Razoável":  50,
-    "Atenção":   25,
-    "Proibitivo": 0,
-}
-
 # ────────────────────────────────────────────────────────────────
 # Scores SEPARADOS: Qualidade (negócio) × Preço (valuation)
 # ────────────────────────────────────────────────────────────────
@@ -94,15 +71,6 @@ VERDICT_COLORS = {
     "fraca_barata": "#bf360c",  # barata mas fraca = ⚠ value trap
     "fraca_cara":   "#7f0000",  # fraca+cara
 }
-
-# Faixas de Score final e rótulos
-SCORE_LEVELS = [
-    (80, 101, "Excelente"),
-    (60,  80, "Bom"),
-    (40,  60, "Razoável"),
-    (20,  40, "Atenção"),
-    (0,   20, "Evitar"),
-]
 
 # Cores de fundo (CSS) para cada classificação — otimizadas para dark mode
 BG_COLORS = {
