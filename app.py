@@ -3796,73 +3796,113 @@ def _fii_table_html(fiis_data: list[dict]) -> str:
     return html
 
 
-def _show_fii_detail(fii: dict) -> None:
-    score, score_lbl, breakdown = sf.calculate_fii_score(fii)
-    score_color = _FII_SCORE_COLORS.get(score_lbl, "#9e9e9e")
+_FII_IND_LABELS = {
+    "dividend_yield": "DY TTM",
+    "pvp":            "P/VP",
+    "vacancy_pct":    "Vacância",
+    "liquidity":      "Liquidez",
+    "delinquency_pct": "Inadimplência",
+}
 
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        st.markdown(f"### {fii.get('ticker')} — {fii.get('name','')}")
-        ft = fii.get("fund_type") or ""
-        seg = fii.get("segment") or ""
-        st.caption(f"{_FII_TYPE_LABELS.get(ft.lower(), ft)}  •  {seg}")
-    with c2:
-        if score is not None:
-            st.markdown(
-                f"<div style='text-align:center;padding:12px;background:{score_color};"
-                f"border-radius:8px;margin-top:4px'>"
-                f"<div style='font-size:2rem;font-weight:700'>{score:.0f}</div>"
-                f"<div style='font-size:0.85rem'>{score_lbl}</div></div>",
-                unsafe_allow_html=True,
-            )
+
+def _show_fii_detail(fii: dict) -> None:
+    # getattr p/ resiliência ao hot-reload do Streamlit (score_fii em cache
+    # sem a função nova → mostra aviso de reboot em vez de quebrar).
+    _calc = getattr(sf, "calculate_fii_scores", None)
+    if _calc is None:
+        st.warning("Atualize o app: faça **Reboot** (Manage app → ⋮ → Reboot) "
+                   "para carregar os scores novos de FII.")
+        return
+    scores = _calc(fii)
+    q, p, diag = scores.get("quality"), scores.get("price"), scores.get("diagnosis")
+    paper = scores.get("paper", False)
+
+    st.markdown(f"### {fii.get('ticker')} — {fii.get('name','')}")
+    ft = fii.get("fund_type") or ""
+    seg = fii.get("segment") or ""
+    st.caption(f"{_FII_TYPE_LABELS.get(ft.lower(), ft)}  •  {seg}")
+
+    # ── Diagnóstico Qualidade × Preço ──────────────────────────
+    if diag:
+        st.markdown(
+            f"<div style='background:{diag['color']};padding:8px 16px;border-radius:8px;"
+            f"color:#fff;font-size:1.15rem;font-weight:700;margin:6px 0'>"
+            f"{('💰 ' if paper else '')}{diag['label']}</div>",
+            unsafe_allow_html=True)
+    cqp = st.columns(2)
+    if paper:
+        cqp[0].metric("Qualidade", "N/A — papel")
+    else:
+        cqp[0].metric("Qualidade", f"{q:.0f}/100" if q is not None else "—")
+        if diag and diag.get("quality_tier"):
+            cqp[0].caption(f"**{diag['quality_tier']}**")
+    cqp[1].metric("Preço (atratividade)", f"{p:.0f}/100" if p is not None else "—")
+    if diag and diag.get("price_tier"):
+        cqp[1].caption(f"**{diag['price_tier']}**")
+
+    # ── Alertas de robustez + disclaimer de papel ──────────────
+    for _alert in scores.get("alerts", []):
+        st.warning(_alert)
+    if paper:
+        st.info(
+            "📋 **FII de papel — qualidade não pontuada.** Os dados da Bolsai não cobrem "
+            "risco de crédito (inadimplência/rating/LTV dos CRIs), que é o que realmente "
+            "importa aqui. Os alertas acima sinalizam problemas estruturais, mas **não "
+            "substituem a leitura do relatório gerencial** do fundo."
+        )
 
     st.divider()
 
-    # Métricas principais
+    # ── Métricas principais (oculta vacância/inadimplência p/ papel) ──
     price = fii.get("close_price")
     chg = fii.get("daily_change_pct")
-    cols_m = st.columns(5)
-    cols_m[0].metric("Preço", f"R$ {price:.2f}" if price else "N/D",
-                     delta=f"{chg:+.2f}%" if chg is not None else None)
     dy = fii.get("dividend_yield")
-    cols_m[1].metric("DY TTM", f"{dy:.1f}%" if dy is not None else "N/D")
     pvp = fii.get("pvp")
-    cols_m[2].metric("P/VP", f"{pvp:.2f}x" if pvp is not None else "N/D")
-    vac = fii.get("vacancy_pct")
-    cols_m[3].metric("Vacância", f"{vac:.1f}%" if vac is not None else "N/D")
-    ina = fii.get("delinquency_pct")
-    cols_m[4].metric("Inadimplência", f"{ina:.1f}%" if ina is not None else "N/D")
+    if paper:
+        cols_m = st.columns(4)
+        cols_m[0].metric("Preço", f"R$ {price:.2f}" if price else "N/D",
+                         delta=f"{chg:+.2f}%" if chg is not None else None)
+        cols_m[1].metric("DY TTM", f"{dy:.1f}%" if dy is not None else "N/D")
+        cols_m[2].metric("P/VP", f"{pvp:.2f}x" if pvp is not None else "N/D")
+        _liq = fii.get("liquidity")
+        cols_m[3].metric("Liquidez/dia", _fmt_mcap(_liq) if _liq else "N/D")
+    else:
+        cols_m = st.columns(5)
+        cols_m[0].metric("Preço", f"R$ {price:.2f}" if price else "N/D",
+                         delta=f"{chg:+.2f}%" if chg is not None else None)
+        cols_m[1].metric("DY TTM", f"{dy:.1f}%" if dy is not None else "N/D")
+        cols_m[2].metric("P/VP", f"{pvp:.2f}x" if pvp is not None else "N/D")
+        vac = fii.get("vacancy_pct")
+        cols_m[3].metric("Vacância", f"{vac:.1f}%" if vac is not None else "N/D")
+        ina = fii.get("delinquency_pct")
+        cols_m[4].metric("Inadimplência", f"{ina:.1f}%" if ina is not None else "N/D")
 
     st.divider()
 
-    # Score breakdown
-    with st.expander("📊 Composição do Score", expanded=True):
-        _ind_labels = {
-            "dividend_yield": "DY TTM",
-            "pvp":            "P/VP",
-            "vacancy_pct":    "Vacância",
-            "liquidity":      "Liquidez",
-            "delinquency_pct": "Inadimplência",
-        }
-        _weights_pct = {k: f"{v*100:.0f}%" for k, v in sf.FII_WEIGHTS.items()}
-        for ind, bd in breakdown.items():
-            cls = bd["classification"]
-            bg = BG_COLORS.get(cls, "#37474f")
-            emoji = COLOR_EMOJI.get(cls, "⬜")
-            contrib = bd.get("contribution")
-            contrib_str = f"{contrib:.1f} pts" if contrib is not None else "—"
-            label_ind = _ind_labels.get(ind, ind)
-            st.markdown(
-                f"<div style='display:flex;align-items:center;gap:8px;margin:4px 0;"
-                f"padding:6px 10px;background:{bg};border-radius:6px'>"
-                f"<span style='font-size:1.1rem'>{emoji}</span>"
-                f"<span style='flex:1;font-weight:500'>{label_ind}</span>"
-                f"<span style='color:#ccc;font-size:0.8rem'>peso {_weights_pct[ind]}</span>"
-                f"<span style='margin-left:12px;font-weight:600'>{bd['display']}  "
-                f"<span style='font-size:0.75rem;opacity:0.8'>{contrib_str}</span></span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+    # ── Composição dos scores (Qualidade × Preço) ──────────────
+    with st.expander("📊 Composição dos scores", expanded=True):
+        _grupos = [("💰 Preço (atratividade)", scores.get("breakdown_price", {}))]
+        if not paper:
+            _grupos.insert(0, ("🏅 Qualidade", scores.get("breakdown_quality", {})))
+        for _titulo, _bd in _grupos:
+            if not _bd:
+                continue
+            st.markdown(f"**{_titulo}**")
+            for ind, binfo in _bd.items():
+                _sci = binfo.get("score")
+                _sv = "—" if _sci is None else f"{_sci:.0f}/100"
+                _raw = fii.get(ind)
+                if ind in ("dividend_yield", "vacancy_pct", "delinquency_pct"):
+                    _disp = f"{_raw:.1f}%" if _raw is not None else "N/D"
+                elif ind == "pvp":
+                    _disp = f"{_raw:.2f}x" if _raw is not None else "N/D"
+                elif ind == "liquidity":
+                    _disp = _fmt_mcap(_raw) if _raw else "N/D"
+                else:
+                    _disp = str(_raw) if _raw is not None else "N/D"
+                st.caption(
+                    f"{_FII_IND_LABELS.get(ind, ind)}: **{_disp}** · "
+                    f"pontuação {_sv} · peso {binfo['weight']*100:.0f}%")
 
     # Dados complementares
     with st.expander("🏢 Dados do fundo", expanded=False):
