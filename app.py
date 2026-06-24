@@ -3759,15 +3759,6 @@ _FII_COL_HEADERS = [
     "Vacância", "Inadimp.", "Liquidez", "Qualidade", "Preço*", "Diagnóstico",
 ]
 
-_FII_SCORE_COLORS = {
-    "Excelente": "#1b5e20",
-    "Bom":       "#2e7d32",
-    "Razoável":  "#7b5800",
-    "Atenção":   "#bf360c",
-    "Evitar":    "#7f0000",
-}
-
-
 @st.cache_data(ttl=3600)
 def _fetch_fii(ticker: str) -> dict:
     try:
