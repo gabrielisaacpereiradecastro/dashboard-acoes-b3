@@ -3630,6 +3630,24 @@ def _sidebar():
                 st.session_state.flash_success = "Todos os dados atualizados com sucesso!"
             st.rerun()
 
+        # Atualizar FIIs da lista ativa (mesmo lugar do refresh de ações)
+        _fiis_atual_sb = st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
+        if st.button("🔄 Atualizar FIIs", use_container_width=True,
+                     disabled=not _fiis_atual_sb,
+                     help=f"Atualiza os FIIs da lista '{st.session_state.lista_fii_atual}'"):
+            _fetch_fii.clear()
+            for _tt in list(_fiis_atual_sb.keys()):
+                with st.spinner(f"Atualizando {_tt}…"):
+                    _nd = _fetch_fii(_tt)
+                if not _nd.get("error"):
+                    _old = _fiis_atual_sb.get(_tt, {})
+                    _fiis_atual_sb[_tt] = {**_nd,
+                                           "qtd": _old.get("qtd", 0),
+                                           "preco_medio": _old.get("preco_medio", 0.0),
+                                           "data_compra": _old.get("data_compra", "")}
+            _save_all()
+            st.rerun()
+
         # ── Uso da API ─────────────────────────────────────────
         with st.expander("📊 Uso da API (quota)"):
             usage = api.check_api_usage()
@@ -4342,20 +4360,9 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
                 fiis_atuais.pop(_rem_sel, None)
                 if st.session_state.selected_fii == _rem_sel:
                     st.session_state.selected_fii = None
+                _save_all()
                 st.rerun()
-        if st.button("🔄 Atualizar tudo", key="btn_att_fiis", use_container_width=True):
-            _fetch_fii.clear()
-            for _tt in list(fiis_atuais.keys()):
-                with st.spinner(f"Atualizando {_tt}…"):
-                    _nd = _fetch_fii(_tt)
-                if not _nd.get("error"):
-                    _old = fiis_atuais.get(_tt, {})
-                    fiis_atuais[_tt] = {**_nd,
-                                        "qtd": _old.get("qtd", 0),
-                                        "preco_medio": _old.get("preco_medio", 0.0),
-                                        "data_compra": _old.get("data_compra", "")}
-            _save_all()
-            st.rerun()
+    st.caption("🔄 Para atualizar os dados dos FIIs, use **Atualizar FIIs** no menu lateral.")
 
     st.divider()
 
