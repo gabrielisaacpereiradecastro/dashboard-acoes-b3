@@ -2626,8 +2626,9 @@ def _show_score_panel(s: dict) -> None:
     st.subheader("📊 Qualidade × Preço")
     if diag:
         st.markdown(
-            f"<div style='background:{diag['color']};padding:10px 16px;border-radius:8px;color:#fff;"
-            f"font-size:1.2rem;font-weight:700;margin-bottom:8px'>{diag['label']}</div>",
+            f"<div style='display:inline-block;background:{diag['color']};padding:6px 16px;"
+            f"border-radius:999px;color:#fff;font-size:1.05rem;font-weight:600;margin-bottom:10px'>"
+            f"{diag['label']}</div>",
             unsafe_allow_html=True)
     elif q is None and p is None:
         st.info("Dados insuficientes para calcular os scores deste ticker.")
@@ -2690,7 +2691,12 @@ def _show_detail(s: dict):
         pregao = s.get("trade_name", "")
         st.markdown(f"## {pregao or nome}")
         st.caption(nome if pregao else "")
-        st.markdown(f"**Setor:** {sector or '—'}")
+        _tkr = s.get("ticker", "")
+        st.markdown(
+            f"<span style='display:inline-block;font-size:0.8rem;font-weight:500;color:#a7f3d0;"
+            f"background:#0c2a23;border:1px solid #1f4a3d;padding:3px 11px;border-radius:999px'>"
+            f"{sector or '—'}{(' · ' + _tkr) if _tkr else ''}</span>",
+            unsafe_allow_html=True)
         ref = s.get("reference_date", "")
         if ref:
             st.caption(f"Balanço de referência: {ref}")
@@ -3916,8 +3922,8 @@ def _show_fii_detail(fii: dict) -> None:
     # ── Diagnóstico Qualidade × Preço ──────────────────────────
     if diag:
         st.markdown(
-            f"<div style='background:{diag['color']};padding:8px 16px;border-radius:8px;"
-            f"color:#fff;font-size:1.15rem;font-weight:700;margin:6px 0'>"
+            f"<div style='display:inline-block;background:{diag['color']};padding:6px 16px;"
+            f"border-radius:999px;color:#fff;font-size:1.05rem;font-weight:600;margin:6px 0'>"
             f"{('💰 ' if paper else '')}{diag['label']}</div>",
             unsafe_allow_html=True)
     cqp = st.columns(2)
