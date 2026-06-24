@@ -5379,9 +5379,26 @@ div[data-testid="stPopover"] button:hover {
 </style>
 """, unsafe_allow_html=True)
 
-    tab_comp, tab_det, tab_cmp, tab_ciclo, tab_scr, tab_fii = st.tabs(
-        ["📊 Comparativo", "🔍 Detalhe", "⚖️ Comparar", "🌐 Ciclo", "🔎 Screener", "🏢 FIIs"]
+    enriched = _dedup_enriched(enriched)
+
+    tab_cart, tab_comp, tab_det, tab_cmp, tab_ciclo, tab_scr, tab_fii = st.tabs(
+        ["📊 Carteira", "📋 Tabela", "🔍 Detalhe", "⚖️ Comparar",
+         "🌐 Ciclo", "🔎 Screener", "🏢 FIIs"]
     )
+
+    # ────────────────────────────────────────────────────────────
+    # Tab — Carteira (consolidada da ⭐ Carteira)
+    # ────────────────────────────────────────────────────────────
+    with tab_cart:
+        if st.session_state.lista_atual == LISTAS_PADRAO[0]:
+            _qty_editor(enriched, st.session_state.acoes)
+            _show_portfolio_analysis(enriched, st.session_state.acoes)
+        else:
+            st.info(
+                f"A análise consolidada é da lista **{LISTAS_PADRAO[0]}**. "
+                f"Selecione-a no menu lateral (você está em "
+                f"**{st.session_state.lista_atual}**)."
+            )
 
     # ────────────────────────────────────────────────────────────
     # Tab 1 — Comparativo (tabela limpa, sem radar)
@@ -5389,12 +5406,11 @@ div[data-testid="stPopover"] button:hover {
     with tab_comp:
         st.markdown("### Tabela Comparativa")
         st.caption(
-            "Clique em uma linha para ver o detalhamento completo na aba **Detalhe**. "
-            "Colunas coloridas por classificação fundamentalista. "
-            "Use a aba **⚖️ Comparar** para o radar comparativo entre ações."
+            "Veja cada ação da lista lado a lado, colorida por classificação. "
+            "Selecione uma na aba **🔍 Detalhe** para o aprofundamento, ou use "
+            "**⚖️ Comparar** para o radar. A consolidação das suas posições está em **📊 Carteira**."
         )
 
-        enriched = _dedup_enriched(enriched)
         display_df, class_df = _build_table(enriched)
         if display_df.empty or "Ticker" not in display_df.columns:
             st.warning(
@@ -5485,13 +5501,6 @@ div[data-testid="stPopover"] button:hover {
                 mime="text/csv",
                 use_container_width=True,
             )
-
-        # ── Quantidades e análise de portfólio ────────────────────
-        _is_carteira = st.session_state.lista_atual == LISTAS_PADRAO[0]
-        if _is_carteira:
-            st.divider()
-            _qty_editor(enriched, st.session_state.acoes)
-            _show_portfolio_analysis(enriched, st.session_state.acoes)
 
     # ────────────────────────────────────────────────────────────
     # Tab 2 — Detalhe
