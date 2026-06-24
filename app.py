@@ -5469,7 +5469,6 @@ def _show_alertas_tab() -> None:
         op_sel = cc2.selectbox("Op", al.OPERADORES, key="_alert_op", label_visibility="collapsed")
         val_sel = cc3.number_input("Valor", value=0.0, step=0.5, key="_alert_val",
                                    label_visibility="collapsed")
-        cc4.markdown("")
         if cc4.button("➕ Condição", key="_alert_add_cond", use_container_width=True):
             st.session_state._alert_conds.append(
                 {"fator": f_sel, "operador": op_sel, "valor": float(val_sel)})
