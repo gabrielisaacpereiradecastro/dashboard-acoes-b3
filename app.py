@@ -4268,7 +4268,6 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
                 "sector":           e.get("sector") or "Outros",
                 "dy":               e.get("dividend_yield"),
                 "pl":               e.get("pl") if (e.get("pl") or 0) > 0 else None,
-                "score":            e.get("score"),
                 "quality":          _sc.get("quality"),
                 "price_score":      _sc.get("price"),
                 "nd_ebitda":        e.get("net_debt_ebitda"),
@@ -4342,10 +4341,9 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     # ── Indicadores ponderados ────────────────────────────────────
     dy_pond   = _weighted_avg_portfolio(positions, "dy")
     pl_pond   = _weighted_avg_portfolio(positions, "pl")
-    sc_pond   = _weighted_avg_portfolio(positions, "score")
     nd_pond   = _weighted_avg_portfolio(positions, "nd_ebitda")
 
-    col_dy, col_pl, col_sc, col_nd = st.columns(4)
+    col_dy, col_pl, col_nd = st.columns(3)
     col_dy.metric(
         "DY Pond.",
         f"{dy_pond:.1f}%" if dy_pond is not None else "N/D",
@@ -4355,11 +4353,6 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         "P/L Pond.",
         f"{pl_pond:.1f}x" if pl_pond is not None else "N/D",
         help="P/L médio ponderado (exclui P/L negativo e inconclusivo)",
-    )
-    col_sc.metric(
-        "Score Pond.",
-        f"{sc_pond:.0f}" if sc_pond is not None else "N/D",
-        help="Score médio ponderado pelo valor de cada posição",
     )
     col_nd.metric(
         "Dív/EBITDA Pond.",
