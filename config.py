@@ -55,6 +55,18 @@ PRICE_WEIGHTS_BANK = {
     "pvp": 0.60,
     "pl":  0.40,
 }
+# Seguradoras: como bancos, ROE é o eixo de qualidade; mas o Preço se ancora
+# no P/L (EV/EBITDA não se aplica; P/VP é naturalmente alto por serem
+# asset-light com ROE altíssimo → entra com peso menor e curva própria).
+QUALITY_WEIGHTS_INSURER = {
+    "roe":              0.60,
+    "cagr_earnings_5y": 0.25,
+    "cagr_revenue_5y":  0.15,
+}
+PRICE_WEIGHTS_INSURER = {
+    "pl":  0.70,
+    "pvp": 0.30,
+}
 
 # Limiar "bom/barato" para a cor do diagnóstico (≥)
 SCORE_GOOD_THRESHOLD = 55

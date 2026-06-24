@@ -2,12 +2,24 @@
 Lógica de classificação de indicadores e cálculo do Score final (0-100).
 """
 from __future__ import annotations
+import config as _cfg
 from config import (
     INDICATOR_WEIGHTS, CLASS_POINTS, SCORE_LEVELS,
     BANK_KEYWORDS, UTILITY_KEYWORDS, RETAIL_KEYWORDS,
     QUALITY_WEIGHTS, PRICE_WEIGHTS, QUALITY_WEIGHTS_BANK, PRICE_WEIGHTS_BANK,
     QUALITY_TIERS, PRICE_TIERS, VERDICT_COLORS, SCORE_GOOD_THRESHOLD,
 )
+
+# getattr p/ resiliência ao hot-reload do Streamlit (config em cache sem os
+# nomes novos → usa defaults locais em vez de quebrar o import).
+INSURER_KEYWORDS = getattr(
+    _cfg, "INSURER_KEYWORDS",
+    ["seguradora", "seguradoras", "seguros", "seguridade", "resseguro"])
+QUALITY_WEIGHTS_INSURER = getattr(
+    _cfg, "QUALITY_WEIGHTS_INSURER",
+    {"roe": 0.60, "cagr_earnings_5y": 0.25, "cagr_revenue_5y": 0.15})
+PRICE_WEIGHTS_INSURER = getattr(
+    _cfg, "PRICE_WEIGHTS_INSURER", {"pl": 0.70, "pvp": 0.30})
 
 
 # ────────────────────────────────────────────────────────────────
@@ -21,6 +33,11 @@ def _lower(sector: str) -> str:
 def is_bank(sector: str) -> bool:
     s = _lower(sector)
     return any(k in s for k in BANK_KEYWORDS)
+
+
+def is_insurer(sector: str) -> bool:
+    s = _lower(sector)
+    return any(k in s for k in INSURER_KEYWORDS)
 
 
 def is_utility(sector: str) -> bool:
@@ -40,6 +57,8 @@ def is_retail(sector: str) -> bool:
 def classify_net_debt_ebitda(value, sector: str) -> tuple[str, str]:
     if is_bank(sector):
         return "NA", "N/A — Bancário"
+    if is_insurer(sector):
+        return "NA", "N/A — Seguradora"
     if value is None:
         return "ND", "N/D"
 
@@ -85,6 +104,8 @@ def classify_roe(value, sector: str) -> tuple[str, str]:
 def classify_ev_ebitda(value, sector: str) -> tuple[str, str]:
     if is_bank(sector):
         return "NA", "N/A — Bancário"
+    if is_insurer(sector):
+        return "NA", "N/A — Seguradora"
     if value is None:
         return "ND", "N/D"
     display = f"{value:.2f}x"
@@ -113,6 +134,8 @@ def classify_pl(value, sector: str) -> tuple[str, str]:
 
 
 def classify_ebitda_margin(value, sector: str) -> tuple[str, str]:
+    if is_insurer(sector):
+        return "NA", "N/A — Seguradora"
     if value is None:
         return "ND", "N/D"
     display = f"{value:.1f}%"
@@ -235,6 +258,8 @@ def classify_interest_coverage(value, sector: str) -> tuple[str, str]:
     """Cobertura de Juros = EBIT / Despesa Financeira. Informativo."""
     if is_bank(sector):
         return "NA", "N/A — Bancário"
+    if is_insurer(sector):
+        return "NA", "N/A — Seguradora"
     if value is None:
         return "ND", "N/D"
     display = f"{value:.2f}×"
@@ -377,6 +402,9 @@ _CURVES = {
     "p_fcf":                [(8, 100), (15, 75), (22, 50), (30, 25), (40, 0)],
     "pvp":                  [(0.5, 100), (1, 90), (2, 60), (3, 40), (5, 15), (7, 0)],
     "pvp_bank":             [(0.7, 100), (1.0, 80), (1.5, 55), (2.0, 35), (2.5, 15), (3, 5)],
+    # Seguradoras: asset-light, ROE altíssimo → P/VP estruturalmente alto.
+    # ~5-6x é "normal/justo" para BBSE3/CXSE3; só acima de ~9x começa a pesar.
+    "pvp_insurer":          [(2, 100), (4, 80), (6, 55), (8, 35), (11, 10), (14, 0)],
 }
 
 
@@ -397,6 +425,10 @@ def score_indicator(ind: str, value, sector: str):
     if value is None:
         return None
     bank = is_bank(sector)
+    insurer = is_insurer(sector)
+    # Seguradora: métricas de EBITDA/dívida não se aplicam.
+    if insurer and ind in ("ev_ebitda", "net_debt_ebitda", "ebitda_margin", "p_fcf"):
+        return None
     # Casos especiais
     if ind in ("ev_ebitda", "p_fcf") and value < 0:
         return 0.0
@@ -417,6 +449,8 @@ def score_indicator(ind: str, value, sector: str):
         key = "ebitda_margin_retail"
     elif ind == "ebitda_margin" and is_utility(sector):
         key = "ebitda_margin_util"
+    elif ind == "pvp" and insurer:
+        key = "pvp_insurer"
     elif ind == "pvp" and bank:
         key = "pvp_bank"
 
@@ -483,8 +517,8 @@ def earnings_quality(stock: dict) -> dict | None:
     - penalty: fator multiplicativo aplicado ao score de Qualidade (≤ 1.0).
     """
     sector = stock.get("sector", "")
-    if is_bank(sector):
-        return None
+    if is_bank(sector) or is_insurer(sector):
+        return None  # FCL não é métrica relevante p/ financeiras
     pl = stock.get("pl")
     p_fcf = stock.get("p_fcf")
     if pl is None or p_fcf is None or pl <= 0:
@@ -511,13 +545,17 @@ def earnings_quality(stock: dict) -> dict | None:
 def calculate_scores(stock: dict) -> dict:
     """Retorna {quality, price, diagnosis, earnings_quality, breakdown_quality, breakdown_price}.
 
-    Funciona para TODOS os setores (bancos têm pesos próprios). Pontuação contínua.
-    A Qualidade sofre haircut quando o lucro não se converte em caixa (lucro de papel).
+    Funciona para TODOS os setores (bancos e seguradoras têm pesos próprios).
+    Pontuação contínua. A Qualidade sofre haircut quando o lucro não se converte
+    em caixa (lucro de papel) — exceto financeiras.
     """
     sector = stock.get("sector", "")
-    bank = is_bank(sector)
-    qw = QUALITY_WEIGHTS_BANK if bank else QUALITY_WEIGHTS
-    pw = PRICE_WEIGHTS_BANK if bank else PRICE_WEIGHTS
+    if is_bank(sector):
+        qw, pw = QUALITY_WEIGHTS_BANK, PRICE_WEIGHTS_BANK
+    elif is_insurer(sector):
+        qw, pw = QUALITY_WEIGHTS_INSURER, PRICE_WEIGHTS_INSURER
+    else:
+        qw, pw = QUALITY_WEIGHTS, PRICE_WEIGHTS
 
     q, bq = _composite(stock, qw, sector)
     p, bp = _composite(stock, pw, sector)
