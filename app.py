@@ -2855,33 +2855,34 @@ def _show_detail(s: dict):
         else:
             st.caption("N/D")
 
-    # PSR com popover
-    with st.container():
-        col_psr, col_psr_help = st.columns([8, 1])
-        with col_psr:
-            st.markdown("#### PSR — Preço / Receita")
-        with col_psr_help:
-            info_psr = INDICATOR_INFO.get("psr", {})
-            if info_psr:
-                with st.popover("❓"):
-                    st.markdown("**PSR — Preço / Receita (Price-to-Sales)**")
-                    st.markdown(f"**O que mede:** {info_psr.get('o_que_mede', '')}")
-                    st.markdown(f"**Por que importa:** {info_psr.get('por_que_importa', '')}")
-                    st.markdown(f"**Interpretação:** {info_psr.get('interpretacao', '')}")
-                    st.markdown(f"**Faixa ideal:** {info_psr.get('faixa_ideal', '')}")
-                    st.caption(f"⚠ {info_psr.get('atencao', '')}")
-        cls_psr, disp_psr = _classify_psr(s.get("psr"), sector)
-        bg_psr   = BG_COLORS.get(cls_psr, "#37474f")
-        emoji_psr = COLOR_EMOJI.get(cls_psr, "⬜")
-        if s.get("psr") is not None:
-            st.markdown(
-                f"<div style='display:inline-block;background:{bg_psr};color:#fff;"
-                f"padding:6px 14px;border-radius:6px;font-weight:700;font-size:1.05rem'>"
-                f"{emoji_psr} {disp_psr}</div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.caption("N/D")
+    # PSR com popover — oculto p/ seguradoras (depende de receita convencional)
+    if not _is_insurer(sector):
+        with st.container():
+            col_psr, col_psr_help = st.columns([8, 1])
+            with col_psr:
+                st.markdown("#### PSR — Preço / Receita")
+            with col_psr_help:
+                info_psr = INDICATOR_INFO.get("psr", {})
+                if info_psr:
+                    with st.popover("❓"):
+                        st.markdown("**PSR — Preço / Receita (Price-to-Sales)**")
+                        st.markdown(f"**O que mede:** {info_psr.get('o_que_mede', '')}")
+                        st.markdown(f"**Por que importa:** {info_psr.get('por_que_importa', '')}")
+                        st.markdown(f"**Interpretação:** {info_psr.get('interpretacao', '')}")
+                        st.markdown(f"**Faixa ideal:** {info_psr.get('faixa_ideal', '')}")
+                        st.caption(f"⚠ {info_psr.get('atencao', '')}")
+            cls_psr, disp_psr = _classify_psr(s.get("psr"), sector)
+            bg_psr   = BG_COLORS.get(cls_psr, "#37474f")
+            emoji_psr = COLOR_EMOJI.get(cls_psr, "⬜")
+            if s.get("psr") is not None:
+                st.markdown(
+                    f"<div style='display:inline-block;background:{bg_psr};color:#fff;"
+                    f"padding:6px 14px;border-radius:6px;font-weight:700;font-size:1.05rem'>"
+                    f"{emoji_psr} {disp_psr}</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.caption("N/D")
 
     with st.container():
         st.markdown("#### Payout (%)")
