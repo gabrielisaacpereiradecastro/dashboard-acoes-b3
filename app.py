@@ -3057,6 +3057,7 @@ def _show_detail(s: dict):
                 ("Margem Bruta",        f"{_gross_margin:.1f}%" if _gross_margin is not None else "N/D"),
                 ("ROA",                 f"{roa:.1f}%" if roa is not None else "N/D"),
                 ("ROIC",                f"{roic:.1f}%" if roic is not None else "N/D"),
+                ("Div. Yield",          f"{_dy:.1f}%" if _dy is not None else "N/D"),
                 ("LPA",                 f"R$ {s['lpa']:.2f}" if s.get("lpa") else "N/D"),
                 ("VPA",                 f"R$ {s['vpa']:.2f}" if s.get("vpa") else "N/D"),
                 ("Liq. Corrente",       f"{s['current_ratio']:.2f}x" if s.get("current_ratio") else "N/D"),
