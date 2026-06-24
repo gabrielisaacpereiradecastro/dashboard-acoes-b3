@@ -3163,14 +3163,14 @@ def _show_screener():
             mg_min    = st.slider("Mg. EBITDA mínima (%)", 0, 50,  12, key="scr_mg_min")
             ev_max    = st.slider("EV/EBITDA máximo (x)",  0, 20,   8, key="scr_ev_max")
         with c3:
-            qual_min  = st.slider("Qualidade mínima",      0, 100,  0, key="scr_qual_min",
-                                  help="Score de Qualidade (negócio) ≥ este valor")
-            price_min = st.slider("Preço mínimo (atrat.)", 0, 100,  0, key="scr_price_min",
-                                  help="Score de Preço (atratividade; maior = mais barata) ≥ este valor")
+            qual_min  = st.slider("Score qualidade (mín.)", 0, 100,  0, key="scr_qual_min",
+                                  help="Mantém ações com Score de Qualidade (negócio) ≥ este valor")
+            price_min = st.slider("Score preço (mín.)",     0, 100,  0, key="scr_price_min",
+                                  help="Mantém ações com Score de Preço (atratividade; maior = mais barata) ≥ este valor")
             excl_bancos = st.checkbox("Excluir bancos", value=True, key="scr_excl_bancos")
             st.caption(
-                "Filtros de múltiplos vão para a API; Qualidade, Preço e exclusão "
-                "de bancos são aplicados localmente."
+                "Filtros de múltiplos vão para a API; os **scores de qualidade e "
+                "preço** e a exclusão de bancos são aplicados localmente."
             )
 
         # Salvar filtro atual
@@ -3250,9 +3250,9 @@ def _show_screener():
 
     _crit = []
     if qual_min > 0:
-        _crit.append(f"Qualidade ≥ {qual_min}")
+        _crit.append(f"Score qualidade ≥ {qual_min}")
     if price_min > 0:
-        _crit.append(f"Preço ≥ {price_min}")
+        _crit.append(f"Score preço ≥ {price_min}")
     _crit_str = (" com " + " e ".join(_crit)) if _crit else ""
     st.info(
         f"**{total}** ações analisadas pela Bolsai. "
