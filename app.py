@@ -4272,7 +4272,7 @@ def _fii_list_selector() -> dict:
 def _show_fii_tabela(fiis_atuais: dict) -> None:
     """Tabela de FIIs: adicionar, filtrar, remover/atualizar, listar."""
     # ── Adicionar FII ─────────────────────────────────────────────
-    col_in, col_btn = st.columns([4, 2])
+    col_in, col_btn, _ = st.columns([2, 1, 1.5])
     with col_in:
         fii_input = st.text_input(
             "Ticker do FII", placeholder="Ex: HGLG11, KNRI11, MXRF11",
@@ -4315,7 +4315,9 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
 
     _tipos_disponiveis = sorted({_tipo_label(f) for f in fiis_atuais.values() if _tipo_label(f)})
     _tipo_opcoes = ["Todos"] + _tipos_disponiveis
-    _tipo_filtro = st.selectbox("Filtrar por tipo", _tipo_opcoes, key="fii_tipo_filtro")
+    _col_f, _ = st.columns([2, 2.5])
+    with _col_f:
+        _tipo_filtro = st.selectbox("Filtrar por tipo", _tipo_opcoes, key="fii_tipo_filtro")
 
     # Aplica filtro
     fiis_filtrados = list(fiis_atuais.values())
@@ -4327,7 +4329,7 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
         return
 
     # ── Remover / atualizar ───────────────────────────────────────
-    col_rem, col_att = st.columns([3, 1])
+    col_rem, col_att, _ = st.columns([2, 1, 1.5])
     with col_rem:
         _fii_tickers = list(fiis_atuais.keys())
         _rem_sel = st.selectbox(
