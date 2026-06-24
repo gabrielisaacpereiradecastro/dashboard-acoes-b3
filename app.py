@@ -5609,6 +5609,52 @@ def _show_alert_banner(resultados: list[dict]) -> None:
 def main():
     st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ── Tipografia: Inter ──────────────────────────────── */
+html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"],
+button, input, select, textarea, .stMarkdown {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+}
+h1 { font-weight: 700 !important; letter-spacing: -0.02em; }
+h2, h3, h4 { font-weight: 600 !important; letter-spacing: -0.01em; }
+
+/* ── Métricas em card ───────────────────────────────── */
+[data-testid="stMetric"] {
+    background: #151b26;
+    border: 1px solid #232b3a;
+    border-radius: 12px;
+    padding: 12px 16px;
+}
+[data-testid="stMetricValue"] { font-weight: 600; }
+[data-testid="stMetricLabel"] p { color: #8b94a7; }
+
+/* ── Botões ─────────────────────────────────────────── */
+.stButton > button {
+    border-radius: 10px;
+    border: 1px solid #2a3343;
+    font-weight: 500;
+    transition: border-color .12s ease, background .12s ease;
+}
+.stButton > button:hover { border-color: #34d399; }
+
+/* ── Inputs / selects / expanders ───────────────────── */
+[data-baseweb="select"] > div,
+.stTextInput input, .stNumberInput input {
+    border-radius: 10px !important;
+}
+[data-testid="stExpander"] details {
+    border: 1px solid #232b3a;
+    border-radius: 12px;
+}
+
+/* ── Sidebar ────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: #0c1119;
+    border-right: 1px solid #1c2230;
+}
+[data-baseweb="tab-list"] { gap: 4px; }
+
 #MainMenu {visibility: hidden;}
 .stDeployButton {display: none;}
 [data-testid="stDecoration"] {display: none;}
