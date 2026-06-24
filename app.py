@@ -1309,6 +1309,14 @@ def _show_price_history_chart(s: dict) -> None:
                 line=dict(color="#9e9e9e", width=1.5, dash="dot"),
                 hovertemplate=f"<b>%{{x|%d/%m/%Y}}</b><br>Ibovespa: %{{y:.1f}} ({pct_ibov:+.1f}%)<extra></extra>",
             ))
+            if show_ma:  # MM50 normalizada na mesma base 100 da ação
+                y_ma = (df_plot["ma50"] / base_s * 100).values
+                fig.add_trace(go.Scatter(
+                    x=df_plot["trade_date"].values, y=y_ma,
+                    mode="lines", name="MM50",
+                    line=dict(color="#ff9800", width=1.5, dash="dot"),
+                    hovertemplate="MM50: %{y:.1f}<extra></extra>",
+                ))
             fig.update_layout(
                 height=300, margin=dict(l=0, r=0, t=30, b=0),
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
