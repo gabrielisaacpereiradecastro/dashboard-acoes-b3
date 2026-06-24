@@ -3704,6 +3704,10 @@ def _sidebar():
             else:
                 st.caption("Indisponível (verifique a API Key).")
 
+        # Lista de ações salvas só faz sentido na área de Ações
+        if st.session_state.get("area", "📊 Ações") != "📊 Ações":
+            return
+
         st.divider()
 
         # ── Lista de ações salvas ──────────────────────────────
