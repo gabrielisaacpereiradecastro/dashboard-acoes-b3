@@ -4366,21 +4366,24 @@ def _show_fii_lista() -> None:
         st.info(f"Nenhum FII do tipo '{_tipo_filtro}' na lista.")
 
     # ── Detalhe (logo abaixo da tabela, sempre visível) ───────────
-    _det_tickers = [f["ticker"] for f in fiis_atuais.values() if f.get("ticker")]
-    if _det_tickers:
-        st.divider()
-        st.markdown("### 🔍 Detalhe do FII")
-        _det_default = 0
-        if st.session_state.selected_fii in _det_tickers:
-            _det_default = _det_tickers.index(st.session_state.selected_fii)
-        _det_chosen = st.selectbox(
-            "FII para detalhe", _det_tickers, index=_det_default,
-            key="fii_detalhe_sel",
-            format_func=lambda t: f"{t} — {fiis_atuais.get(t, {}).get('name', '')}",
-        )
-        st.session_state.selected_fii = _det_chosen
-        if _det_chosen:
+    st.divider()
+    st.markdown("### 🔍 Detalhe do FII")
+    _det_tickers = list(fiis_atuais.keys())  # as chaves SÃO os tickers
+    if not _det_tickers:
+        st.info("Adicione um FII acima para ver o detalhe.")
+    else:
+        try:
+            _det_default = (_det_tickers.index(st.session_state.selected_fii)
+                            if st.session_state.selected_fii in _det_tickers else 0)
+            _det_chosen = st.selectbox(
+                "FII para detalhe", _det_tickers, index=_det_default,
+                key="fii_detalhe_sel",
+                format_func=lambda t: f"{t} — {fiis_atuais.get(t, {}).get('name', '')}",
+            )
+            st.session_state.selected_fii = _det_chosen
             _show_fii_detail(fiis_atuais[_det_chosen])
+        except Exception as _e:
+            st.error(f"Erro ao montar o detalhe do FII: {_e}")
 
     # ── Posições (qtd / preço médio) ──────────────────────────────
     st.divider()
