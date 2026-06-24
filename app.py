@@ -4365,7 +4365,26 @@ def _show_fii_lista() -> None:
     else:
         st.info(f"Nenhum FII do tipo '{_tipo_filtro}' na lista.")
 
+    # ── Detalhe (logo abaixo da tabela, sempre visível) ───────────
+    _det_tickers = [f["ticker"] for f in fiis_atuais.values() if f.get("ticker")]
+    if _det_tickers:
+        st.divider()
+        st.markdown("### 🔍 Detalhe do FII")
+        _det_default = 0
+        if st.session_state.selected_fii in _det_tickers:
+            _det_default = _det_tickers.index(st.session_state.selected_fii)
+        _det_chosen = st.selectbox(
+            "FII para detalhe", _det_tickers, index=_det_default,
+            key="fii_detalhe_sel",
+            format_func=lambda t: f"{t} — {fiis_atuais.get(t, {}).get('name', '')}",
+        )
+        st.session_state.selected_fii = _det_chosen
+        if _det_chosen:
+            _show_fii_detail(fiis_atuais[_det_chosen])
+
     # ── Posições (qtd / preço médio) ──────────────────────────────
+    st.divider()
+    from datetime import date as _date  # usado no parse de data_compra
     with st.expander("✏️ Editar posições (quantidade e preço médio)", expanded=False):
         _fii_pos_rows = []
         for _t, _f in fiis_atuais.items():
@@ -4416,26 +4435,10 @@ def _show_fii_lista() -> None:
                 st.info("Nenhuma alteração detectada.")
 
     # ── Análise consolidada da carteira de FIIs ───────────────────
-    _show_fii_portfolio_analysis(fiis_atuais)
-
-    st.divider()
-
-    # ── Detalhe ───────────────────────────────────────────────────
-    st.markdown("### 🔍 Detalhe do FII")
-    _det_tickers = [f["ticker"] for f in fiis_atuais.values() if f.get("ticker")]
-    if not _det_tickers:
-        return
-    _det_default = 0
-    if st.session_state.selected_fii in _det_tickers:
-        _det_default = _det_tickers.index(st.session_state.selected_fii)
-    _det_chosen = st.selectbox(
-        "FII para detalhe", _det_tickers, index=_det_default,
-        key="fii_detalhe_sel",
-        format_func=lambda t: f"{t} — {fiis_atuais.get(t, {}).get('name', '')}",
-    )
-    st.session_state.selected_fii = _det_chosen
-    if _det_chosen:
-        _show_fii_detail(fiis_atuais[_det_chosen])
+    try:
+        _show_fii_portfolio_analysis(fiis_atuais)
+    except Exception as _e:
+        st.warning(f"Não foi possível montar a análise consolidada: {_e}")
 
 
 def _show_fii_tab() -> None:

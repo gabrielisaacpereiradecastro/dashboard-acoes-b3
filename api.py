@@ -56,7 +56,7 @@ def _get(path: str, params: Optional[dict] = None) -> Optional[dict]:
         return None
     if resp.status_code == 429:
         raise RuntimeError(
-            "Limite diário de 200 requisições atingido. "
+            "Limite diário de requisições da API atingido. "
             "Tente novamente amanhã após meia-noite UTC."
         )
     if resp.status_code >= 500:
