@@ -5530,11 +5530,12 @@ def _show_alertas_tab() -> None:
             barra = ("#1a1d2e", "🔍 Monitorando")
 
         with st.container():
-            st.markdown(
-                f"<div style='background:{barra[0]};padding:8px 14px;border-radius:8px 8px 0 0;"
-                f"color:#fff;font-weight:600'>{barra[1]}</div>", unsafe_allow_html=True)
             cinfo, cbtn = st.columns([5, 1.4])
             with cinfo:
+                st.markdown(
+                    f"<div style='background:{barra[0]};padding:8px 14px;border-radius:8px;"
+                    f"color:#fff;font-weight:600;margin-bottom:6px'>{barra[1]}</div>",
+                    unsafe_allow_html=True)
                 st.markdown(f"**{al.alert_label(alert)}**")
                 _join = " **E** " if alert.get("combinador") == "E" else " **OU** "
                 st.caption("Escopo: " + al.scope_label(alert) + "  ·  Condições: "
@@ -5554,7 +5555,7 @@ def _show_alertas_tab() -> None:
                     st.session_state.alertas.pop(idx)
                     _save_all()
                     st.rerun()
-        st.markdown("")
+        st.divider()
 
 
 def _eval_alerts_global() -> tuple[list[dict], bool]:
