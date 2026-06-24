@@ -543,6 +543,8 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         "data":                   data,
         "updated_at":             _now_bsb().isoformat(),
         "qtd":                    _prev.get("qtd", 0),
+        "preco_medio":            _prev.get("preco_medio", 0.0),
+        "data_compra":            _prev.get("data_compra", ""),
         "notas":                  _prev.get("notas", ""),
         "notas_updated_at":       _prev.get("notas_updated_at", ""),
         "notas_mudancas":         _prev.get("notas_mudancas", ""),
@@ -1160,7 +1162,8 @@ def _show_macro_panel() -> None:
             else:
                 bg_badge, txt_badge = "#37474f", "Pareados"
             st.markdown(
-                f"Ibov: <b>{ibov_ytd:+.1f}%</b> | SMLL: <b>{smll_ytd:+.1f}%</b><br>"
+                f"<span style='white-space:nowrap'>Ibov: <b>{ibov_ytd:+.1f}%</b></span><br>"
+                f"<span style='white-space:nowrap'>SMLL: <b>{smll_ytd:+.1f}%</b></span><br>"
                 f"<span style='background:{bg_badge};color:#fff;padding:1px 6px;"
                 f"border-radius:3px;font-size:0.72rem'>{txt_badge}</span>",
                 unsafe_allow_html=True,
@@ -2563,21 +2566,21 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
                       opacity=0.15, layer="below",
                       line=dict(color="rgba(255,255,255,0.15)", width=1))
         fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=nome, showarrow=False,
-                           font=dict(size=9, color="#9aa0b4"))
+                           font=dict(size=14, color="#b8bdd0"))
     fig.add_shape(type="line", x0=thr, y0=0, x1=thr, y1=100,
                   line=dict(color="rgba(255,255,255,0.3)", width=1))
     fig.add_shape(type="line", x0=0, y0=thr, x1=100, y1=thr,
                   line=dict(color="rgba(255,255,255,0.3)", width=1))
 
     max_w = max(p["weight"] for p in pts) or 1
-    sizes = [12 + 22 * (p["weight"] / max_w) for p in pts]
+    sizes = [14 + 26 * (p["weight"] / max_w) for p in pts]
     fig.add_trace(go.Scatter(
         x=[p["quality"] for p in pts], y=[p["price_score"] for p in pts],
         mode="markers+text",
         marker=dict(size=sizes, color="#42a5f5", opacity=0.75,
                     line=dict(color="#fff", width=1.5)),
         text=[p["ticker"] for p in pts], textposition="top center",
-        textfont=dict(size=8, color="#cfe3ff"), cliponaxis=False,
+        textfont=dict(size=11, color="#cfe3ff"), cliponaxis=False,
         customdata=[[p["weight"] * 100] for p in pts],
         hovertemplate="%{text}<br>Qualidade %{x:.0f} · Preço %{y:.0f}"
                       "<br>%{customdata[0]:.1f}% da carteira<extra></extra>"))
@@ -2598,14 +2601,14 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
     # Folga nos eixos para a bolha inteira (e o rótulo) caberem dentro da
     # área visível. Mais folga na vertical, que é o eixo curto.
     fig.update_layout(
-        height=460, margin=dict(l=8, r=8, t=8, b=28),
+        height=540, margin=dict(l=8, r=8, t=8, b=30),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False,
         xaxis=dict(range=[-7, 107], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  menor qualidade      maior qualidade  →",
-                              font=dict(size=10, color="#9e9e9e"))),
+                              font=dict(size=13, color="#9e9e9e"))),
         yaxis=dict(range=[-12, 112], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  mais cara      mais barata  →",
-                              font=dict(size=10, color="#9e9e9e"))))
+                              font=dict(size=13, color="#9e9e9e"))))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.caption("Cada bolha é uma posição (tamanho ∝ % da carteira); a ⭐ é a média ponderada.")
 
@@ -2703,9 +2706,15 @@ def _show_detail(s: dict):
         high52 = s.get("week_52_high")
         ytd = s.get("ytd_return_pct")
         if low52 and high52:
-            st.markdown(f"**52 sem:** {_fmt_price(low52)} — {_fmt_price(high52)}")
+            _lo = _fmt_price(low52).replace("$", "&#36;")
+            _hi = _fmt_price(high52).replace("$", "&#36;")
+            st.markdown(
+                f"<div style='font-size:1.05rem;margin-bottom:6px'><b>52 sem:</b> "
+                f"{_lo} — {_hi}</div>", unsafe_allow_html=True)
         if ytd is not None:
-            st.markdown(f"**Retorno YTD:** {_fmt_pct(ytd)}")
+            st.markdown(
+                f"<div style='font-size:1.05rem'><b>Retorno YTD:</b> "
+                f"{_fmt_pct(ytd)}</div>", unsafe_allow_html=True)
 
     st.divider()
 
@@ -2842,7 +2851,7 @@ def _show_detail(s: dict):
         if pvp is not None:
             st.markdown(
                 f"<div style='display:inline-block;background:{bg_pvp};color:#fff;"
-                f"padding:6px 14px;border-radius:6px;font-weight:700;font-size:1.05rem'>"
+                f"padding:8px 18px;border-radius:8px;font-weight:700;font-size:1.5rem'>"
                 f"{emoji_pvp} {disp_pvp}</div>",
                 unsafe_allow_html=True,
             )
@@ -2887,7 +2896,9 @@ def _show_detail(s: dict):
     with st.container():
         st.markdown("#### Payout (%)")
         if payout is not None:
-            st.markdown(f"**Valor:** {payout:.1f}%")
+            st.markdown(
+                f"<div style='font-size:1.5rem;font-weight:700'>{payout:.1f}%</div>",
+                unsafe_allow_html=True)
             if payout > 80:
                 st.caption("⚠️ Payout alto (> 80%). Verifique sustentabilidade com FCL.")
         else:
