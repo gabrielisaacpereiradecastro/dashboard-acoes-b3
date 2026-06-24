@@ -2788,7 +2788,10 @@ def _show_detail(s: dict):
             st.markdown("")
 
     # ── Radar dos 6 indicadores principais ─────────────────────
-    if not bank:
+    # Pulado p/ financeiras (banco/seguradora): metade dos 6 indicadores do
+    # radar (EV/EBITDA, Dív.Líq/EBITDA, Mg.EBITDA) não se aplica e o gráfico
+    # vira uma forma degenerada/enganosa.
+    if not bank and not sc.is_insurer(sector):
         st.divider()
         st.subheader("Perfil Radar")
         st.caption("Pontuação (0–100) nos 6 indicadores de maior peso.")
@@ -2842,7 +2845,9 @@ def _show_detail(s: dict):
                 f"{emoji_pvp} {disp_pvp}</div>",
                 unsafe_allow_html=True,
             )
-            if pvp < 1.0:
+            if _is_insurer(sector):
+                st.caption("P/VP alto é normal em seguradoras (asset-light, ROE estruturalmente alto). Avalie pelo P/L.")
+            elif pvp < 1.0:
                 st.caption("Abaixo do valor patrimonial — pode ser desconto real ou sinalizar problema de qualidade dos ativos.")
             elif pvp > 3.0:
                 st.caption("⚠ Exige ROE muito alto para justificar o prêmio.")
