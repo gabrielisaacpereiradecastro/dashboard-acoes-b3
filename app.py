@@ -3686,7 +3686,7 @@ _FII_TYPE_LABELS = {
 
 _FII_COL_HEADERS = [
     "Ticker", "Nome", "Tipo", "Preço", "DY TTM", "P/VP",
-    "Vacância", "Inadimp.", "Liquidez", "Score",
+    "Vacância", "Inadimp.", "Liquidez", "Qualidade", "Preço*", "Diagnóstico",
 ]
 
 _FII_SCORE_COLORS = {
@@ -3738,9 +3738,10 @@ def _fii_table_html(fiis_data: list[dict]) -> str:
         html += f"<th style='{th};text-align:center'>{h}</th>"
     html += "</tr></thead><tbody>"
 
+    _calc_scores = getattr(sf, "calculate_fii_scores", None)
     for i, fii in enumerate(fiis_data):
         row_bg = "#0e1117" if i % 2 == 0 else "#131629"
-        score, score_lbl, breakdown = sf.calculate_fii_score(fii)
+        scf = _calc_scores(fii) if _calc_scores else {}
         html += f"<tr style='background:{row_bg}'>"
 
         # Ticker
@@ -3782,13 +3783,27 @@ def _fii_table_html(fiis_data: list[dict]) -> str:
         liq_bg = BG_COLORS.get(liq_cls, "#37474f")
         html += f"<td style='padding:6px 10px;text-align:center;background:{liq_bg};border-radius:4px'>{liq_disp}</td>"
 
-        # Score
-        score_bg = _FII_SCORE_COLORS.get(score_lbl, "#37474f")
-        score_str = f"{score:.0f}" if score is not None else "—"
-        html += (
-            f"<td style='padding:6px 10px;text-align:center;background:{score_bg};"
-            f"border-radius:4px;font-weight:700'>{score_str} <span style='font-size:0.75rem;font-weight:400'>({score_lbl})</span></td>"
-        )
+        # Qualidade (tijolo) — papel não tem nota
+        _q, _p = scf.get("quality"), scf.get("price")
+        _diag = scf.get("diagnosis")
+        if scf.get("paper"):
+            html += ("<td style='padding:6px 10px;text-align:center;background:#37474f;"
+                     "border-radius:4px;color:#cfd8dc;font-size:0.8rem'>papel</td>")
+        else:
+            _qbg = _score_color_hex(_q) if _q is not None else "#37474f"
+            _qs = f"{_q:.0f}" if _q is not None else "—"
+            html += (f"<td style='padding:6px 10px;text-align:center;background:{_qbg};"
+                     f"border-radius:4px;font-weight:700'>{_qs}</td>")
+        # Preço (atratividade)
+        _pbg = _score_color_hex(_p) if _p is not None else "#37474f"
+        _ps = f"{_p:.0f}" if _p is not None else "—"
+        html += (f"<td style='padding:6px 10px;text-align:center;background:{_pbg};"
+                 f"border-radius:4px;font-weight:700'>{_ps}</td>")
+        # Diagnóstico
+        _dbg = _diag["color"] if _diag else "#37474f"
+        _dlbl = _diag["label"] if _diag else "—"
+        html += (f"<td style='padding:6px 10px;text-align:center;background:{_dbg};"
+                 f"border-radius:4px;font-weight:600;font-size:0.82rem'>{_dlbl}</td>")
 
         html += "</tr>"
 
@@ -4326,6 +4341,9 @@ def _show_fii_lista() -> None:
             _fii_table_html(fiis_filtrados),
             unsafe_allow_html=True,
         )
+        st.caption("**Qualidade** e **Preço\\*** = scores 0–100 (Preço\\* alto = mais "
+                   "atrativo/barato). FIIs de **papel** não têm nota de qualidade "
+                   "(sem dados de crédito) — veja os alertas no Detalhe.")
     else:
         st.info(f"Nenhum FII do tipo '{_tipo_filtro}' na lista.")
 
