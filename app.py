@@ -3396,6 +3396,16 @@ def _sidebar():
         st.markdown("# 📈 Análise B3")
         st.caption("Análise fundamentalista de ações brasileiras")
 
+        # ── Navegação por área ─────────────────────────────────
+        _AREAS = ["📊 Ações", "🏢 FIIs", "🔎 Screener", "🌐 Ciclo"]
+        _cur_area = st.session_state.get("area", _AREAS[0])
+        st.session_state.area = st.radio(
+            "Navegação", _AREAS,
+            index=_AREAS.index(_cur_area) if _cur_area in _AREAS else 0,
+            label_visibility="collapsed",
+        )
+        st.divider()
+
         # ── Status da API (discreto) ───────────────────────────
         api_key = api._get_api_key()
         if api_key:
@@ -5381,6 +5391,19 @@ footer {visibility: hidden;}
     _init_state()
     _sidebar()
 
+    # ── Navegação por área (FIIs/Screener/Ciclo independem de ações) ──
+    _area = st.session_state.get("area", "📊 Ações")
+    if _area == "🏢 FIIs":
+        _show_fii_tab()
+        return
+    if _area == "🔎 Screener":
+        _show_screener()
+        return
+    if _area == "🌐 Ciclo":
+        _show_ciclo_tab()
+        return
+
+    # ── Área Ações ────────────────────────────────────────────
     if not st.session_state.acoes:
         st.markdown("## 📈 Bem-vindo ao Analisador Fundamentalista B3")
         st.markdown(
@@ -5443,9 +5466,8 @@ div[data-testid="stPopover"] button:hover {
 
     enriched = _dedup_enriched(enriched)
 
-    tab_cart, tab_comp, tab_det, tab_cmp, tab_ciclo, tab_scr, tab_fii = st.tabs(
-        ["📊 Carteira", "📋 Tabela", "🔍 Detalhe", "⚖️ Comparar",
-         "🌐 Ciclo", "🔎 Screener", "🏢 FIIs"]
+    tab_cart, tab_comp, tab_det, tab_cmp = st.tabs(
+        ["📊 Carteira", "📋 Tabela", "🔍 Detalhe", "⚖️ Comparar"]
     )
 
     # ────────────────────────────────────────────────────────────
@@ -5659,21 +5681,6 @@ div[data-testid="stPopover"] button:hover {
 
                 st.markdown("##### Valores por indicador")
                 _comparison_table(_cmp_tickers, _cmp_stocks)
-
-    # ────────────────────────────────────────────────────────────
-    # Tab 4 — Screener
-    # ────────────────────────────────────────────────────────────
-    with tab_ciclo:
-        _show_ciclo_tab()
-
-    with tab_scr:
-        _show_screener()
-
-    # ────────────────────────────────────────────────────────────
-    # Tab — FIIs
-    # ────────────────────────────────────────────────────────────
-    with tab_fii:
-        _show_fii_tab()
 
 
 if __name__ == "__main__":
