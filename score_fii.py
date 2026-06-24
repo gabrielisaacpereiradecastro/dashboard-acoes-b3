@@ -31,7 +31,7 @@ FII_SCORE_LEVELS = [
 
 
 def classify_fii_dy(value) -> tuple[str, str]:
-    if value is None or value > 100:  # DY acima de 100% é dado corrompido
+    if value is None or value < 0 or value > 50:  # fora de [0,50] = dado corrompido
         return "ND", "N/D"
     d = f"{value:.1f}%"
     if value >= 12:    return "Excelente", d
@@ -42,7 +42,7 @@ def classify_fii_dy(value) -> tuple[str, str]:
 
 
 def classify_fii_pvp(value) -> tuple[str, str]:
-    if value is None:
+    if value is None or value <= 0:  # P/VP <= 0 = dado corrompido
         return "ND", "N/D"
     d = f"{value:.2f}x"
     if value < 0.90:     return "Excelente", d
@@ -188,6 +188,11 @@ def _fii_interp(value: float, anchors: list) -> float:
 def score_fii_indicator(ind: str, value) -> Optional[float]:
     """Pontuação contínua 0-100 do indicador de FII, ou None."""
     if value is None:
+        return None
+    # Guarda contra dados corrompidos (não pontua lixo)
+    if ind == "pvp" and value <= 0:
+        return None
+    if ind == "dividend_yield" and (value < 0 or value > 50):
         return None
     anchors = _FII_CURVES.get(ind)
     if not anchors:

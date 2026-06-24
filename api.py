@@ -332,6 +332,16 @@ def get_all_fii_data(ticker: str) -> dict:
         "liquidity":         liquidity_brl,
         "avg_volume_52w":    avg_vol,
     })
+
+    # Sanitiza valores absurdos da API (ex.: DY -2071%, P/VP 0,00) → None,
+    # para não exibir lixo nem poluir scores/médias ponderadas.
+    def _san(v, lo, hi):
+        return v if (isinstance(v, (int, float)) and lo <= v <= hi) else None
+    result["dividend_yield"]  = _san(result.get("dividend_yield"), 0, 50)
+    result["pvp"]             = _san(result.get("pvp"), 0.01, 5)
+    result["vacancy_pct"]     = _san(result.get("vacancy_pct"), 0, 100)
+    result["delinquency_pct"] = _san(result.get("delinquency_pct"), 0, 100)
+    result["leased_pct"]      = _san(result.get("leased_pct"), 0, 100)
     return result
 
 

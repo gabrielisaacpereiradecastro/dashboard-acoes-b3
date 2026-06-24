@@ -3540,12 +3540,18 @@ def _sidebar():
 
         # ── Busca por setor ────────────────────────────────────
         with st.expander("🏭 Buscar por Setor", expanded=False):
-            sectors_list = api.get_sectors()
+            try:
+                sectors_list = api.get_sectors() or []
+            except Exception:
+                sectors_list = []
             sector_opts = ["— Selecione —"] + sorted(sectors_list)
             chosen_sector = st.selectbox(
                 "Setor", sector_opts, key="sidebar_sector_sel",
                 label_visibility="collapsed",
             )
+            if not sectors_list:
+                st.caption("Setores indisponíveis no momento (limite de API ou "
+                           "instabilidade). Tente mais tarde.")
             if chosen_sector != "— Selecione —":
                 with st.spinner("Buscando empresas…"):
                     sec_result = api.get_companies_by_sector(chosen_sector, limit=20)
@@ -4273,20 +4279,32 @@ def _show_fii_lista() -> None:
         )
     with col_btn:
         if st.button("➕ Adicionar FII", key="btn_add_fii", use_container_width=True):
-            _t = fii_input.strip().upper()
-            if not _t:
-                st.warning("Digite um ticker.")
-            elif _t in fiis_atuais:
-                st.info(f"{_t} já está na lista.")
+            # Aceita vários tickers separados por vírgula e/ou espaço.
+            _tickers = [t for t in fii_input.upper().replace(",", " ").split() if t]
+            if not _tickers:
+                st.warning("Digite um ou mais tickers.")
             else:
-                with st.spinner(f"Buscando {_t}…"):
-                    _fii_data = _fetch_fii(_t)
-                if _fii_data.get("error"):
-                    st.error(_fii_data["error"])
-                else:
-                    fiis_atuais[_t] = {**_fii_data, "qtd": 0,
-                                       "preco_medio": 0.0, "data_compra": ""}
-                    st.success(f"{_t} adicionado.")
+                _add_ok, _add_ja, _add_err = [], [], []
+                for _t in _tickers:
+                    if _t in fiis_atuais:
+                        _add_ja.append(_t)
+                        continue
+                    with st.spinner(f"Buscando {_t}…"):
+                        _fii_data = _fetch_fii(_t)
+                    if _fii_data.get("error"):
+                        _add_err.append(f"{_t}: {_fii_data['error']}")
+                    else:
+                        fiis_atuais[_t] = {**_fii_data, "qtd": 0,
+                                           "preco_medio": 0.0, "data_compra": ""}
+                        _add_ok.append(_t)
+                if _add_ok:
+                    st.success(f"Adicionado(s): {', '.join(_add_ok)}")
+                if _add_ja:
+                    st.info(f"Já estava(m) na lista: {', '.join(_add_ja)}")
+                for _e in _add_err:
+                    st.error(_e)
+                if _add_ok:
+                    _save_all()
                     st.rerun()
 
     # ── Filtro por tipo ───────────────────────────────────────────
