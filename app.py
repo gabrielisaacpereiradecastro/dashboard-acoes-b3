@@ -1313,11 +1313,11 @@ def _show_price_history_chart(s: dict) -> None:
             st.info("Dados de preço indisponíveis.")
         return
 
-    periods = {"1M": 21, "3M": 63, "6M": 126, "1A": 252, "3A": 756, "5A": 1260}
-    ctrl_cols = st.columns([4, 2, 3])
+    periods = {"1D": 1, "5D": 5, "1M": 21, "3M": 63, "6M": 126, "1A": 252, "3A": 756, "5A": 1260}
+    ctrl_cols = st.columns([5, 2, 3])
     with ctrl_cols[0]:
         sel = st.radio(
-            "Período:", list(periods.keys()), index=3, horizontal=True,
+            "Período:", list(periods.keys()), index=5, horizontal=True,
             key=f"hist_period_{ticker}",
         )
     with ctrl_cols[1]:
@@ -1339,6 +1339,7 @@ def _show_price_history_chart(s: dict) -> None:
 
     n_days  = periods[sel]
     df_plot = df.tail(n_days)
+    _line_mode = "lines+markers" if n_days <= 7 else "lines"  # períodos curtos: marcadores
 
     # Modo comparativo (normalizado em base 100) vs. modo preço absoluto
     if show_ibov:
@@ -1354,7 +1355,7 @@ def _show_price_history_chart(s: dict) -> None:
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=df_plot["trade_date"].values, y=y_stock,
-                mode="lines", name=ticker,
+                mode=_line_mode, name=ticker,
                 line=dict(color=line_col, width=2),
                 hovertemplate=f"<b>%{{x|%d/%m/%Y}}</b><br>{ticker}: %{{y:.1f}} ({pct:+.1f}%)<extra></extra>",
             ))
@@ -1397,7 +1398,7 @@ def _show_price_history_chart(s: dict) -> None:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=df_plot["trade_date"], y=df_plot["adjusted_close"],
-        mode="lines", name="Preço ajustado",
+        mode=_line_mode, name="Preço ajustado",
         line=dict(color=line_col, width=2),
         fill="tozeroy", fillcolor=fill_col,
         hovertemplate="<b>%{x|%d/%m/%Y}</b><br>R$ %{y:.2f}<extra></extra>",
@@ -5878,6 +5879,21 @@ div[data-testid="stPopover"] button:hover {
             "Selecione uma na aba **🔍 Detalhe** para o aprofundamento, ou use "
             "**⚖️ Comparar** para o radar. A consolidação das suas posições está em **📊 Carteira**."
         )
+
+        # Ordenação confiável (server-side) — útil p/ agrupar por setor.
+        _sort_opts = {
+            "Qualidade ↓": (lambda e: (e.get("scores") or {}).get("quality") or -1, True),
+            "Preço ↓":     (lambda e: (e.get("scores") or {}).get("price") or -1, True),
+            "Setor (A-Z)": (lambda e: (e.get("sector") or "").lower(), False),
+            "Ticker (A-Z)": (lambda e: e.get("ticker", ""), False),
+            "DY ↓":        (lambda e: e.get("dividend_yield") if e.get("dividend_yield") is not None else -1, True),
+            "Variação dia ↓": (lambda e: e.get("daily_change_pct") if e.get("daily_change_pct") is not None else -999, True),
+        }
+        _sc1, _ = st.columns([2, 4])
+        _sort_sel = _sc1.selectbox("Ordenar por", list(_sort_opts.keys()),
+                                   key="tabela_sort", label_visibility="collapsed")
+        _key, _rev = _sort_opts[_sort_sel]
+        enriched = sorted(enriched, key=_key, reverse=_rev)
 
         display_df, class_df = _build_table(enriched)
         if display_df.empty or "Ticker" not in display_df.columns:
