@@ -2559,21 +2559,34 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
            if p.get("quality") is not None and p.get("price_score") is not None]
     if not pts:
         return
-    quads = [
-        (thr, thr, 100, 100, "#1b5e20", "BOA<br>E BARATA", "#5ee0a8"),
-        (0, thr, thr, 100, "#bf360c", "BARATA,<br>MAS FRACA", "#fb923c"),
-        (thr, 0, 100, thr, "#7b5800", "BOA,<br>MAS CARA", "#fbbf24"),
-        (0, 0, thr, thr, "#7f0000", "FRACA<br>E CARA", "#f87171"),
+    # Quadrantes simétricos: tingidos de LO..HI partidos no limiar (thr).
+    LO, HI = 10, 100
+    rects = [
+        (thr, thr, HI, HI, "#1b5e20"),   # boa e barata (sup. dir.)
+        (LO, thr, thr, HI, "#bf360c"),   # barata, mas fraca (sup. esq.)
+        (thr, LO, HI, thr, "#7b5800"),   # boa, mas cara (inf. dir.)
+        (LO, LO, thr, thr, "#7f0000"),   # fraca e cara (inf. esq.)
     ]
     fig = go.Figure()
-    for x0, y0, x1, y1, cor, nome, txtcor in quads:
+    for x0, y0, x1, y1, cor in rects:
         fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1, fillcolor=cor,
                       opacity=0.16, layer="below",
                       line=dict(color="rgba(255,255,255,0.15)", width=1))
-    fig.add_shape(type="line", x0=thr, y0=0, x1=thr, y1=100,
+    fig.add_shape(type="line", x0=thr, y0=LO, x1=thr, y1=HI,
                   line=dict(color="rgba(255,255,255,0.3)", width=1))
-    fig.add_shape(type="line", x0=0, y0=thr, x1=100, y1=thr,
+    fig.add_shape(type="line", x0=LO, y0=thr, x1=HI, y1=thr,
                   line=dict(color="rgba(255,255,255,0.3)", width=1))
+    # Pills de rótulo nos cantos de cada quadrante
+    pills = [
+        (HI - 1, HI - 1, "right", "top",    "#34d399", "#04342c", "boa e barata"),
+        (LO + 1, HI - 1, "left",  "top",    "#fb923c", "#4a1b0c", "barata, mas fraca"),
+        (HI - 1, LO + 1, "right", "bottom", "#fbbf24", "#412402", "boa, mas cara"),
+        (LO + 1, LO + 1, "left",  "bottom", "#f87171", "#501313", "fraca e cara"),
+    ]
+    for px, py, xa, ya, bg, tx, lbl in pills:
+        fig.add_annotation(x=px, y=py, text=lbl, showarrow=False,
+                           xanchor=xa, yanchor=ya, bgcolor=bg, borderpad=4,
+                           font=dict(size=12, color=tx, family="Inter, sans-serif"))
 
     max_w = max(p["weight"] for p in pts) or 1
     sizes = [14 + 26 * (p["weight"] / max_w) for p in pts]
@@ -2606,20 +2619,13 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
     fig.update_layout(
         height=540, margin=dict(l=8, r=8, t=8, b=30),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False,
-        xaxis=dict(range=[-7, 107], showgrid=False, zeroline=False, showticklabels=False,
+        xaxis=dict(range=[3, 107], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  menor qualidade      maior qualidade  →",
                               font=dict(size=15, color="#c7cedb", family="Inter, sans-serif"))),
-        yaxis=dict(range=[-12, 112], showgrid=False, zeroline=False, showticklabels=False,
+        yaxis=dict(range=[3, 107], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  mais cara      mais barata  →",
                               font=dict(size=15, color="#c7cedb", family="Inter, sans-serif"))))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-    st.markdown(
-        "<div style='display:flex;gap:16px;flex-wrap:wrap;font-size:0.82rem;margin:-4px 0 2px'>"
-        "<span style='color:#5ee0a8'>● boa e barata</span>"
-        "<span style='color:#fb923c'>● barata, mas fraca</span>"
-        "<span style='color:#fbbf24'>● boa, mas cara</span>"
-        "<span style='color:#f87171'>● fraca e cara</span></div>",
-        unsafe_allow_html=True)
     st.caption("Cada bolha é uma posição (tamanho ∝ % da carteira); a ⭐ é a média ponderada.")
 
 
