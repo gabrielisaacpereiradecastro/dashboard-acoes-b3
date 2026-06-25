@@ -165,6 +165,7 @@ SECTOR_REMAP: dict[str, str] = {
     "PGMN3": "Farmácias e Drogarias",
     "RADL3": "Farmácias e Drogarias",
     "PNVL3": "Farmácias e Drogarias",
+    "DMVF3": "Farmácias e Drogarias",  # d1000 Varejo Farma (era "Comércio Varejista")
     "SBFG3": "Varejo Esportivo",
     "FLRY3": "Saúde - Diagnósticos",
     "DASA3": "Saúde - Diagnósticos",
