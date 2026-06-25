@@ -2568,10 +2568,8 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
     fig = go.Figure()
     for x0, y0, x1, y1, cor, nome, txtcor in quads:
         fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1, fillcolor=cor,
-                      opacity=0.15, layer="below",
+                      opacity=0.16, layer="below",
                       line=dict(color="rgba(255,255,255,0.15)", width=1))
-        fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=nome, showarrow=False,
-                           font=dict(size=17, color=txtcor, family="Inter, sans-serif"))
     fig.add_shape(type="line", x0=thr, y0=0, x1=thr, y1=100,
                   line=dict(color="rgba(255,255,255,0.3)", width=1))
     fig.add_shape(type="line", x0=0, y0=thr, x1=100, y1=thr,
@@ -2615,6 +2613,13 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
                    title=dict(text="←  mais cara      mais barata  →",
                               font=dict(size=15, color="#c7cedb", family="Inter, sans-serif"))))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.markdown(
+        "<div style='display:flex;gap:16px;flex-wrap:wrap;font-size:0.82rem;margin:-4px 0 2px'>"
+        "<span style='color:#5ee0a8'>● boa e barata</span>"
+        "<span style='color:#fb923c'>● barata, mas fraca</span>"
+        "<span style='color:#fbbf24'>● boa, mas cara</span>"
+        "<span style='color:#f87171'>● fraca e cara</span></div>",
+        unsafe_allow_html=True)
     st.caption("Cada bolha é uma posição (tamanho ∝ % da carteira); a ⭐ é a média ponderada.")
 
 
@@ -4777,15 +4782,11 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
             f"{q_pond:.0f}/100" if q_pond is not None else "N/D",
             help="Qualidade média ponderada pelo valor de cada posição",
         )
-        if _diag_pond and _diag_pond["quality_tier"]:
-            cqp.caption(f"**{_diag_pond['quality_tier']}**")
         cpp.metric(
             "Preço Pond.",
             f"{p_pond:.0f}/100" if p_pond is not None else "N/D",
             help="Atratividade de preço média ponderada (maior = mais barata)",
         )
-        if _diag_pond and _diag_pond["price_tier"]:
-            cpp.caption(f"**{_diag_pond['price_tier']}**")
         _show_portfolio_quality_price_map(positions)
 
     # ── P&L total das posições com preço médio ────────────────────
