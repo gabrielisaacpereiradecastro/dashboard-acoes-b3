@@ -191,6 +191,11 @@ SECTOR_REMAP: dict[str, str] = {
     "LCAM3": "Locação de Veículos",
     # Varejo de moda/vestuário (alinha LREN3 à mesma classe da CEAB3)
     "LREN3": "Têxtil e Vestuário",
+    # Distribuidoras (área primeiro p/ agrupar nas buscas/ordenação).
+    # NB: usa "Distribuidora", não "Distribuição" — esta última é keyword de
+    # utility (distribuição de energia) e roteia ao modelo errado de valuation.
+    "PFRM3": "Farmacêutica (Distribuidora)",  # Profarma — distribuição de medicamentos
+    "ALLD3": "Tecnologia (Distribuidora)",    # Allied — distribuição de eletrônicos
 }
 
 # ────────────────────────────────────────────────────────────────

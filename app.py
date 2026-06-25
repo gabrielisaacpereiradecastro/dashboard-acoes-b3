@@ -1065,7 +1065,7 @@ def _sector_insight(ind: str, sector: str) -> str:
     s = sector.lower()
     # Detecção de setor por substrings (case-insensitive, já normalizado acima)
     is_bank    = any(k in s for k in ["banco", "financ", "crédit", "credit", "segur", "bancári"])
-    is_util    = any(k in s for k in ["energ", "saneamento", "concess", "transmiss", "distribui", "utilit", "gás", "agua", "água"])
+    is_util    = any(k in s for k in ["energ", "saneamento", "concess", "transmiss", "utilit", "gás", "agua", "água"])
     is_retail  = any(k in s for k in ["varejo", "comércio", "comercio", "atacado", "supermercado"])
     is_civil   = any(k in s for k in ["constru", "incorpor", "imobili"])
     is_health  = any(k in s for k in ["saúde", "saude", "hospit", "médic", "medic", "farmac", "clínica", "clinica"])
@@ -1601,7 +1601,8 @@ GERAL_EV_EBITDA_BUCKETS = [
       "incorporacao"], 5.0, "Construção civil"),
     (["têxtil", "textil", "vestuário", "vestuario", "calçad", "calcad",
       "esportiv"], 6.0, "Vestuário / Têxtil"),
-    (["comércio", "comercio", "varejo", "atacado", "supermercado"], 6.0, "Varejo"),
+    (["comércio", "comercio", "varejo", "atacado", "supermercado",
+      "distribui"], 6.0, "Varejo / Distribuição"),
 ]
 GERAL_EV_EBITDA_DEFAULT = 8.0
 
