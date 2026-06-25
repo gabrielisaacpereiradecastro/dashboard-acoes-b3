@@ -1893,9 +1893,9 @@ def _show_gordon_growth(s: dict) -> None:
     if roe_spot is not None and abs(roe - roe_spot) > 0.2:
         st.caption(
             f"ROE usado: **{roe:.1f}%** (normalizado — mediana de até 8 trimestres; "
-            f"ROE do último período: {roe_spot:.1f}%) · VPA: **R$ {vpa:.2f}**")
+            f"ROE do último período: {roe_spot:.1f}%) · VPA: **R\\$ {vpa:.2f}**")
     else:
-        st.caption(f"ROE base: **{roe:.1f}%** · VPA: **R$ {vpa:.2f}**")
+        st.caption(f"ROE base: **{roe:.1f}%** · VPA: **R\\$ {vpa:.2f}**")
 
     _ke_default = _bank_ke(ticker) * 100   # 15% estatal, 12% privado
     col_ke, col_g = st.columns(2)
@@ -2001,7 +2001,7 @@ def _show_insurer_valuation(s: dict) -> None:
         return
 
     st.caption(
-        f"LPA: **R$ {lpa:.2f}**"
+        f"LPA: **R\\$ {lpa:.2f}**"
         + (f" · P/L atual: **{pl_atual:.1f}×**" if pl_atual else "")
     )
 
@@ -2085,7 +2085,7 @@ def _show_shopping_valuation(s: dict) -> None:
         return
 
     st.caption(
-        f"EBITDA: **R$ {ebitda/1000:.0f} mi** · Dívida líq.: **R$ {net_debt/1000:.0f} mi**"
+        f"EBITDA: **R\\$ {ebitda/1000:.0f} mi** · Dívida líq.: **R\\$ {net_debt/1000:.0f} mi**"
         + (f" · EV/EBITDA atual: **{ev_atual:.1f}×**" if ev_atual else "")
     )
     _gc = _growth_context(s, SHOPPING_FAIR_EV_EBITDA)
@@ -2174,7 +2174,7 @@ def _show_geral_valuation(s: dict) -> None:
         return
 
     st.caption(
-        f"EBITDA: **R$ {ebitda/1000:.0f} mi** · Dívida líq.: **R$ {net_debt/1000:.0f} mi**"
+        f"EBITDA: **R\\$ {ebitda/1000:.0f} mi** · Dívida líq.: **R\\$ {net_debt/1000:.0f} mi**"
         + (f" · EV/EBITDA atual: **{ev_atual:.1f}×**" if ev_atual else "")
     )
     _gc = _growth_context(s, mult_setor)
@@ -2278,8 +2278,8 @@ def _show_cyclical_valuation(s: dict) -> None:
         col_c.metric("Base usada (maior)", f"R$ {ebitda_base/1000:.0f} mi")
     else:
         st.caption(
-            f"EBITDA base: **R$ {ebitda_base/1000:.0f} mi** · "
-            f"Dívida líq.: **R$ {net_debt/1000:.0f} mi**"
+            f"EBITDA base: **R\\$ {ebitda_base/1000:.0f} mi** · "
+            f"Dívida líq.: **R\\$ {net_debt/1000:.0f} mi**"
             + ("" if ebitda_mid is not None else "  ·  ⚠️ sem histórico de EBIT (usando atual)")
         )
 
@@ -2435,7 +2435,7 @@ def _show_dcf(s: dict) -> None:
         col_i3.metric("Ações", f"{shares/1e6:.1f} mi")
     else:
         st.caption(
-            f"FCL base (último exercício): **R$ {fcl_base/1000:.0f} mi** · "
+            f"FCL base (último exercício): **R\\$ {fcl_base/1000:.0f} mi** · "
             f"Ações: **{shares/1e6:.1f} milhões**"
         )
 

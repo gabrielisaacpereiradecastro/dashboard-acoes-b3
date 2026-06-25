@@ -331,6 +331,9 @@ _CURVES = {
     # Seguradoras: asset-light, ROE altíssimo → P/VP estruturalmente alto.
     # ~5-6x é "normal/justo" para BBSE3/CXSE3; só acima de ~9x começa a pesar.
     "pvp_insurer":          [(2, 100), (4, 80), (6, 55), (8, 35), (11, 10), (14, 0)],
+    # Liquidez (R$ vol. médio diário × preço): mais = melhor.
+    "liquidity":            [(500_000, 20), (1_000_000, 45), (3_000_000, 70),
+                             (5_000_000, 90), (10_000_000, 100)],
 }
 
 
