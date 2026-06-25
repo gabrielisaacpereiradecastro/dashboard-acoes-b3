@@ -2560,18 +2560,18 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
     if not pts:
         return
     quads = [
-        (thr, thr, 100, 100, "#1b5e20", "boa<br>e barata"),
-        (0, thr, thr, 100, "#bf360c", "barata,<br>mas fraca"),
-        (thr, 0, 100, thr, "#7b5800", "boa,<br>mas cara"),
-        (0, 0, thr, thr, "#7f0000", "fraca<br>e cara"),
+        (thr, thr, 100, 100, "#1b5e20", "BOA<br>E BARATA", "#5ee0a8"),
+        (0, thr, thr, 100, "#bf360c", "BARATA,<br>MAS FRACA", "#fb923c"),
+        (thr, 0, 100, thr, "#7b5800", "BOA,<br>MAS CARA", "#fbbf24"),
+        (0, 0, thr, thr, "#7f0000", "FRACA<br>E CARA", "#f87171"),
     ]
     fig = go.Figure()
-    for x0, y0, x1, y1, cor, nome in quads:
+    for x0, y0, x1, y1, cor, nome, txtcor in quads:
         fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1, fillcolor=cor,
                       opacity=0.15, layer="below",
                       line=dict(color="rgba(255,255,255,0.15)", width=1))
         fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=nome, showarrow=False,
-                           font=dict(size=14, color="#b8bdd0"))
+                           font=dict(size=17, color=txtcor, family="Inter, sans-serif"))
     fig.add_shape(type="line", x0=thr, y0=0, x1=thr, y1=100,
                   line=dict(color="rgba(255,255,255,0.3)", width=1))
     fig.add_shape(type="line", x0=0, y0=thr, x1=100, y1=thr,
@@ -2610,10 +2610,10 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False,
         xaxis=dict(range=[-7, 107], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  menor qualidade      maior qualidade  →",
-                              font=dict(size=13, color="#9e9e9e"))),
+                              font=dict(size=15, color="#c7cedb", family="Inter, sans-serif"))),
         yaxis=dict(range=[-12, 112], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  mais cara      mais barata  →",
-                              font=dict(size=13, color="#9e9e9e"))))
+                              font=dict(size=15, color="#c7cedb", family="Inter, sans-serif"))))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.caption("Cada bolha é uma posição (tamanho ∝ % da carteira); a ⭐ é a média ponderada.")
 
@@ -4280,9 +4280,11 @@ def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
         _diag = sf._diagnose_fii(q_p, p_p, paper=(q_p is None)) if hasattr(sf, "_diagnose_fii") else None
         if _diag:
             st.markdown(
-                f"<div style='background:{_diag['color']};padding:8px 14px;border-radius:8px;"
-                f"color:#fff;font-size:1.05rem;font-weight:700;margin-bottom:8px'>"
-                f"Carteira: {_diag['label']}</div>", unsafe_allow_html=True)
+                f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px'>"
+                f"<span style='color:#8b94a7;font-size:0.9rem'>Veredito da carteira:</span>"
+                f"<span style='display:inline-block;background:{_diag['color']};padding:5px 16px;"
+                f"border-radius:999px;color:#fff;font-size:1.0rem;font-weight:600'>"
+                f"{_diag['label']}</span></div>", unsafe_allow_html=True)
         cq, cp = st.columns(2)
         cq.metric("Qualidade Pond.", f"{q_p:.0f}/100" if q_p is not None else "N/D",
                   help="Média ponderada — só FIIs de tijolo (papel não tem nota de qualidade)")
@@ -4763,9 +4765,11 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         _diag_pond = sc._diagnose(q_pond, p_pond)
         if _diag_pond:
             st.markdown(
-                f"<div style='background:{_diag_pond['color']};padding:8px 14px;border-radius:8px;"
-                f"color:#fff;font-size:1.05rem;font-weight:700;margin-bottom:8px'>"
-                f"Carteira: {_diag_pond['label']}</div>",
+                f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px'>"
+                f"<span style='color:#8b94a7;font-size:0.9rem'>Veredito da carteira:</span>"
+                f"<span style='display:inline-block;background:{_diag_pond['color']};padding:5px 16px;"
+                f"border-radius:999px;color:#fff;font-size:1.0rem;font-weight:600'>"
+                f"{_diag_pond['label']}</span></div>",
                 unsafe_allow_html=True)
         cqp, cpp = st.columns(2)
         cqp.metric(
