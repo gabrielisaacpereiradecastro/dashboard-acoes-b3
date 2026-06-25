@@ -3451,94 +3451,9 @@ def _tela_selecao_usuario() -> None:
 # Sidebar
 # ────────────────────────────────────────────────────────────────
 
-def _sidebar():
+def _sidebar_atualizacao() -> None:
+    """Seção de Atualização (refresh Ações/FIIs/Tudo + quota). Renderiza na sidebar."""
     with st.sidebar:
-        _u = st.session_state.get("usuario_atual", "")
-        col_u, col_troca = st.columns([3, 2])
-        col_u.markdown(f"**Olá, {_u} 👋**")
-        if col_troca.button("🔄 Trocar", key="btn_trocar_usuario", use_container_width=True, help="Trocar usuário"):
-            for _k in [
-                "usuario_atual", "todas_listas", "lista_atual", "acoes",
-                "screener_filtros", "selected_ticker", "fiis_listas",
-                "lista_fii_atual", "selected_fii", "confirm_del_lista",
-                "confirm_del_fii_lista", "alertas",
-            ]:
-                st.session_state.pop(_k, None)
-            st.rerun()
-
-        st.markdown("# 📈 Análise B3")
-        st.caption("Análise fundamentalista de ações brasileiras")
-
-        # ── Navegação por área ─────────────────────────────────
-        _AREAS = ["📊 Ações", "🏢 FIIs", "🔎 Screener", "🌐 Ciclo", "🔔 Alertas"]
-        _cur_area = st.session_state.get("area", _AREAS[0])
-        st.session_state.area = st.radio(
-            "Navegação", _AREAS,
-            index=_AREAS.index(_cur_area) if _cur_area in _AREAS else 0,
-            label_visibility="collapsed",
-        )
-        _badge_n = st.session_state.get("_alert_badge_n", 0)
-        if _badge_n:
-            st.markdown(
-                f"<div style='background:#1b5e20;color:#fff;padding:5px 10px;border-radius:6px;"
-                f"font-size:0.85rem;margin:2px 0 6px'>🔔 {_badge_n} alerta(s) disparado(s) "
-                f"— veja em <b>Alertas</b></div>", unsafe_allow_html=True)
-        st.divider()
-
-        # ── Status da API (discreto) ───────────────────────────
-        api_key = api._get_api_key()
-        if api_key:
-            st.markdown(
-                "<span style='color:#9e9e9e;font-size:0.8rem'>🔑 API conectada</span>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.error(
-                "**BOLSAI_API_KEY não encontrada.**\n\n"
-                "No Streamlit Cloud: **Settings → Secrets** → `BOLSAI_API_KEY = \"sk_…\"`",
-                icon="🚨",
-            )
-
-        # ── Diagnóstico (apenas em DEBUG_MODE=true) ────────────
-        import os as _os
-        if _os.environ.get("DEBUG_MODE", "").lower() == "true":
-            with st.expander("🔧 Diagnóstico", expanded=False):
-                if st.session_state.debug_log:
-                    for line in st.session_state.debug_log:
-                        st.markdown(f"`{line}`")
-                    if st.session_state.debug_raw_fund:
-                        st.markdown("**JSON /fundamentals:**")
-                        st.json(st.session_state.debug_raw_fund, expanded=False)
-                    if st.button("Limpar log", key="clear_debug"):
-                        st.session_state.debug_log = []
-                        st.session_state.debug_raw_fund = None
-                        st.rerun()
-                else:
-                    st.caption("Nenhuma operação registrada.")
-
-        # ── Mensagens flash ────────────────────────────────────
-        if st.session_state.flash_success:
-            _ph = st.empty()
-            _ph.success(st.session_state.flash_success)
-            st.session_state.flash_success = ""
-            time.sleep(3)
-            _ph.empty()
-        _errs = st.session_state.flash_errors
-        if _errs:
-            if len(_errs) > 3:
-                st.warning(f"⚠ {len(_errs)} ticker(s) falharam (erro temporário da API). "
-                           "Os valores anteriores foram mantidos — tente **Atualizar** de novo.")
-                with st.expander("Ver detalhes"):
-                    for err in _errs:
-                        st.caption(err)
-            else:
-                for err in _errs:
-                    st.error(err)
-        st.session_state.flash_errors = []
-
-        st.divider()
-
-        # ── Atualização (aparece em todas as áreas) ─────────────
         st.markdown("### Atualização")
 
         oldest_update = None
@@ -3627,8 +3542,95 @@ def _sidebar():
             else:
                 st.caption("Indisponível (verifique a API Key).")
 
-        # ── Controles de Ações só aparecem na área Ações ────────
+
+def _sidebar():
+    with st.sidebar:
+        _u = st.session_state.get("usuario_atual", "")
+        col_u, col_troca = st.columns([3, 2])
+        col_u.markdown(f"**Olá, {_u} 👋**")
+        if col_troca.button("🔄 Trocar", key="btn_trocar_usuario", use_container_width=True, help="Trocar usuário"):
+            for _k in [
+                "usuario_atual", "todas_listas", "lista_atual", "acoes",
+                "screener_filtros", "selected_ticker", "fiis_listas",
+                "lista_fii_atual", "selected_fii", "confirm_del_lista",
+                "confirm_del_fii_lista", "alertas",
+            ]:
+                st.session_state.pop(_k, None)
+            st.rerun()
+
+        st.markdown("# 📈 Análise B3")
+        st.caption("Análise fundamentalista de ações brasileiras")
+
+        # ── Navegação por área ─────────────────────────────────
+        _AREAS = ["📊 Ações", "🏢 FIIs", "🔎 Screener", "🌐 Ciclo", "🔔 Alertas"]
+        _cur_area = st.session_state.get("area", _AREAS[0])
+        st.session_state.area = st.radio(
+            "Navegação", _AREAS,
+            index=_AREAS.index(_cur_area) if _cur_area in _AREAS else 0,
+            label_visibility="collapsed",
+        )
+        _badge_n = st.session_state.get("_alert_badge_n", 0)
+        if _badge_n:
+            st.markdown(
+                f"<div style='background:#1b5e20;color:#fff;padding:5px 10px;border-radius:6px;"
+                f"font-size:0.85rem;margin:2px 0 6px'>🔔 {_badge_n} alerta(s) disparado(s) "
+                f"— veja em <b>Alertas</b></div>", unsafe_allow_html=True)
+        st.divider()
+
+        # ── Status da API (discreto) ───────────────────────────
+        api_key = api._get_api_key()
+        if api_key:
+            st.markdown(
+                "<span style='color:#9e9e9e;font-size:0.8rem'>🔑 API conectada</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.error(
+                "**BOLSAI_API_KEY não encontrada.**\n\n"
+                "No Streamlit Cloud: **Settings → Secrets** → `BOLSAI_API_KEY = \"sk_…\"`",
+                icon="🚨",
+            )
+
+        # ── Diagnóstico (apenas em DEBUG_MODE=true) ────────────
+        import os as _os
+        if _os.environ.get("DEBUG_MODE", "").lower() == "true":
+            with st.expander("🔧 Diagnóstico", expanded=False):
+                if st.session_state.debug_log:
+                    for line in st.session_state.debug_log:
+                        st.markdown(f"`{line}`")
+                    if st.session_state.debug_raw_fund:
+                        st.markdown("**JSON /fundamentals:**")
+                        st.json(st.session_state.debug_raw_fund, expanded=False)
+                    if st.button("Limpar log", key="clear_debug"):
+                        st.session_state.debug_log = []
+                        st.session_state.debug_raw_fund = None
+                        st.rerun()
+                else:
+                    st.caption("Nenhuma operação registrada.")
+
+        # ── Mensagens flash ────────────────────────────────────
+        if st.session_state.flash_success:
+            _ph = st.empty()
+            _ph.success(st.session_state.flash_success)
+            st.session_state.flash_success = ""
+            time.sleep(3)
+            _ph.empty()
+        _errs = st.session_state.flash_errors
+        if _errs:
+            if len(_errs) > 3:
+                st.warning(f"⚠ {len(_errs)} ticker(s) falharam (erro temporário da API). "
+                           "Os valores anteriores foram mantidos — tente **Atualizar** de novo.")
+                with st.expander("Ver detalhes"):
+                    for err in _errs:
+                        st.caption(err)
+            else:
+                for err in _errs:
+                    st.error(err)
+        st.session_state.flash_errors = []
+
+        # ── Fora da área Ações: mostra só a Atualização e encerra ──
         if st.session_state.get("area", "📊 Ações") != "📊 Ações":
+            _sidebar_atualizacao()
             return
 
         st.divider()
@@ -3795,6 +3797,10 @@ def _sidebar():
                 else:
                     st.caption("Nenhuma empresa encontrada para este setor.")
 
+    # ── Atualização (depois de lista/adicionar/setor) ──────────
+    _sidebar_atualizacao()
+
+    with st.sidebar:
         st.divider()
 
         # ── Lista de ações salvas ──────────────────────────────
