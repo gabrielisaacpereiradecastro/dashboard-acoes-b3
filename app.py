@@ -2562,16 +2562,15 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
     # Quadrantes simétricos: tingidos de LO..HI partidos no limiar (thr).
     LO, HI = 10, 100
     rects = [
-        (thr, thr, HI, HI, "#1b5e20"),   # boa e barata (sup. dir.)
-        (LO, thr, thr, HI, "#bf360c"),   # barata, mas fraca (sup. esq.)
-        (thr, LO, HI, thr, "#7b5800"),   # boa, mas cara (inf. dir.)
-        (LO, LO, thr, thr, "#7f0000"),   # fraca e cara (inf. esq.)
+        (thr, thr, HI, HI, "rgba(52,211,153,0.13)", "rgba(52,211,153,0.55)"),   # boa e barata
+        (LO, thr, thr, HI, "rgba(251,146,60,0.13)", "rgba(251,146,60,0.55)"),   # barata, mas fraca
+        (thr, LO, HI, thr, "rgba(251,191,36,0.12)", "rgba(251,191,36,0.50)"),   # boa, mas cara
+        (LO, LO, thr, thr, "rgba(248,113,113,0.12)", "rgba(248,113,113,0.50)"), # fraca e cara
     ]
     fig = go.Figure()
-    for x0, y0, x1, y1, cor in rects:
+    for x0, y0, x1, y1, cor, bcor in rects:
         fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1, fillcolor=cor,
-                      opacity=0.16, layer="below",
-                      line=dict(color="rgba(255,255,255,0.15)", width=1))
+                      layer="below", line=dict(color=bcor, width=1.4))
     fig.add_shape(type="line", x0=thr, y0=LO, x1=thr, y1=HI,
                   line=dict(color="rgba(255,255,255,0.3)", width=1))
     fig.add_shape(type="line", x0=LO, y0=thr, x1=HI, y1=thr,
@@ -3375,25 +3374,42 @@ def _show_screener():
 
 def _tela_selecao_usuario() -> None:
     """Exibida antes do app quando nenhum usuário está selecionado."""
-    _, col, _ = st.columns([1, 2, 1])
+    st.markdown(
+        "<style>[data-testid='stAppViewContainer']{background:"
+        "radial-gradient(900px 480px at 50% -10%, rgba(52,211,153,0.10), transparent 62%), #0b0e14;}"
+        "</style>", unsafe_allow_html=True)
+    _, col, _ = st.columns([1, 2.2, 1])
     with col:
         st.markdown(
-            "<div style='text-align:center;padding:40px 0 20px'>"
-            "<span style='font-size:3rem'>📈</span>"
-            "<h2 style='margin:8px 0'>Análise Fundamentalista B3</h2>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown("### 👤 Quem é você?")
-        st.markdown("Selecione seu perfil para acessar sua carteira personalizada.")
-        usuario = st.selectbox(
-            "Usuário", USUARIOS, key="sel_usuario_login",
-            label_visibility="collapsed",
-        )
-        st.markdown("")
-        if st.button("▶ Entrar", key="btn_entrar", type="primary", use_container_width=True):
-            st.session_state.usuario_atual = usuario
-            st.rerun()
+            "<div style='text-align:center;padding:56px 0 4px'>"
+            "<div style='display:inline-flex;width:70px;height:70px;border-radius:18px;"
+            "background:#0c2a23;border:1px solid #1f4a3d;align-items:center;justify-content:center;"
+            "font-size:2.1rem;margin-bottom:18px'>📈</div>"
+            "<h1 style='margin:0;font-size:2.1rem;letter-spacing:-0.02em'>Análise Fundamentalista B3</h1>"
+            "<p style='color:#8b94a7;margin:12px 0 0;font-size:1.02rem'>"
+            "Ações e FIIs · scores de qualidade e preço · valuation por setor · alertas</p>"
+            "</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:20px 0 28px'>"
+            + "".join(
+                f"<span style='font-size:0.8rem;color:#a7f3d0;background:#0c2a23;"
+                f"border:1px solid #1f4a3d;padding:5px 13px;border-radius:999px'>{t}</span>"
+                for t in ["Qualidade × Preço", "Valuation por setor", "Carteira & FIIs", "Alertas in-app"])
+            + "</div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("#### 👤 Quem é você?")
+            st.caption("Selecione seu perfil para acessar sua carteira personalizada.")
+            usuario = st.selectbox(
+                "Usuário", USUARIOS, key="sel_usuario_login",
+                label_visibility="collapsed",
+            )
+            if st.button("Entrar  →", key="btn_entrar", type="primary", use_container_width=True):
+                st.session_state.usuario_atual = usuario
+                st.rerun()
+        st.markdown(
+            "<p style='text-align:center;color:#5b6473;font-size:0.78rem;margin-top:22px'>"
+            "Dados via Bolsai Pro · uso pessoal/educacional · não é recomendação de investimento</p>",
+            unsafe_allow_html=True)
 
 
 # ────────────────────────────────────────────────────────────────
