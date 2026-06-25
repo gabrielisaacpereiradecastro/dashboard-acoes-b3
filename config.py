@@ -166,7 +166,7 @@ SECTOR_REMAP: dict[str, str] = {
     "RADL3": "Farmácias e Drogarias",
     "PNVL3": "Farmácias e Drogarias",
     "DMVF3": "Farmácias e Drogarias",  # d1000 Varejo Farma (era "Comércio Varejista")
-    "SBFG3": "Varejo Esportivo",
+    "SBFG3": "Têxtil e Vestuário Esportivo",  # Grupo SBF (Centauro/Fisia) — agrupa c/ vestuário, mantém viés esportivo
     "FLRY3": "Saúde - Diagnósticos",
     "DASA3": "Saúde - Diagnósticos",
     "HAPV3": "Saúde - Planos e Hospitais",
