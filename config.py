@@ -189,6 +189,8 @@ SECTOR_REMAP: dict[str, str] = {
     "RENT3": "Locação de Veículos",
     "MOVI3": "Locação de Veículos",
     "LCAM3": "Locação de Veículos",
+    # Varejo de moda/vestuário (alinha LREN3 à mesma classe da CEAB3)
+    "LREN3": "Têxtil e Vestuário",
 }
 
 # ────────────────────────────────────────────────────────────────
