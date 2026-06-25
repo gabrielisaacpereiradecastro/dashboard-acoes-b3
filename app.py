@@ -281,10 +281,30 @@ def _load_usuario_data(usuario: str) -> dict:
     return {}
 
 
+_HOLDING_PREFIXES = (
+    "Emp. Adm. Part. - ",
+    "Empresas Administradoras de Participações - ",
+)
+
+
+def _clean_sector(sector: str) -> str:
+    """Remove o prefixo genérico de holding (ex.: 'Emp. Adm. Part. - Energia
+    Elétrica' → 'Energia Elétrica')."""
+    s = (sector or "").strip()
+    for pfx in _HOLDING_PREFIXES:
+        if s.startswith(pfx):
+            return s[len(pfx):].strip()
+    return s
+
+
 def _apply_sector_remap(lista: dict) -> None:
     for ticker, entry in lista.items():
-        if ticker in SECTOR_REMAP and isinstance(entry.get("data"), dict):
+        if not isinstance(entry.get("data"), dict):
+            continue
+        if ticker in SECTOR_REMAP:
             entry["data"]["sector"] = SECTOR_REMAP[ticker]
+        else:
+            entry["data"]["sector"] = _clean_sector(entry["data"].get("sector", ""))
 
 
 def load_data() -> dict:

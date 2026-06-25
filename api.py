@@ -387,6 +387,11 @@ def get_all_stock_data(ticker: str) -> dict:
 
     # Setor final (remapeado) + flags de setor (decidem buscas extras)
     _sector_final = SECTOR_REMAP.get(t, (company or {}).get("sector", "") or "")
+    # Remove prefixo genérico de holding ("Emp. Adm. Part. - X" → "X")
+    for _pfx in ("Emp. Adm. Part. - ", "Empresas Administradoras de Participações - "):
+        if _sector_final.startswith(_pfx):
+            _sector_final = _sector_final[len(_pfx):].strip()
+            break
     _sl = _sector_final.lower()
     _is_cyclical_sec = any(kw in _sl for kw in SETORES_CICLICOS)
     _is_bank_sec = any(kw in _sl for kw in BANK_KEYWORDS)
