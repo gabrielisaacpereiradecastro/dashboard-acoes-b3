@@ -3,6 +3,7 @@ Módulo de comunicação com a API Bolsai.
 Todas as chamadas HTTP ficam isoladas aqui — fácil de manter.
 """
 import os
+import time
 import requests
 from typing import Optional
 
@@ -41,33 +42,45 @@ def _headers() -> dict:
 
 
 def _get(path: str, params: Optional[dict] = None) -> Optional[dict]:
-    """Faz GET em BASE_URL/path e retorna JSON ou None se 404."""
+    """Faz GET em BASE_URL/path e retorna JSON ou None se 404.
+
+    Tenta novamente (com backoff) em erros transitórios — 5xx, timeout e
+    falha de conexão — que são comuns em atualizações em massa.
+    """
     url = f"{BASE_URL}/{path.lstrip('/')}"
-    try:
-        resp = requests.get(url, headers=_headers(), params=params, timeout=_TIMEOUT)
-    except requests.exceptions.ConnectionError:
-        raise ConnectionError("Sem conexão com a internet. Verifique sua rede.")
-    except requests.exceptions.Timeout:
-        raise TimeoutError(f"Timeout ao chamar {path}. Tente novamente.")
+    _last_err: Exception = RuntimeError(f"Falha ao chamar {path}.")
+    for _attempt in range(3):
+        try:
+            resp = requests.get(url, headers=_headers(), params=params, timeout=_TIMEOUT)
+        except requests.exceptions.ConnectionError:
+            _last_err = ConnectionError("Sem conexão com a internet. Verifique sua rede.")
+            time.sleep(0.6 * (_attempt + 1))
+            continue
+        except requests.exceptions.Timeout:
+            _last_err = TimeoutError(f"Timeout ao chamar {path}.")
+            time.sleep(0.6 * (_attempt + 1))
+            continue
 
-    if resp.status_code == 401:
-        raise PermissionError("API Key inválida ou não autorizada (401).")
-    if resp.status_code == 404:
-        return None
-    if resp.status_code == 429:
-        raise RuntimeError(
-            "Limite diário de requisições da API atingido. "
-            "Tente novamente amanhã após meia-noite UTC."
-        )
-    if resp.status_code >= 500:
-        raise RuntimeError(
-            "A API retornou erro temporário para este ticker. "
-            "Tente novamente em alguns minutos ou verifique se o ticker está correto."
-        )
-    if not resp.ok:
-        raise RuntimeError(f"Erro {resp.status_code} ao chamar {path}: {resp.text[:200]}")
+        if resp.status_code == 401:
+            raise PermissionError("API Key inválida ou não autorizada (401).")
+        if resp.status_code == 404:
+            return None
+        if resp.status_code == 429:
+            # Limite diário: tentar de novo não ajuda.
+            raise RuntimeError(
+                "Limite diário de requisições da API atingido. "
+                "Tente novamente amanhã após meia-noite UTC."
+            )
+        if resp.status_code >= 500:
+            _last_err = RuntimeError("A API retornou erro temporário (5xx).")
+            time.sleep(0.7 * (_attempt + 1))
+            continue
+        if not resp.ok:
+            raise RuntimeError(f"Erro {resp.status_code} ao chamar {path}: {resp.text[:200]}")
 
-    return resp.json()
+        return resp.json()
+
+    raise _last_err
 
 
 # ────────────────────────────────────────────────────────────────

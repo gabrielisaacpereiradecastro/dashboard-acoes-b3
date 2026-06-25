@@ -3488,8 +3488,17 @@ def _sidebar():
             st.session_state.flash_success = ""
             time.sleep(3)
             _ph.empty()
-        for err in st.session_state.flash_errors:
-            st.error(err)
+        _errs = st.session_state.flash_errors
+        if _errs:
+            if len(_errs) > 3:
+                st.warning(f"⚠ {len(_errs)} ticker(s) falharam (erro temporário da API). "
+                           "Os valores anteriores foram mantidos — tente **Atualizar** de novo.")
+                with st.expander("Ver detalhes"):
+                    for err in _errs:
+                        st.caption(err)
+            else:
+                for err in _errs:
+                    st.error(err)
         st.session_state.flash_errors = []
 
         st.divider()
