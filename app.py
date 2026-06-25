@@ -3456,32 +3456,36 @@ def _sidebar_atualizacao() -> None:
     with st.sidebar:
         st.markdown("### Atualização")
 
-        oldest_update = None
+        _now = datetime.now(timezone.utc)
+        newest_update = None   # mais recente (= "última atualização")
+        _n_stale = 0           # quantas posições estão com >24h
         for entry in st.session_state.acoes.values():
             ua = entry.get("updated_at")
-            if ua:
-                try:
-                    dt = datetime.fromisoformat(ua)
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    if oldest_update is None or dt < oldest_update:
-                        oldest_update = dt
-                except Exception:
-                    pass
+            if not ua:
+                _n_stale += 1
+                continue
+            try:
+                dt = datetime.fromisoformat(ua)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if newest_update is None or dt > newest_update:
+                    newest_update = dt
+                if (_now - dt).total_seconds() / 3600 >= 24:
+                    _n_stale += 1
+            except Exception:
+                _n_stale += 1
 
-        if oldest_update:
-            ua_str = _fmt_updated(oldest_update.isoformat())
-            cor = _staleness_color(oldest_update.isoformat())
+        if newest_update:
+            ua_str = _fmt_updated(newest_update.isoformat())
+            cor = _staleness_color(newest_update.isoformat())
             st.markdown(
                 f"<span style='color:{cor};font-size:0.85rem'>"
                 f"Última atualização: {ua_str}</span>",
                 unsafe_allow_html=True,
             )
-            age_h = (datetime.now(timezone.utc) - oldest_update).total_seconds() / 3600
-            if age_h >= 48:
-                st.caption("🔴 Dados com mais de 48h — recomenda-se atualizar.")
-            elif age_h >= 24:
-                st.caption("🟠 Dados com mais de 24h.")
+            if _n_stale:
+                st.caption(f"🟠 {_n_stale} ação(ões) com dados >24h — não atualizaram "
+                           "(erro da API ou limite). Tente **Atualizar** de novo.")
         else:
             st.caption("Nenhum dado carregado ainda.")
 
