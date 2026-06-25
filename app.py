@@ -3433,7 +3433,16 @@ def _tela_selecao_usuario() -> None:
     """Exibida antes do app quando nenhum usuário está selecionado."""
     st.markdown(
         "<style>[data-testid='stAppViewContainer']{background:"
-        "radial-gradient(900px 480px at 50% -10%, rgba(52,211,153,0.10), transparent 62%), #0b0e14;}"
+        # glow esmeralda no topo
+        "radial-gradient(900px 480px at 50% -10%, rgba(52,211,153,0.10), transparent 62%),"
+        # malha de pontos sutil (textura — evita o aspecto 'cru'), mais densa nas bordas
+        "radial-gradient(rgba(52,211,153,0.07) 1px, transparent 1.5px) 0 0 / 26px 26px,"
+        "radial-gradient(rgba(255,255,255,0.035) 1px, transparent 1.5px) 13px 13px / 26px 26px,"
+        "#0b0e14;}"
+        # esmaece os pontos em direção ao centro p/ não competir com o card de login
+        "[data-testid='stAppViewContainer']::before{content:'';position:fixed;inset:0;"
+        "pointer-events:none;background:radial-gradient(680px 520px at 50% 42%,"
+        "#0b0e14 12%, transparent 80%);}"
         "</style>", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 2.2, 1])
     with col:
