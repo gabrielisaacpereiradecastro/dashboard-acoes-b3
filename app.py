@@ -614,6 +614,35 @@ def _score_color_hex(v) -> str:
 # Construção da tabela comparativa
 # ────────────────────────────────────────────────────────────────
 
+def _na(v) -> bool:
+    return v is None or (isinstance(v, float) and math.isnan(v))
+
+
+# Formatadores de exibição (o dtype continua numérico → ordenação correta)
+def _ff_score(v): return "—" if _na(v) else f"{v:.0f}"
+def _ff_price(v): return "—" if _na(v) else _fmt_price(v)
+def _ff_var(v):   return "—" if _na(v) else f"{v:+.2f}%"
+def _ff_pot(v):   return "N/D" if _na(v) else (f"↑ {v:.1f}%" if v >= 0 else f"↓ {abs(v):.1f}%")
+def _ff_pct(v):   return "—" if _na(v) else f"{v:.1f}%"
+def _ff_mult(v):  return "—" if _na(v) else f"{v:.2f}x"
+def _ff_pvp(v):   return "—" if _na(v) else f"{v:.2f}×"
+def _ff_liqM(v):  return "—" if _na(v) else f"R$ {v:.1f}M"
+def _ff_pl(v):
+    if _na(v):  return "—"
+    if v < 0:   return "Prejuízo"
+    if v < 5:   return f"⚠️ {v:.2f}x"
+    return f"{v:.2f}x"
+
+_TABLE_NUM_FMT = {
+    "Cotação": _ff_price, "Potencial": _ff_pot, "Var.Dia": _ff_var,
+    "Qualidade": _ff_score, "Atratividade": _ff_score,
+    "Dív.Líq/EBITDA": _ff_mult, "ROE": _ff_pct, "EV/EBITDA": _ff_mult,
+    "P/L": _ff_pl, "Mg. EBITDA": _ff_pct, "CAGR Lucro 5a": _ff_pct,
+    "P/FCF": _ff_mult, "Div. Yield": _ff_pct, "Liquidez": _ff_liqM,
+    "CAGR Rec. 5a": _ff_pct, "P/VP": _ff_pvp, "PSR": _ff_pvp,
+}
+
+
 def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
     rows_display = []
     rows_class = []
@@ -638,20 +667,20 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         else:
             _target = _geral_base_price(s)
         if _target is not None and _price_now and _price_now > 0:
-            _pot_pct  = (_target / _price_now - 1) * 100
-            _pot_disp = f"↑ {_pot_pct:.1f}%" if _pot_pct >= 0 else f"↓ {abs(_pot_pct):.1f}%"
-            _pot_cls  = "Positivo" if _pot_pct >= 0 else "Negativo"
+            _pot_pct = (_target / _price_now - 1) * 100
+            _pot_cls = "Positivo" if _pot_pct >= 0 else "Negativo"
         else:
-            _pot_disp, _pot_cls = "N/D", "ND"
+            _pot_pct, _pot_cls = None, "ND"
 
+        # Valores numéricos crus → o st.dataframe ordena numericamente (NumberColumn).
         display_row = {
             "Ticker":    s.get("ticker", ""),
             "Empresa":   s.get("trade_name") or s.get("corporate_name", ""),
             "Setor":     sector,
             "Balanço":   _fmt_quarter(ref_date),
-            "Cotação":   _fmt_price(_price_now),
-            "Potencial": _pot_disp,
-            "Var.Dia":   _fmt_pct(s.get("daily_change_pct")),
+            "Cotação":   _price_now,
+            "Potencial": _pot_pct,
+            "Var.Dia":   s.get("daily_change_pct"),
         }
         class_row = {
             "Ticker": s.get("ticker", ""), "Empresa": "", "Setor": "",
@@ -664,26 +693,29 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         _q = _scores.get("quality")
         _p = _scores.get("price")
         _diag = _scores.get("diagnosis")  # dict {label, verdict, color, ...} ou None
-        display_row["Qualidade"]    = f"{_q:.0f}" if _q is not None else "—"
+        display_row["Qualidade"]    = _q
         class_row["Qualidade"]      = _score_band(_q)
-        display_row["Atratividade"] = f"{_p:.0f}" if _p is not None else "—"
+        display_row["Atratividade"] = _p
         class_row["Atratividade"]   = _score_band(_p)
         display_row["Diagnóstico"]  = _diag["label"] if _diag else "—"
         class_row["Diagnóstico"]    = ("verdict_" + _diag["verdict"]) if _diag else ""
 
         for ind in SCORED_COLS_ORDER:
             col_name = INDICATOR_LABELS.get(ind, ind)
-            cls, disp = classifications.get(ind, ("ND", "N/D"))
-            display_row[col_name] = disp
+            cls, _disp = classifications.get(ind, ("ND", "N/D"))
+            raw = s.get(ind)
+            if ind == "liquidity" and raw is not None:
+                raw = raw / 1e6   # exibe/ordena em R$ milhões
+            display_row[col_name] = None if cls in ("NA", "ND") else raw
             class_row[col_name] = cls
 
         pvp = s.get("pvp")
-        cls_pvp, disp_pvp = sc.classify_pvp(pvp, sector)
-        display_row["P/VP"] = disp_pvp
+        cls_pvp, _ = sc.classify_pvp(pvp, sector)
+        display_row["P/VP"] = pvp
         class_row["P/VP"] = cls_pvp
 
-        cls_psr, disp_psr = _classify_psr(s.get("psr"), sector)
-        display_row["PSR"] = disp_psr
+        cls_psr, _ = _classify_psr(s.get("psr"), sector)
+        display_row["PSR"] = s.get("psr")
         class_row["PSR"] = cls_psr
 
         rows_display.append(display_row)
@@ -722,10 +754,13 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
     }
     colored_cols = {"Qualidade", "Atratividade", "Diagnóstico", "P/VP", "PSR", "Balanço", "Potencial"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
+    # Formata as colunas numéricas (display); o dtype continua numérico → ordena certo.
+    _fmt_map = {c: f for c, f in _TABLE_NUM_FMT.items() if c in display_df.columns}
+
     # Pandas >= 2.x: _update_ctx lança KeyError se index ou columns não forem únicos.
     # Retorna sem cores em vez de travar o app.
     if not display_df.index.is_unique or not display_df.columns.is_unique:
-        return display_df.style
+        return display_df.style.format(_fmt_map)
 
     # Alinha class_df ao display_df (colunas extras recebem "" → sem cor)
     class_aligned = class_df.reindex(
@@ -734,7 +769,7 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         fill_value="",
     ).fillna("")
 
-    styler = display_df.style
+    styler = display_df.style.format(_fmt_map)
 
     for col in display_df.columns:
         if col not in colored_cols:
@@ -5855,12 +5890,12 @@ div[data-testid="stPopover"] button:hover {
             selection_mode="single-row",
             height=min(42 + 35 * len(enriched), 600),
             column_config={
-                "Qualidade":       st.column_config.TextColumn(
-                    "Qualidade", width="small",
+                "Qualidade":       st.column_config.NumberColumn(
+                    "Qualidade", width="small", format="%.0f",
                     help="Qualidade do negócio (0-100): ROE, solidez, margem e crescimento. "
                          "Maior = melhor empresa."),
-                "Atratividade":    st.column_config.TextColumn(
-                    "Preço", width="small",
+                "Atratividade":    st.column_config.NumberColumn(
+                    "Preço", width="small", format="%.0f",
                     help="Atratividade do preço (0-100): EV/EBITDA, P/L, P/FCF (bancos: P/VP, P/L). "
                          "Maior = mais barata."),
                 "Diagnóstico":     st.column_config.TextColumn(
@@ -5870,24 +5905,26 @@ div[data-testid="stPopover"] button:hover {
                 "Empresa":         st.column_config.TextColumn("Empresa", width="medium"),
                 "Setor":           st.column_config.TextColumn("Setor", width="medium"),
                 "Balanço":         st.column_config.TextColumn("Balanço", width="small"),
-                "Potencial":       st.column_config.TextColumn(
-                    "Potencial", width="small",
+                "Cotação":         st.column_config.NumberColumn("Cotação", width="small", format="R$ %.2f"),
+                "Potencial":       st.column_config.NumberColumn(
+                    "Potencial", width="small", format="%+.1f%%",
                     help="Potencial de valorização vs preço atual no cenário Esperado (Base): "
                          "DCF para ações em geral, Gordon Growth para bancos. "
                          "Os 3 cenários (Conservador/Base/Otimista) ficam na aba Detalhe.",
                 ),
-                "Dív.Líq/EBITDA":  st.column_config.TextColumn("Dív/EBITDA", width="small"),
-                "ROE":             st.column_config.TextColumn("ROE", width="small"),
-                "EV/EBITDA":       st.column_config.TextColumn("EV/EBITDA", width="small"),
-                "P/L":             st.column_config.TextColumn("P/L", width="small"),
-                "Mg. EBITDA":      st.column_config.TextColumn("Mg.EBITDA", width="small"),
-                "CAGR Lucro 5a":   st.column_config.TextColumn("CAGR Lucro", width="small"),
-                "P/FCF":           st.column_config.TextColumn("P/FCF", width="small"),
-                "Div. Yield":      st.column_config.TextColumn("DY", width="small"),
-                "Liquidez":        st.column_config.TextColumn("Liquidez", width="small"),
-                "CAGR Rec. 5a":    st.column_config.TextColumn("CAGR Rec.", width="small"),
-                "P/VP":            st.column_config.TextColumn("P/VP", width="small"),
-                "PSR":             st.column_config.TextColumn("PSR", width="small"),
+                "Var.Dia":         st.column_config.NumberColumn("Var.Dia", width="small", format="%+.2f%%"),
+                "Dív.Líq/EBITDA":  st.column_config.NumberColumn("Dív/EBITDA", width="small", format="%.2fx"),
+                "ROE":             st.column_config.NumberColumn("ROE", width="small", format="%.1f%%"),
+                "EV/EBITDA":       st.column_config.NumberColumn("EV/EBITDA", width="small", format="%.2fx"),
+                "P/L":             st.column_config.NumberColumn("P/L", width="small", format="%.2fx"),
+                "Mg. EBITDA":      st.column_config.NumberColumn("Mg.EBITDA", width="small", format="%.1f%%"),
+                "CAGR Lucro 5a":   st.column_config.NumberColumn("CAGR Lucro", width="small", format="%.1f%%"),
+                "P/FCF":           st.column_config.NumberColumn("P/FCF", width="small", format="%.2fx"),
+                "Div. Yield":      st.column_config.NumberColumn("DY", width="small", format="%.1f%%"),
+                "Liquidez":        st.column_config.NumberColumn("Liq. (R$M)", width="small", format="%.1f"),
+                "CAGR Rec. 5a":    st.column_config.NumberColumn("CAGR Rec.", width="small", format="%.1f%%"),
+                "P/VP":            st.column_config.NumberColumn("P/VP", width="small", format="%.2fx"),
+                "PSR":             st.column_config.NumberColumn("PSR", width="small", format="%.2fx"),
             },
         )
 
