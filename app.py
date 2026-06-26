@@ -49,6 +49,16 @@ SHOPPING_FAIR_EV_EBITDA = getattr(_cfg, "SHOPPING_FAIR_EV_EBITDA", 10.5)
 # quando o FCL de 1 ano vem inflado (capex incompleto). Ver SAPR11 (+1285%).
 UTILITY_FAIR_EV_EBITDA = getattr(_cfg, "UTILITY_FAIR_EV_EBITDA", 9.0)
 
+# Reversão à média: valuation pelo múltiplo MEDIANO histórico da PRÓPRIA empresa
+# (auto-calibrante — cada nome contra a própria régua). Guarda-corpos evitam que
+# uma história distorcida (ex.: trimestre de EBITDA ~zero) envenene a mediana.
+# Limites largos de propósito: a MEDIANA já é robusta a outliers; os bounds só
+# cortam lixo extremo (EBITDA ~0 → 100×+). Precisam acomodar nomes premium
+# (WEGE3 ~22× EV/EBITDA, RADL3 ~25× P/L), senão rejeitariam quem mais importa.
+_MR_MIN_PONTOS      = getattr(_cfg, "MR_MIN_PONTOS", 8)              # mín. trimestres válidos
+_MR_EVEBITDA_BOUNDS = getattr(_cfg, "MR_EVEBITDA_BOUNDS", (2.0, 40.0))
+_MR_PL_BOUNDS       = getattr(_cfg, "MR_PL_BOUNDS", (3.0, 45.0))
+
 # ────────────────────────────────────────────────────────────────
 # Configuração da página
 # ────────────────────────────────────────────────────────────────
@@ -1663,7 +1673,9 @@ def _insurer_base_price(s: dict, fair_pe: float = INSURER_FAIR_PE) -> Optional[f
     lpa = s.get("lpa")
     if lpa is None or lpa <= 0:
         return None
-    return fair_pe * lpa
+    # Reversão à média: P/L mediano histórico da própria seguradora; senão, fair_pe
+    mult = _hist_median_mult(s.get("pl_historico"), _MR_PL_BOUNDS)
+    return (mult if mult is not None else fair_pe) * lpa
 
 
 def _is_drugstore(sector: str) -> bool:
@@ -1691,6 +1703,19 @@ def _is_shopping(sector: str) -> bool:
     """True se for shopping/centro comercial (valuation por EV/EBITDA)."""
     sl = (sector or "").lower()
     return any(kw in sl for kw in SHOPPING_KEYWORDS)
+
+
+def _hist_median_mult(serie, bounds) -> Optional[float]:
+    """Mediana de um histórico de múltiplo (P/L ou EV/EBITDA), dentro dos limites
+    de sanidade. Retorna None se houver menos que _MR_MIN_PONTOS pontos válidos
+    — nesse caso o motor cai no múltiplo setorial (fallback). Base do valuation
+    por reversão à média (múltiplo histórico da própria empresa)."""
+    import statistics
+    lo, hi = bounds
+    vals = [v for v in (serie or []) if v is not None and lo <= v <= hi]
+    if len(vals) < _MR_MIN_PONTOS:
+        return None
+    return statistics.median(vals)
 
 
 def _ev_ebitda_price(s: dict, mult: float) -> Optional[float]:
@@ -1747,8 +1772,15 @@ def _geral_bucket(sector: str) -> tuple[float, str]:
 
 
 def _geral_base_price(s: dict) -> Optional[float]:
-    """Preço justo para empresas 'gerais' — EV/EBITDA por sub-bucket setorial."""
-    mult, _ = _geral_bucket(s.get("sector", ""))
+    """Preço justo para empresas 'gerais' — EV/EBITDA.
+
+    1º: reversão à média (EV/EBITDA mediano histórico da própria empresa) —
+    captura o prêmio/desconto estrutural de cada nome (ex.: WEGE3 ~22×). Se o
+    histórico for curto/distorcido, cai no múltiplo do sub-bucket setorial.
+    """
+    mult = _hist_median_mult(s.get("ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS)
+    if mult is None:
+        mult, _ = _geral_bucket(s.get("sector", ""))
     return _ev_ebitda_price(s, mult)
 
 
@@ -2047,6 +2079,12 @@ def _utility_base_price(s: dict) -> Optional[float]:
     inflado (capex incompleto na DFC) — caso SAPR11, que dava +1285% via DCF puro.
     Quando o DCF é razoável (abaixo do teto), ele prevalece.
     """
+    # 1º: reversão à média do EV/EBITDA histórico da própria utility — separa
+    # naturalmente transmissão (~9×) de distribuição (~5-6×) e geração.
+    mult = _hist_median_mult(s.get("ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS)
+    if mult is not None:
+        return _ev_ebitda_price(s, mult)
+    # fallback (histórico curto): min(DCF, EV/EBITDA setorial) — teto contra estouro
     dcf = _dcf_base_price(s)
     cap = _ev_ebitda_price(s, UTILITY_FAIR_EV_EBITDA)
     vals = [v for v in (dcf, cap) if v is not None]

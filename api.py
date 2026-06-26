@@ -516,16 +516,22 @@ def get_all_stock_data(ticker: str) -> dict:
                 _fin_exp_mil = _fin_exp_dre[max(_fin_exp_dre)]
             _ebit_historico = dict(_ebit_dre)
 
-    # ROE histórico (bancos) — para normalizar o Gordon Growth (suaviza trimestre atípico)
+    # Histórico de indicadores (1 chamada): ROE p/ Gordon (bancos) + P/L e EV/EBITDA
+    # por trimestre p/ valuation por REVERSÃO À MÉDIA (múltiplo mediano da própria
+    # empresa). Fallback gracioso: listas vazias se a API não trouxer o campo.
     _roe_historico: list = []
-    if _is_bank_sec:
-        _fh = get_fundamentals_history(t, limit=20)
-        if _fh:
-            for _h in (_fh.get("history") or []):
-                _r = _h.get("roe")
-                if _r is not None:
+    _pl_historico: list = []
+    _ev_ebitda_historico: list = []
+    _fh = get_fundamentals_history(t, limit=20)
+    if _fh:
+        for _h in (_fh.get("history") or []):
+            for _campo, _lst in (("roe", _roe_historico),
+                                 ("pl", _pl_historico),
+                                 ("ev_ebitda", _ev_ebitda_historico)):
+                _v = _h.get(_campo)
+                if _v is not None:
                     try:
-                        _roe_historico.append(round(float(_r), 2))
+                        _lst.append(round(float(_v), 2))
                     except (TypeError, ValueError):
                         continue
 
@@ -592,6 +598,8 @@ def get_all_stock_data(ticker: str) -> dict:
             "fcl_historico":    _fcl_historico,  # {ano: FCL R$ mil} para normalização cíclica
             "ebit_historico":   _ebit_historico, # {ano: EBIT R$ mil} p/ EBITDA mid-cycle (cíclicas)
             "roe_historico":    _roe_historico,  # [ROE %] trimestral p/ normalizar Gordon (bancos)
+            "pl_historico":     _pl_historico,        # [P/L] trimestral p/ reversão à média
+            "ev_ebitda_historico": _ev_ebitda_historico,  # [EV/EBITDA] trimestral p/ reversão à média
             "interest_coverage": _interest_coverage,
         }
     )
