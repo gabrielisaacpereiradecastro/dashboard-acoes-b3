@@ -2685,6 +2685,25 @@ def _show_dcf(s: dict) -> None:
     _capt = _mr_caption(s)
     if _capt:
         st.caption(_capt)
+
+    # ── DEBUG TEMPORÁRIO: inspecionar o que o fundamentals_history fornece ──
+    # (remover depois de definirmos o plano B da reversão à média)
+    with st.expander("🔧 [debug] campos do histórico de fundamentos"):
+        _raw = api.get_fundamentals_history(s.get("ticker", ""), limit=20)
+        _h = (_raw or {}).get("history") or []
+        st.write(f"Períodos retornados: **{len(_h)}**")
+        if _h:
+            st.write("Todos os campos do 1º período:")
+            st.code(", ".join(sorted(str(k) for k in _h[0].keys())))
+            _alvo = {k: _h[0].get(k) for k in
+                     ("pl", "ev_ebitda", "lpa", "net_income", "ebitda",
+                      "net_debt", "pvp", "roe", "reference_date")
+                     if k in _h[0]}
+            st.write("Valores de interesse (1º período):")
+            st.json(_alvo)
+        st.caption(f"stock_history tem dados de preço? "
+                   f"{'sim' if (api.get_stock_history(s.get('ticker',''), limit=5) or {}).get('prices') else 'não'}")
+
     if sc.is_bank(sector):
         _show_gordon_growth(s)
         return
