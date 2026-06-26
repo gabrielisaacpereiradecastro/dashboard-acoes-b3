@@ -457,6 +457,14 @@ def _switch_list(nova_lista: str) -> None:
     st.session_state.selected_ticker = None
 
 
+def _switch_fii_list(nova_lista: str) -> None:
+    """Muda a lista de FIIs ativa (espelha _switch_list)."""
+    st.session_state.lista_fii_atual = nova_lista
+    if nova_lista not in st.session_state.fiis_listas:
+        st.session_state.fiis_listas[nova_lista] = {}
+    st.session_state.selected_fii = None
+
+
 def _init_state():
     """Inicializa session_state a partir dos dados do usuário atual."""
     usuario = st.session_state.get("usuario_atual")
@@ -489,13 +497,20 @@ def _init_state():
     if "fiis_listas" not in st.session_state:
         u_data = _load_usuario_data(usuario)
         fiis = u_data.get("fiis_listas", {})
-        if not fiis:
-            fiis = {"🏢 FIIs": {}}
+        # Migração (Etapa 4): lista única antiga "🏢 FIIs" → "⭐ Carteira",
+        # preservando as posições. Depois garante as 3 listas padrão.
+        if "🏢 FIIs" in fiis and "⭐ Carteira" not in fiis:
+            fiis["⭐ Carteira"] = fiis.pop("🏢 FIIs")
+        for lp in LISTAS_PADRAO:   # ⭐ Carteira / 👁 Watchlist / 🔍 Pesquisa
+            if lp not in fiis:
+                fiis[lp] = {}
         st.session_state.fiis_listas = fiis
 
     if "lista_fii_atual" not in st.session_state:
         fii_keys = list(st.session_state.fiis_listas.keys())
-        st.session_state.lista_fii_atual = fii_keys[0] if fii_keys else "🏢 FIIs"
+        st.session_state.lista_fii_atual = (
+            "⭐ Carteira" if "⭐ Carteira" in fii_keys
+            else (fii_keys[0] if fii_keys else LISTAS_PADRAO[0]))
 
     if "alertas" not in st.session_state:
         st.session_state.alertas = _load_usuario_data(usuario).get("alertas", [])
@@ -4005,6 +4020,103 @@ def _sidebar_atualizacao() -> None:
                 st.caption("Indisponível (verifique a API Key).")
 
 
+def _sidebar_fiis_controls() -> None:
+    """Sidebar da área FIIs: seletor de lista + gerenciar + adicionar FII (por
+    ticker). Espelha o bloco de Ações, padronizando a navegação (Etapa 4)."""
+    with st.sidebar:
+        st.divider()
+        # ── Seletor de lista FII ──
+        _keys = list(st.session_state.fiis_listas.keys())
+        _cur = (_keys.index(st.session_state.lista_fii_atual)
+                if st.session_state.lista_fii_atual in _keys else 0)
+        _chosen = st.selectbox("Lista FII", _keys, index=_cur, key="sb_fii_lista_sel",
+                               label_visibility="collapsed")
+        if _chosen != st.session_state.lista_fii_atual:
+            _switch_fii_list(_chosen)
+            st.rerun()
+
+        with st.expander("⚙️ Gerenciar listas FII"):
+            _nome = st.text_input("Nome da nova lista FII", key="sb_nova_fii_lista",
+                                  placeholder="ex: FIIs Tijolo, Papel…",
+                                  label_visibility="collapsed")
+            if st.button("➕ Criar lista FII", key="sb_btn_criar_fii", width="stretch"):
+                _n = _nome.strip()
+                if not _n:
+                    st.warning("Digite um nome.")
+                elif _n in st.session_state.fiis_listas:
+                    st.warning("Já existe uma lista com esse nome.")
+                else:
+                    st.session_state.fiis_listas[_n] = {}
+                    _switch_fii_list(_n)
+                    _save_all()
+                    st.rerun()
+            st.divider()
+            if len(st.session_state.fiis_listas) > 1:
+                if not st.session_state.get("confirm_del_fii_lista"):
+                    if st.button(f"🗑 Excluir lista ({st.session_state.lista_fii_atual})",
+                                 key="sb_btn_del_fii_ask", width="stretch"):
+                        st.session_state.confirm_del_fii_lista = True
+                        st.rerun()
+                else:
+                    st.warning(f"Excluir **{st.session_state.lista_fii_atual}**?")
+                    _c1, _c2 = st.columns(2)
+                    if _c1.button("✅ Confirmar", key="sb_btn_del_fii_ok", width="stretch"):
+                        del st.session_state.fiis_listas[st.session_state.lista_fii_atual]
+                        st.session_state.lista_fii_atual = list(st.session_state.fiis_listas.keys())[0]
+                        st.session_state.confirm_del_fii_lista = False
+                        _save_all()
+                        st.rerun()
+                    if _c2.button("✗ Cancelar", key="sb_btn_del_fii_cancel", width="stretch"):
+                        st.session_state.confirm_del_fii_lista = False
+                        st.rerun()
+            else:
+                st.caption("Crie outra lista antes de excluir esta.")
+
+        _fii_atual = st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
+        if st.session_state.lista_fii_atual == "🔍 Pesquisa" and _fii_atual:
+            if st.button("Limpar tudo da Pesquisa", width="stretch", key="sb_btn_clear_fii_pesq"):
+                _fii_atual.clear()
+                _save_all()
+                st.rerun()
+
+        st.divider()
+        # ── Adicionar FII (só por ticker) ──
+        st.markdown("### Adicionar FIIs")
+        _inp = st.text_input("Ticker(s) FII", placeholder="Ex: HGLG11, KNRI11, MXRF11",
+                             help="Separe múltiplos por vírgula ou espaço.",
+                             key="sb_fii_add_input")
+        if st.button("➕ Adicionar e Buscar", width="stretch", key="sb_btn_add_fii"):
+            _tks = [t for t in _inp.upper().replace(",", " ").split() if t]
+            if not _tks:
+                st.warning("Digite ao menos um ticker.")
+            else:
+                _ok, _ja, _err = [], [], []
+                with st.spinner("Buscando FIIs…"):
+                    for _t in _tks:
+                        if _t in _fii_atual:
+                            _ja.append(_t)
+                            continue
+                        _d = _fetch_fii(_t)
+                        if _d.get("error"):
+                            _err.append(f"{_t}: {_d['error']}")
+                        else:
+                            _fii_atual[_t] = {**_d, "qtd": 0, "preco_medio": 0.0, "data_compra": ""}
+                            _ok.append(_t)
+                st.session_state.flash_success = f"Adicionado(s): {', '.join(_ok)}" if _ok else ""
+                st.session_state.flash_errors = _err
+                if _ok:
+                    _save_all()
+                st.rerun()
+
+        st.divider()
+        _n = len(_fii_atual)
+        st.markdown(f"### {st.session_state.lista_fii_atual} ({_n})")
+        if not _fii_atual:
+            st.caption("Nenhum FII nesta lista. Adicione acima.")
+        else:
+            st.caption(", ".join(sorted(_fii_atual.keys())))
+
+
 def _sidebar():
     with st.sidebar:
         _u = st.session_state.get("usuario_atual", "")
@@ -4091,8 +4203,14 @@ def _sidebar():
                     st.error(err)
         st.session_state.flash_errors = []
 
-        # ── Fora da área Ações: mostra só a Atualização e encerra ──
-        if st.session_state.get("area", "📊 Ações") != "📊 Ações":
+        # ── Área FIIs: controles próprios (lista + adicionar) + Atualização ──
+        _area_now = st.session_state.get("area", "📊 Ações")
+        if _area_now == "🏢 FIIs":
+            _sidebar_fiis_controls()
+            _sidebar_atualizacao()
+            return
+        # ── Outras áreas (Screener/Ciclo/Alertas): só Atualização ──
+        if _area_now != "📊 Ações":
             _sidebar_atualizacao()
             return
 
@@ -4836,106 +4954,9 @@ def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
                        "(sem eixo de qualidade) — veja-os na tabela e nos alertas do Detalhe.")
 
 
-def _fii_list_selector() -> dict:
-    """Seletor de lista FII + gerenciar listas (acima das sub-abas). Retorna a lista ativa."""
-
-    # ── Seletor de lista FII ─────────────────────────────────────
-    fii_listas_keys = list(st.session_state.fiis_listas.keys())
-    cur_fii_idx = (
-        fii_listas_keys.index(st.session_state.lista_fii_atual)
-        if st.session_state.lista_fii_atual in fii_listas_keys else 0
-    )
-    chosen_fii_lista = st.selectbox(
-        "Lista FII", fii_listas_keys, index=cur_fii_idx, key="fii_lista_sel",
-    )
-    if chosen_fii_lista != st.session_state.lista_fii_atual:
-        st.session_state.lista_fii_atual = chosen_fii_lista
-        st.rerun()
-
-    with st.expander("⚙️ Gerenciar listas FII"):
-        _fii_nome_in = st.text_input(
-            "Nome da nova lista FII", key="nova_fii_lista_input",
-            placeholder="ex: FIIs Tijolo, Papel, Diversificado…",
-            label_visibility="collapsed",
-        )
-        if st.button("➕ Criar lista FII", key="btn_criar_fii_lista", width="stretch"):
-            _fn = _fii_nome_in.strip()
-            if not _fn:
-                st.warning("Digite um nome.")
-            elif _fn in st.session_state.fiis_listas:
-                st.warning("Já existe uma lista com esse nome.")
-            else:
-                st.session_state.fiis_listas[_fn] = {}
-                st.session_state.lista_fii_atual = _fn
-                st.rerun()
-        st.divider()
-        _can_del_fii = len(st.session_state.fiis_listas) > 1
-        if not _can_del_fii:
-            st.caption("Crie outra lista antes de excluir esta.")
-        else:
-            if not st.session_state.get("confirm_del_fii_lista"):
-                if st.button(
-                    f"🗑 Excluir lista ({st.session_state.lista_fii_atual})",
-                    key="btn_del_fii_lista_ask", width="stretch",
-                ):
-                    st.session_state.confirm_del_fii_lista = True
-                    st.rerun()
-            else:
-                st.warning(f"Excluir **{st.session_state.lista_fii_atual}**?")
-                _dc1, _dc2 = st.columns(2)
-                with _dc1:
-                    if st.button("✅ Confirmar", key="btn_del_fii_ok", width="stretch"):
-                        del st.session_state.fiis_listas[st.session_state.lista_fii_atual]
-                        st.session_state.lista_fii_atual = list(st.session_state.fiis_listas.keys())[0]
-                        st.session_state.confirm_del_fii_lista = False
-                        st.rerun()
-                with _dc2:
-                    if st.button("✗ Cancelar", key="btn_del_fii_cancel", width="stretch"):
-                        st.session_state.confirm_del_fii_lista = False
-                        st.rerun()
-
-    return st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
-
-
 def _show_fii_tabela(fiis_atuais: dict) -> None:
-    """Tabela de FIIs: adicionar, filtrar, remover/atualizar, listar."""
-    # ── Adicionar FII ─────────────────────────────────────────────
-    col_in, col_btn, _ = st.columns([2, 1, 1.5])
-    with col_in:
-        fii_input = st.text_input(
-            "Ticker do FII", placeholder="Ex: HGLG11, KNRI11, MXRF11",
-            key="fii_ticker_input", label_visibility="collapsed",
-        )
-    with col_btn:
-        if st.button("➕ Adicionar FII", key="btn_add_fii", width="stretch"):
-            # Aceita vários tickers separados por vírgula e/ou espaço.
-            _tickers = [t for t in fii_input.upper().replace(",", " ").split() if t]
-            if not _tickers:
-                st.warning("Digite um ou mais tickers.")
-            else:
-                _add_ok, _add_ja, _add_err = [], [], []
-                for _t in _tickers:
-                    if _t in fiis_atuais:
-                        _add_ja.append(_t)
-                        continue
-                    with st.spinner(f"Buscando {_t}…"):
-                        _fii_data = _fetch_fii(_t)
-                    if _fii_data.get("error"):
-                        _add_err.append(f"{_t}: {_fii_data['error']}")
-                    else:
-                        fiis_atuais[_t] = {**_fii_data, "qtd": 0,
-                                           "preco_medio": 0.0, "data_compra": ""}
-                        _add_ok.append(_t)
-                if _add_ok:
-                    st.success(f"Adicionado(s): {', '.join(_add_ok)}")
-                if _add_ja:
-                    st.info(f"Já estava(m) na lista: {', '.join(_add_ja)}")
-                for _e in _add_err:
-                    st.error(_e)
-                if _add_ok:
-                    _save_all()
-                    st.rerun()
-
+    """Tabela de FIIs: filtrar, remover/atualizar, listar.
+    (Adicionar FII fica no sidebar — Etapa 4, padronizado com Ações.)"""
     # ── Filtro por tipo ───────────────────────────────────────────
     def _tipo_label(fii: dict) -> str:
         ft = (fii.get("fund_type") or "").strip()
@@ -5071,7 +5092,8 @@ def _show_fii_carteira(fiis_atuais: dict) -> None:
 
 def _show_fii_tab() -> None:
     st.markdown("## Análise de FIIs")
-    fiis_atuais = _fii_list_selector()
+    # Lista FII vem do sidebar (Etapa 4); a aba só consome a lista ativa.
+    fiis_atuais = st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
     tab_cart, tab_tab, tab_det, tab_scr = st.tabs(
         ["📊 Carteira", "📋 Tabela", "🔍 Detalhe", "🔎 Screener"])
     with tab_cart:
