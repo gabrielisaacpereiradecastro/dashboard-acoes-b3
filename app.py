@@ -1681,7 +1681,7 @@ def _insurer_base_price(s: dict, fair_pe: float = INSURER_FAIR_PE) -> Optional[f
     if lpa is None or lpa <= 0:
         return None
     # Reversão à média: P/L mediano histórico da própria seguradora; senão, fair_pe
-    mult = _hist_median_mult(s.get("pl_historico"), _MR_PL_BOUNDS)
+    mult = _hist_median_mult(_hist_serie(s, "pl_historico"), _MR_PL_BOUNDS)
     return (mult if mult is not None else fair_pe) * lpa
 
 
@@ -1710,6 +1710,38 @@ def _is_shopping(sector: str) -> bool:
     """True se for shopping/centro comercial (valuation por EV/EBITDA)."""
     sl = (sector or "").lower()
     return any(kw in sl for kw in SHOPPING_KEYWORDS)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _hist_multiples_live(ticker: str) -> dict:
+    """Busca P/L e EV/EBITDA históricos direto do fundamentals_history (cached 1h).
+
+    Caminho ROBUSTO: independe do api.py/reboot — a chamada funciona com 'Updated
+    app'. Usado como fallback quando o dado armazenado (via get_all_stock_data)
+    ainda não tem o histórico (ex.: api.py rodando código antigo)."""
+    pl, ev = [], []
+    try:
+        for h in (api.get_fundamentals_history(ticker, limit=20) or {}).get("history") or []:
+            for campo, lst in (("pl", pl), ("ev_ebitda", ev)):
+                v = h.get(campo)
+                if v is not None:
+                    try:
+                        lst.append(round(float(v), 2))
+                    except (TypeError, ValueError):
+                        pass
+    except Exception:
+        pass
+    return {"pl_historico": pl, "ev_ebitda_historico": ev}
+
+
+def _hist_serie(s: dict, field: str) -> list:
+    """Série histórica do múltiplo: usa o dado armazenado se houver (rápido,
+    pós-reboot); senão busca ao vivo (cached) — garante funcionar sem reboot."""
+    stored = s.get(field)
+    if stored:
+        return stored
+    tk = s.get("ticker")
+    return _hist_multiples_live(tk).get(field, []) if tk else []
 
 
 def _hist_median_mult(serie, bounds) -> Optional[float]:
@@ -1785,7 +1817,7 @@ def _geral_base_price(s: dict) -> Optional[float]:
     captura o prêmio/desconto estrutural de cada nome (ex.: WEGE3 ~22×). Se o
     histórico for curto/distorcido, cai no múltiplo do sub-bucket setorial.
     """
-    mult = _hist_median_mult(s.get("ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS)
+    mult = _hist_median_mult(_hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS)
     if mult is None:
         mult, _ = _geral_bucket(s.get("sector", ""))
     return _ev_ebitda_price(s, mult)
@@ -2088,7 +2120,7 @@ def _utility_base_price(s: dict) -> Optional[float]:
     """
     # 1º: reversão à média do EV/EBITDA histórico da própria utility — separa
     # naturalmente transmissão (~9×) de distribuição (~5-6×) e geração.
-    mult = _hist_median_mult(s.get("ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS)
+    mult = _hist_median_mult(_hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS)
     if mult is not None:
         return _ev_ebitda_price(s, mult)
     # fallback (histórico curto): min(DCF, EV/EBITDA setorial) — teto contra estouro
@@ -2658,13 +2690,13 @@ def _mr_caption(s: dict) -> Optional[str]:
             or _is_drugstore(sector)):
         return None
     if _is_insurer(sector):
-        serie, bounds, nome = s.get("pl_historico"), _MR_PL_BOUNDS, "P/L"
+        serie, bounds, nome = _hist_serie(s, "pl_historico"), _MR_PL_BOUNDS, "P/L"
         setorial = f"{INSURER_FAIR_PE:.0f}× (referência setorial)"
     elif _is_utility(sector):
-        serie, bounds, nome = s.get("ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS, "EV/EBITDA"
+        serie, bounds, nome = _hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS, "EV/EBITDA"
         setorial = f"DCF com teto de {UTILITY_FAIR_EV_EBITDA:.0f}×"
     else:  # geral
-        serie, bounds, nome = s.get("ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS, "EV/EBITDA"
+        serie, bounds, nome = _hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS, "EV/EBITDA"
         _m, _lbl = _geral_bucket(sector)
         setorial = f"{_m:.0f}× ({_lbl})"
     lo, hi = bounds
@@ -2702,15 +2734,16 @@ def _show_dcf(s: dict) -> None:
             st.write("Valores de interesse (1º período):")
             st.json(_alvo)
         st.divider()
-        _stored_ev = s.get("ev_ebitda_historico") or []
-        _stored_pl = s.get("pl_historico") or []
-        st.write(f"**ARMAZENADO no dado da ação** (o que o motor usa): "
-                 f"ev_ebitda_historico = **{len(_stored_ev)}** valores · "
-                 f"pl_historico = **{len(_stored_pl)}** valores")
+        _stored_ev = len(s.get("ev_ebitda_historico") or [])
+        _eff_ev = len(_hist_serie(s, "ev_ebitda_historico"))
+        _eff_pl = len(_hist_serie(s, "pl_historico"))
+        st.write(f"**ARMAZENADO** (via api.py): ev_ebitda = **{_stored_ev}** · "
+                 f"**EFETIVO** (com fallback ao vivo, o que o motor usa agora): "
+                 f"ev_ebitda = **{_eff_ev}** · pl = **{_eff_pl}**")
         st.caption(
-            "Se a API (acima) tem 20 mas o ARMAZENADO está em 0 → o `api.py` "
-            "rodou código antigo. Faça **Reboot completo** (não só Updated app) "
-            "e depois **Atualizar Tudo** para repopular."
+            "Agora o motor usa o caminho EFETIVO: se o armazenado estiver vazio, "
+            "busca o histórico ao vivo (cached). Se EFETIVO ≥ 8, a reversão à "
+            "média ativa mesmo sem reboot do api.py."
         )
 
     if sc.is_bank(sector):
