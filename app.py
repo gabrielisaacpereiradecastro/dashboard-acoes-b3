@@ -1171,11 +1171,28 @@ def _fetch_macro() -> dict:
     return result
 
 
+# ── Ícones SVG inline (estilo Tabler outline) p/ superfícies HTML ──────
+def _ic(paths, color: str = "#34d399", size: int = 16, sw: float = 2) -> str:
+    body = "".join(f'<path d="{p}"/>' for p in paths)
+    return (f"<svg width='{size}' height='{size}' viewBox='0 0 24 24' fill='none' "
+            f"stroke='{color}' stroke-width='{sw}' stroke-linecap='round' "
+            f"stroke-linejoin='round' style='vertical-align:-2px'>{body}</svg>")
+
+_IC_TREND_UP   = ["M3 17l6 -6l4 4l8 -8", "M14 7l7 0l0 7"]
+_IC_TREND_DOWN = ["M3 7l6 6l4 -4l8 8", "M14 17l7 0l0 -7"]
+_IC_WALLET     = ["M17 8V5a1 1 0 0 0 -1 -1H6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a1 1 0 0 0 1 -1v-3",
+                  "M20 12v4h-4a2 2 0 0 1 0 -4h4"]
+_IC_CHECK      = ["M5 12l5 5l10 -10"]
+
+
 def _show_macro_panel() -> None:
     macro = _fetch_macro()
     col_hdr, col_btn = st.columns([11, 1])
     with col_hdr:
-        st.markdown("**📈 Contexto de Mercado**")
+        st.markdown(
+            f"<div style='font-weight:600;font-size:1rem;display:flex;align-items:center;gap:7px'>"
+            f"{_ic(_IC_TREND_UP, size=17)}<span>Contexto de Mercado</span></div>",
+            unsafe_allow_html=True)
     with col_btn:
         if st.button("🔄", help="Atualizar painel macro", key="macro_refresh"):
             _fetch_macro.clear()
@@ -2012,7 +2029,7 @@ def _show_gordon_growth(s: dict) -> None:
     ticker = s.get("ticker", "")
 
     st.divider()
-    st.subheader("📐 Valuation — Gordon Growth (P/VP Justificado)")
+    st.subheader("Valuation — Gordon Growth (P/VP Justificado)")
     st.info(
         "ℹ️ Para bancos, o valuation usa o **modelo de Gordon Growth sobre o Patrimônio** "
         "(P/VP justificado pelo ROE), método padrão para o setor — diferente do DCF "
@@ -2154,7 +2171,7 @@ def _show_insurer_valuation(s: dict) -> None:
     ticker = s.get("ticker", "")
 
     st.divider()
-    st.subheader("📐 Valuation — Múltiplo de Lucro (P/L)")
+    st.subheader("Valuation — Múltiplo de Lucro (P/L)")
     st.info(
         "ℹ️ Para seguradoras, o valuation usa **múltiplo de lucro (P/L × LPA)** — "
         "método padrão do setor. O DCF de fluxo de caixa não se aplica porque o "
@@ -2238,7 +2255,7 @@ def _show_shopping_valuation(s: dict) -> None:
     ticker   = s.get("ticker", "")
 
     st.divider()
-    st.subheader("📐 Valuation — Múltiplo EV/EBITDA")
+    st.subheader("Valuation — Múltiplo EV/EBITDA")
     st.info(
         "ℹ️ Para shoppings, o valuation usa **EV/EBITDA** — método padrão do setor. "
         "O DCF de fluxo de caixa não se aplica bem porque o caixa é distorcido por "
@@ -2322,7 +2339,7 @@ def _show_geral_valuation(s: dict) -> None:
     mult_setor, bucket_label = _geral_bucket(sector)
 
     st.divider()
-    st.subheader("📐 Valuation — Múltiplo EV/EBITDA (referência setorial)")
+    st.subheader("Valuation — Múltiplo EV/EBITDA (referência setorial)")
     st.info(
         f"ℹ️ Sub-setor identificado: **{bucket_label}** → EV/EBITDA de referência "
         f"**{mult_setor:.0f}×**. Valuation por múltiplo sobre o EBITDA atual."
@@ -2413,7 +2430,7 @@ def _show_cyclical_valuation(s: dict) -> None:
     ebitda_base = _cyclical_ebitda_base(s)
 
     st.divider()
-    st.subheader("📐 Valuation — EV/EBITDA through-cycle (cíclica)")
+    st.subheader("Valuation — EV/EBITDA through-cycle (cíclica)")
     st.info(
         f"ℹ️ Sub-setor cíclico: **{bucket_label}** → EV/EBITDA through-cycle "
         f"**{mult_setor:.1f}×**. O múltiplo baixo já é o desconto de ciclicidade; "
@@ -2536,11 +2553,11 @@ def _show_dcf(s: dict) -> None:
     _wacc_default, _perp_default = _dcf_params(sector)
 
     st.divider()
-    st.subheader("📐 Valuation por DCF (Fluxo de Caixa Descontado)")
+    st.subheader("Valuation por DCF (Fluxo de Caixa Descontado)")
 
     if utility:
         st.info(
-            "🏛️ **Setor regulado — WACC reduzido (10%)** refletindo menor risco de "
+            "**Setor regulado — WACC reduzido (10%)** refletindo menor risco de "
             "fluxo de caixa tarifário. Concessões de energia/saneamento têm receita "
             "regulada e indexada à inflação, justificando prêmio de risco menor que "
             "o de empresas não-reguladas."
@@ -2833,7 +2850,7 @@ def _show_score_panel(s: dict) -> None:
     scores = s.get("scores") or sc.calculate_scores(s)
     q, p, diag = scores.get("quality"), scores.get("price"), scores.get("diagnosis")
 
-    st.subheader("📊 Qualidade × Preço")
+    st.subheader("Qualidade × Preço")
     if diag:
         st.markdown(
             f"<div style='display:inline-block;background:{diag['color']};padding:6px 16px;"
@@ -2868,7 +2885,7 @@ def _show_score_panel(s: dict) -> None:
                         else f" · −{(1 - _eq['penalty']) * 100:.0f}% na Qualidade")
             st.markdown(
                 f"<div style='background:{_ec};padding:6px 12px;border-radius:6px;color:#fff;"
-                f"font-size:0.85rem;margin:6px 0'>🧮 Qualidade do lucro: "
+                f"font-size:0.85rem;margin:6px 0'>Qualidade do lucro: "
                 f"{_eq['label']}{_haircut}</div>",
                 unsafe_allow_html=True)
         st.caption(
@@ -3147,7 +3164,7 @@ def _show_detail(s: dict):
 
     # ── Anotações do usuário ────────────────────────────────────
     st.divider()
-    st.subheader("📝 Minhas Anotações")
+    st.subheader("Minhas Anotações")
     _ticker = s.get("ticker", "")
     _notas_key    = f"notas_{_ticker}"
     _mudanca_key  = f"notas_mudanca_{_ticker}"
@@ -3216,7 +3233,7 @@ def _show_detail(s: dict):
         st.session_state[_mkey] = ""
         _save_all()
 
-    st.button("💾 Salvar anotação", key=f"btn_notas_{_ticker}", on_click=_save_notas_btn)
+    st.button("Salvar anotação", key=f"btn_notas_{_ticker}", on_click=_save_notas_btn)
 
     if _notas_updated:
         try:
@@ -3401,7 +3418,7 @@ def _apply_scr_preset(params: dict) -> None:
 
 
 def _show_screener():
-    st.markdown("## 🔎 Screener — B3 Completo")
+    st.markdown("## Screener — B3 Completo")
     st.caption("Filtra todas as empresas listadas na B3 em tempo real via API Bolsai Pro.")
 
     # ── Presets e filtros salvos ───────────────────────────────
@@ -3462,7 +3479,7 @@ def _show_screener():
             _nome_filtro = st.text_input("Nome para salvar:", placeholder="ex: Minha estratégia",
                                          key="scr_nome_filtro", label_visibility="collapsed")
         with _col_salvar:
-            if st.button("💾 Salvar filtro", key="btn_salvar_filtro", use_container_width=True):
+            if st.button("Salvar filtro", key="btn_salvar_filtro", use_container_width=True):
                 _nome = _nome_filtro.strip()
                 if _nome:
                     st.session_state.screener_filtros[_nome] = {
@@ -3640,7 +3657,7 @@ def _tela_selecao_usuario() -> None:
                 for t in ["Qualidade × Preço", "Valuation por setor", "Carteira & FIIs", "Alertas in-app"])
             + "</div>", unsafe_allow_html=True)
         with st.container(border=True):
-            st.markdown("#### 👤 Quem é você?")
+            st.markdown("#### Quem é você?")
             st.caption("Selecione seu perfil para acessar sua carteira personalizada.")
             usuario = st.selectbox(
                 "Usuário", USUARIOS, key="sel_usuario_login",
@@ -3759,7 +3776,7 @@ def _sidebar():
     with st.sidebar:
         _u = st.session_state.get("usuario_atual", "")
         col_u, col_troca = st.columns([3, 2])
-        col_u.markdown(f"**Olá, {_u} 👋**")
+        col_u.markdown(f"**Olá, {_u}**")
         if col_troca.button("🔄 Trocar", key="btn_trocar_usuario", use_container_width=True, help="Trocar usuário"):
             for _k in [
                 "usuario_atual", "todas_listas", "lista_atual", "acoes",
@@ -3793,7 +3810,8 @@ def _sidebar():
         api_key = api._get_api_key()
         if api_key:
             st.markdown(
-                "<span style='color:#9e9e9e;font-size:0.8rem'>🔑 API conectada</span>",
+                f"<span style='color:#9e9e9e;font-size:0.8rem'>"
+                f"{_ic(_IC_CHECK, size=13)} API conectada</span>",
                 unsafe_allow_html=True,
             )
         else:
@@ -3910,7 +3928,7 @@ def _sidebar():
 
         # Botão especial da lista "🔍 Pesquisa"
         if st.session_state.lista_atual == "🔍 Pesquisa" and st.session_state.acoes:
-            if st.button("🧹 Limpar tudo da Pesquisa", use_container_width=True, key="btn_clear_pesq"):
+            if st.button("Limpar tudo da Pesquisa", use_container_width=True, key="btn_clear_pesq"):
                 st.session_state.acoes.clear()
                 _save_all()
                 st.rerun()
@@ -3961,7 +3979,7 @@ def _sidebar():
                 st.rerun()
 
         # ── Busca por setor ────────────────────────────────────
-        with st.expander("🏭 Buscar por Setor", expanded=False):
+        with st.expander("Buscar por Setor", expanded=False):
             try:
                 sectors_list = api.get_sectors() or []
             except Exception:
@@ -4334,7 +4352,7 @@ def _show_fii_detail(fii: dict) -> None:
     # Top imóveis
     top_props = fii.get("top_properties")
     if top_props:
-        with st.expander("🏗 Principais imóveis", expanded=False):
+        with st.expander("Principais imóveis", expanded=False):
             if isinstance(top_props, list):
                 for item in top_props:
                     if isinstance(item, dict):
@@ -4381,7 +4399,7 @@ def _fetch_fii_screener_batch(limit: int = 150) -> list[dict]:
 
 def _show_fii_screener(fiis_lista_atual: dict) -> None:
     """Screener de FIIs com filtros e tabela colorida."""
-    st.markdown("### 🔎 Screener de FIIs")
+    st.markdown("### Screener de FIIs")
     st.caption("Filtre FIIs da Bolsai e adicione os melhores à sua lista.")
 
     with st.expander("⚙️ Filtros", expanded=True):
@@ -4525,14 +4543,14 @@ def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
         return
 
     st.divider()
-    st.markdown("## 📊 Análise da Carteira de FIIs")
+    st.markdown("## Análise da Carteira de FIIs")
     total = sum(p["value"] for p in positions)
     for p in positions:
         p["weight"] = p["value"] / total
 
     # Valor total + P&L
     col_v, col_pnl = st.columns(2)
-    col_v.metric("💰 Valor Total", f"R$ {total:,.0f}".replace(",", "."))
+    col_v.metric("Valor Total", f"R$ {total:,.0f}".replace(",", "."))
     pnl_pos = [p for p in positions if p.get("pnl_reais") is not None]
     if pnl_pos:
         tot_pnl = sum(p["pnl_reais"] for p in pnl_pos)
@@ -4542,7 +4560,7 @@ def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
         _sig = "+" if tot_pnl >= 0 else "-"
         col_pnl.markdown(
             f"<div style='padding:8px 0'><div style='font-size:0.8rem;color:#9ea3b0'>"
-            f"💼 Lucro/Prejuízo não realizado</div>"
+            f"{_ic(_IC_TREND_UP, color='#9ea3b0', size=13)} Lucro/Prejuízo não realizado</div>"
             f"<div style='font-size:1.5rem;font-weight:700;color:{_c}'>"
             f"{_sig}R$ {abs(tot_pnl):,.0f}".replace(",", ".") +
             (f" <span style='font-size:1rem'>({_sig}{abs(pnl_pct):.1f}%)</span>" if pnl_pct is not None else "")
@@ -4565,7 +4583,7 @@ def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
     q_p = _weighted_avg_portfolio(positions, "quality")
     p_p = _weighted_avg_portfolio(positions, "price_score")
     if q_p is not None or p_p is not None:
-        st.markdown("#### 🎯 Qualidade × Preço da carteira")
+        st.markdown("#### Qualidade × Preço da carteira")
         _diag = sf._diagnose_fii(q_p, p_p, paper=(q_p is None)) if hasattr(sf, "_diagnose_fii") else None
         if _diag:
             st.markdown(
@@ -4740,7 +4758,7 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
 
 def _show_fii_detail_tab(fiis_atuais: dict) -> None:
     """Detalhe do FII — seletor no topo (igual ações)."""
-    st.markdown("### 🔍 Detalhe do FII")
+    st.markdown("### Detalhe do FII")
     _det_tickers = list(fiis_atuais.keys())  # as chaves SÃO os tickers
     if not _det_tickers:
         st.info("Adicione um FII na aba 📋 Tabela para ver o detalhe.")
@@ -4790,7 +4808,7 @@ def _show_fii_carteira(fiis_atuais: dict) -> None:
             },
             hide_index=True, use_container_width=True, key="fii_qty_data_editor",
         )
-        if st.button("💾 Salvar posições", key="btn_salvar_fii_qtd"):
+        if st.button("Salvar posições", key="btn_salvar_fii_qtd"):
             _changed = False
             for _, _row in _fii_edited.iterrows():
                 _t = str(_row["Ticker"])
@@ -4819,7 +4837,7 @@ def _show_fii_carteira(fiis_atuais: dict) -> None:
 
 
 def _show_fii_tab() -> None:
-    st.markdown("## 🏢 Análise de FIIs")
+    st.markdown("## Análise de FIIs")
     fiis_atuais = _fii_list_selector()
     tab_cart, tab_tab, tab_det, tab_scr = st.tabs(
         ["📊 Carteira", "📋 Tabela", "🔍 Detalhe", "🔎 Screener"])
@@ -4848,7 +4866,7 @@ _PORTFOLIO_COLORS = [
 def _qty_editor(enriched: list[dict], acoes: dict) -> None:
     """Exibe editor de quantidades, preço médio e data de compra para a Carteira."""
     from datetime import date as _date
-    with st.expander("📝 Carteira — Quantidades e Posições", expanded=False):
+    with st.expander("Carteira — Quantidades e Posições", expanded=False):
         qty_rows = []
         for e in enriched:
             t  = e["ticker"]
@@ -4885,7 +4903,7 @@ def _qty_editor(enriched: list[dict], acoes: dict) -> None:
             use_container_width=True,
             key="qty_data_editor",
         )
-        if st.button("💾 Salvar posições", key="btn_salvar_qtd", use_container_width=False):
+        if st.button("Salvar posições", key="btn_salvar_qtd", use_container_width=False):
             changed = False
             for _, row in edited.iterrows():
                 t       = str(row["Ticker"])
@@ -4957,7 +4975,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         return
 
     st.divider()
-    st.markdown("## 📊 Análise da Carteira")
+    st.markdown("## Análise da Carteira")
 
     total_valor = sum(p["value"] for p in positions)
     for p in positions:
@@ -4980,7 +4998,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     # ── Valor total + variação (linha de destaque) ─────────────────
     col_total, col_var = st.columns(2)
     col_total.metric(
-        "💰 Valor Total",
+        "Valor Total",
         f"R$ {total_valor:,.0f}".replace(",", "."),
     )
     with col_var:
@@ -4988,7 +5006,8 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
             valor_ontem   = total_valor / (1 + var_pond_pct / 100)
             var_reais     = total_valor - valor_ontem
             var_color     = "#34d399" if var_pond_pct >= 0 else "#f87171"
-            icon          = "📈" if var_pond_pct >= 0 else "📉"
+            icon          = (_ic(_IC_TREND_UP, size=15) if var_pond_pct >= 0
+                             else _ic(_IC_TREND_DOWN, color="#f87171", size=15))
             sign_pct      = "+" if var_pond_pct >= 0 else ""
             sign_r        = "+" if var_reais >= 0 else "-"
             reais_abs_fmt = (
@@ -5018,7 +5037,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
                 unsafe_allow_html=True,
             )
         else:
-            st.metric("📅 Variação Hoje", "N/D",
+            st.metric("Variação Hoje", "N/D",
                       help="Variação diária indisponível para todas as posições")
 
     st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
@@ -5050,7 +5069,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     p_pond = _weighted_avg_portfolio(positions, "price_score")
     if q_pond is not None or p_pond is not None:
         st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
-        st.markdown("#### 🎯 Qualidade × Preço da carteira")
+        st.markdown("#### Qualidade × Preço da carteira")
         _diag_pond = sc._diagnose(q_pond, p_pond)
         if _diag_pond:
             st.markdown(
@@ -5086,7 +5105,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         st.markdown(
             f"""<div style='margin-top:12px;padding:14px 16px;border-radius:12px;
             background:#151b26;border:1px solid #232b3a;border-left:4px solid {pnl_color}'>
-            <span style='color:#8b94a7;font-size:0.85rem'>💼 Lucro/Prejuízo não realizado
+            <span style='color:#8b94a7;font-size:0.85rem'>{_ic(_IC_TREND_UP, color='#8b94a7', size=13)} Lucro/Prejuízo não realizado
             ({len(pnl_positions)} posição{'ões' if len(pnl_positions)>1 else ''})</span><br>
             <span style='color:{pnl_color};font-size:1.5rem;font-weight:600'>
             {sign}{pnl_fmt}</span>
@@ -5492,7 +5511,7 @@ def _show_ibov_small_section() -> None:
 
 
 def _show_ciclo_tab() -> None:
-    st.markdown("### 🌐 Termômetro de Ciclo de Mercado")
+    st.markdown("### Termômetro de Ciclo de Mercado")
     st.caption(
         "Onde estamos no ciclo econômico, segundo o framework do **Investment Clock** "
         "(Crescimento × Inflação). Ferramenta **educacional** — mostra o cenário macro e o que "
@@ -5732,7 +5751,7 @@ def _build_alert_views() -> dict:
 
 
 def _show_alertas_tab() -> None:
-    st.markdown("## 🔔 Alertas")
+    st.markdown("## Alertas")
     st.caption(
         "Crie alertas com uma ou mais condições combinadas (E/OU). São avaliados "
         "**ao abrir o app ou atualizar os dados** — o app não roda em segundo plano.")
@@ -5997,7 +6016,7 @@ footer {visibility: hidden;}
 
     # ── Área Ações ────────────────────────────────────────────
     if not st.session_state.acoes:
-        st.markdown("## 📈 Bem-vindo ao Analisador Fundamentalista B3")
+        st.markdown("## Bem-vindo ao Analisador Fundamentalista B3")
         st.markdown(
             "Este app ajuda você a analisar ações da bolsa brasileira combinando 10+ indicadores "
             "fundamentalistas em um score único de 0 a 100, com contexto setorial, comparação "
@@ -6201,7 +6220,7 @@ div[data-testid="stPopover"] button:hover {
         # ── Legenda + CSV ──────────────────────────────────────
         col_leg, col_csv = st.columns([4, 1])
         with col_leg:
-            with st.expander("🎨 Legenda de cores"):
+            with st.expander("Legenda de cores"):
                 cols = st.columns(5)
                 for i, (cls, em) in enumerate(
                     [("Excelente", "🟢"), ("Bom", "🟩"), ("Razoável", "🟡"),
@@ -6251,7 +6270,7 @@ div[data-testid="stPopover"] button:hover {
     # Tab 3 — Comparar (radar cross-listas)
     # ────────────────────────────────────────────────────────────
     with tab_cmp:
-        st.markdown("### ⚖️ Comparar Ações")
+        st.markdown("### Comparar Ações")
         st.caption(
             "Compare ações de **qualquer lista** — independente de qual está selecionada na sidebar. "
             "Selecione de 2 a 4 ações para ver o radar e a tabela de indicadores lado a lado."
