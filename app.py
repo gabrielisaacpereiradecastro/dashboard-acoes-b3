@@ -4995,6 +4995,17 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
                 st.rerun()
     st.caption("🔄 Para atualizar os dados dos FIIs, use **Atualizar FIIs** no menu lateral.")
 
+    # ── Selecionar para ver no Detalhe (a tabela é HTML, sem clique-na-linha) ──
+    col_ver, _ = st.columns([2, 1.5])
+    with col_ver:
+        _ver = st.selectbox(
+            "🔍 Ver no Detalhe", ["—"] + _fii_tickers, key="fii_ver_detalhe_sel",
+            format_func=lambda t: ("—" if t == "—"
+                                   else f"{t} — {fiis_atuais.get(t, {}).get('name', '')}"))
+    if _ver != "—":
+        st.session_state.selected_fii = _ver
+        st.caption(f"✓ **{_ver}** selecionado — abra a aba **🔍 Detalhe** acima para ver.")
+
     st.divider()
 
     # ── Tabela ────────────────────────────────────────────────────
