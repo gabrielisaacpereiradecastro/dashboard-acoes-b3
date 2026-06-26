@@ -2718,34 +2718,6 @@ def _show_dcf(s: dict) -> None:
     if _capt:
         st.caption(_capt)
 
-    # ── DEBUG TEMPORÁRIO: inspecionar o que o fundamentals_history fornece ──
-    # (remover depois de definirmos o plano B da reversão à média)
-    with st.expander("🔧 [debug] campos do histórico de fundamentos"):
-        _raw = api.get_fundamentals_history(s.get("ticker", ""), limit=20)
-        _h = (_raw or {}).get("history") or []
-        st.write(f"Períodos retornados: **{len(_h)}**")
-        if _h:
-            st.write("Todos os campos do 1º período:")
-            st.code(", ".join(sorted(str(k) for k in _h[0].keys())))
-            _alvo = {k: _h[0].get(k) for k in
-                     ("pl", "ev_ebitda", "lpa", "net_income", "ebitda",
-                      "net_debt", "pvp", "roe", "reference_date")
-                     if k in _h[0]}
-            st.write("Valores de interesse (1º período):")
-            st.json(_alvo)
-        st.divider()
-        _stored_ev = len(s.get("ev_ebitda_historico") or [])
-        _eff_ev = len(_hist_serie(s, "ev_ebitda_historico"))
-        _eff_pl = len(_hist_serie(s, "pl_historico"))
-        st.write(f"**ARMAZENADO** (via api.py): ev_ebitda = **{_stored_ev}** · "
-                 f"**EFETIVO** (com fallback ao vivo, o que o motor usa agora): "
-                 f"ev_ebitda = **{_eff_ev}** · pl = **{_eff_pl}**")
-        st.caption(
-            "Agora o motor usa o caminho EFETIVO: se o armazenado estiver vazio, "
-            "busca o histórico ao vivo (cached). Se EFETIVO ≥ 8, a reversão à "
-            "média ativa mesmo sem reboot do api.py."
-        )
-
     if sc.is_bank(sector):
         _show_gordon_growth(s)
         return
