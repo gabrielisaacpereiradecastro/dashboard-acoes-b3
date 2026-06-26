@@ -1197,6 +1197,8 @@ def _fetch_macro() -> dict:
                 result["smll_ytd"] = round((float(_smll_price) / _ytd_first - 1) * 100, 1)
     except Exception:
         pass
+    # Carimbo do momento da busca (fica no valor cacheado → reflete a última busca real)
+    result["_fetched_at"] = datetime.now(timezone.utc)
     return result
 
 
@@ -1350,6 +1352,11 @@ def _show_macro_panel() -> None:
                 )
         else:
             st.caption("Sem posições")
+
+    _macro_ts = macro.get("_fetched_at")
+    if _macro_ts is not None:
+        _loc = _macro_ts.astimezone(timezone(timedelta(hours=-3)))
+        st.caption(f"Painel atualizado em {_loc.strftime('%d/%m/%Y %H:%M')} (horário de Brasília)")
 
     st.divider()
 
@@ -3903,11 +3910,12 @@ def _sidebar_atualizacao() -> None:
 
         if st.button("🔄 Atualizar Tudo", use_container_width=True, type="primary",
                      disabled=not (st.session_state.acoes or _fiis_atual_sb),
-                     help="Atualiza ações e FIIs de uma vez"):
+                     help="Atualiza ações, FIIs e o painel de contexto de mercado"):
             with st.spinner("Atualizando ações…"):
                 erros = _update_all() if st.session_state.acoes else []
             if _fiis_atual_sb:
                 _refresh_fiis(save=False)
+            _fetch_macro.clear()   # também atualiza o painel Contexto de Mercado
             _save_all()
             st.session_state.flash_errors = erros
             if not erros:
