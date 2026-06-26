@@ -1474,7 +1474,7 @@ def _show_price_history_chart(s: dict) -> None:
         # Fallback para gráfico de 52 semanas
         fig = _price_range_chart(s)
         if fig:
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
         else:
             st.info("Dados de preço indisponíveis.")
         return
@@ -1559,7 +1559,7 @@ def _show_price_history_chart(s: dict) -> None:
                     font=dict(size=12, color="#e8eaf6"),
                 ),
             )
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
             return
         else:
             st.caption("⚠️ Dados do Ibovespa indisponíveis — exibindo preço absoluto.")
@@ -1598,7 +1598,7 @@ def _show_price_history_chart(s: dict) -> None:
         yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e"),
         showlegend=show_ma, legend=dict(bgcolor="rgba(0,0,0,0)"),
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 # ────────────────────────────────────────────────────────────────
@@ -1679,7 +1679,7 @@ def _show_lucro_cotacao_chart(ticker: str) -> None:
                     overlaying="y", side="right", showgrid=False),
         legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", y=-0.15),
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     st.caption(
         "Quando cotação cresce mais que lucro por anos seguidos, o valuation se torna mais exigente. "
         "Convergência indica fundamentos sólidos sustentando a valorização."
@@ -2322,7 +2322,7 @@ def _show_gordon_growth(s: dict) -> None:
         showlegend=False,
         title=dict(text="Faixa de Preço Justo — Gordon Growth (3 cenários)", font=dict(size=12, color="#e8eaf6")),
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     st.warning(
         "⚠️ **Aviso:** modelo educacional de aproximação — não constitui recomendação de investimento. "
         "Resultados são muito sensíveis às premissas de ROE, Ke e crescimento."
@@ -2405,7 +2405,7 @@ def _show_pl_valuation(s: dict, *, fair_pe: float, info: str, pe_help: str,
         showlegend=False,
         title=dict(text="Faixa de Preço Justo — P/L (3 cenários)", font=dict(size=12, color="#e8eaf6")),
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     if aviso:
         st.warning(aviso)
@@ -2513,7 +2513,7 @@ def _show_shopping_valuation(s: dict) -> None:
         showlegend=False,
         title=dict(text="Faixa de Preço Justo — EV/EBITDA (3 cenários)", font=dict(size=12, color="#e8eaf6")),
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     st.warning(
         "⚠️ **Aviso:** Múltiplo de referência simplificado. Shoppings premium "
@@ -2602,7 +2602,7 @@ def _show_geral_valuation(s: dict) -> None:
         showlegend=False,
         title=dict(text="Faixa de Preço Justo — EV/EBITDA (3 cenários)", font=dict(size=12, color="#e8eaf6")),
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     st.warning(
         "⚠️ Ferramenta educacional de aproximação — **não é recomendação de investimento**."
@@ -2711,7 +2711,7 @@ def _show_cyclical_valuation(s: dict) -> None:
         showlegend=False,
         title=dict(text="Faixa de Preço Justo — EV/EBITDA mid-cycle", font=dict(size=12, color="#e8eaf6")),
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     st.warning(
         "⚠️ Ferramenta educacional de aproximação — **não é recomendação de investimento**."
@@ -2942,7 +2942,7 @@ def _show_dcf(s: dict) -> None:
         showlegend=False,
         title=dict(text="Faixa de Preço Justo — DCF (3 cenários)", font=dict(size=12, color="#e8eaf6")),
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     st.warning(
         "⚠️ **Aviso importante:** Este modelo é uma ferramenta educacional de aproximação e "
@@ -2998,7 +2998,7 @@ def _show_quality_price_map(q: Optional[float], p: Optional[float]) -> None:
         yaxis=dict(range=[-8, 112], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  mais cara      mais barata  →",
                               font=dict(size=10, color="#9e9e9e"))))
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
@@ -3073,7 +3073,7 @@ def _show_portfolio_quality_price_map(positions: list[dict]) -> None:
         yaxis=dict(range=[3, 107], showgrid=False, zeroline=False, showticklabels=False,
                    title=dict(text="←  mais cara      mais barata  →",
                               font=dict(size=15, color="#c7cedb", family="Inter, sans-serif"))))
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     st.caption("Cada bolha é uma posição (tamanho ∝ % da carteira); a ⭐ é a média ponderada.")
 
 
@@ -3280,7 +3280,7 @@ def _show_detail(s: dict):
         st.subheader("Perfil Radar")
         st.caption("Pontuação (0–100) nos 6 indicadores de maior peso.")
         fig_radar = _radar_chart([s], [s.get("ticker", "")])
-        st.plotly_chart(fig_radar, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig_radar, width="stretch", config={"displayModeBar": False})
 
     # ── Lucro vs Cotação ────────────────────────────────────────
     _lucro_data = _fetch_lucro_cotacao(s.get("ticker", ""))
@@ -3569,7 +3569,7 @@ def _show_detail(s: dict):
                 else:
                     c_met.metric(lbl, val)
                 if lbl in _OUTROS_INFO:
-                    with c_info.popover("ℹ️", use_container_width=True):
+                    with c_info.popover("ℹ️", width="stretch"):
                         st.markdown(_OUTROS_INFO[lbl])
 
 
@@ -3659,7 +3659,7 @@ def _show_screener():
     with col_presets:
         st.markdown("**Presets:**")
         for nome_preset, params_preset in _SCREENER_PRESETS.items():
-            if st.button(nome_preset, key=f"preset_{nome_preset}", use_container_width=True):
+            if st.button(nome_preset, key=f"preset_{nome_preset}", width="stretch"):
                 _apply_scr_preset(params_preset)
                 st.rerun()
 
@@ -3670,7 +3670,7 @@ def _show_screener():
             for nome_f, params_f in list(filtros_user.items()):
                 _col_ap, _col_rm = st.columns([4, 1])
                 with _col_ap:
-                    if st.button(nome_f, key=f"filtro_ap_{nome_f}", use_container_width=True):
+                    if st.button(nome_f, key=f"filtro_ap_{nome_f}", width="stretch"):
                         _apply_scr_preset(params_f)
                         st.rerun()
                 with _col_rm:
@@ -3711,7 +3711,7 @@ def _show_screener():
             _nome_filtro = st.text_input("Nome para salvar:", placeholder="ex: Minha estratégia",
                                          key="scr_nome_filtro", label_visibility="collapsed")
         with _col_salvar:
-            if st.button("Salvar filtro", key="btn_salvar_filtro", use_container_width=True):
+            if st.button("Salvar filtro", key="btn_salvar_filtro", width="stretch"):
                 _nome = _nome_filtro.strip()
                 if _nome:
                     st.session_state.screener_filtros[_nome] = {
@@ -3724,7 +3724,7 @@ def _show_screener():
                     st.success(f"Filtro '{_nome}' salvo!")
 
     # ── Botão busca ────────────────────────────────────────────
-    if not st.button("🔍 Buscar na B3", use_container_width=True, key="btn_scr_buscar"):
+    if not st.button("🔍 Buscar na B3", width="stretch", key="btn_scr_buscar"):
         return
 
     with st.spinner("Buscando ações na B3…"):
@@ -3797,11 +3797,11 @@ def _show_screener():
     enriched_scr = _dedup_enriched(enriched_scr)
     display_df, class_df = _build_table(enriched_scr)
     styled = _apply_styles(display_df.set_index("Ticker"), class_df.set_index("Ticker"))
-    st.dataframe(styled, use_container_width=True, height=min(42 + 35 * len(enriched_scr), 420))
+    st.dataframe(styled, width="stretch", height=min(42 + 35 * len(enriched_scr), 420))
 
     col_add, _ = st.columns([1, 3])
     with col_add:
-        if st.button("➕ Adicionar todas à lista atual", use_container_width=True, key="scr_add_all"):
+        if st.button("➕ Adicionar todas à lista atual", width="stretch", key="scr_add_all"):
             added, erros = [], []
             with st.spinner("Buscando dados completos…"):
                 for e in enriched_scr:
@@ -3895,7 +3895,7 @@ def _tela_selecao_usuario() -> None:
                 "Usuário", USUARIOS, key="sel_usuario_login",
                 label_visibility="collapsed",
             )
-            if st.button("Entrar  →", key="btn_entrar", type="primary", use_container_width=True):
+            if st.button("Entrar  →", key="btn_entrar", type="primary", width="stretch"):
                 st.session_state.usuario_atual = usuario
                 st.rerun()
         st.markdown(
@@ -3963,7 +3963,7 @@ def _sidebar_atualizacao() -> None:
             if save:
                 _save_all()
 
-        if st.button("🔄 Atualizar Ações", use_container_width=True,
+        if st.button("🔄 Atualizar Ações", width="stretch",
                      disabled=not st.session_state.acoes):
             with st.spinner("Atualizando ações…"):
                 erros = _update_all()
@@ -3972,13 +3972,13 @@ def _sidebar_atualizacao() -> None:
                 st.session_state.flash_success = "Ações atualizadas com sucesso!"
             st.rerun()
 
-        if st.button("🔄 Atualizar FIIs", use_container_width=True,
+        if st.button("🔄 Atualizar FIIs", width="stretch",
                      disabled=not _fiis_atual_sb,
                      help=f"Atualiza os FIIs da lista '{st.session_state.lista_fii_atual}'"):
             _refresh_fiis()
             st.rerun()
 
-        if st.button("🔄 Atualizar Tudo", use_container_width=True, type="primary",
+        if st.button("🔄 Atualizar Tudo", width="stretch", type="primary",
                      disabled=not (st.session_state.acoes or _fiis_atual_sb),
                      help="Atualiza ações, FIIs e o painel de contexto de mercado"):
             with st.spinner("Atualizando ações…"):
@@ -4010,7 +4010,7 @@ def _sidebar():
         _u = st.session_state.get("usuario_atual", "")
         col_u, col_troca = st.columns([3, 2])
         col_u.markdown(f"**Olá, {_u}**")
-        if col_troca.button("🔄 Trocar", key="btn_trocar_usuario", use_container_width=True, help="Trocar usuário"):
+        if col_troca.button("🔄 Trocar", key="btn_trocar_usuario", width="stretch", help="Trocar usuário"):
             for _k in [
                 "usuario_atual", "todas_listas", "lista_atual", "acoes",
                 "screener_filtros", "selected_ticker", "fiis_listas",
@@ -4118,7 +4118,7 @@ def _sidebar():
                 placeholder="ex: Dividendos, Longo Prazo…",
                 label_visibility="collapsed",
             )
-            if st.button("➕ Criar lista", key="btn_criar_lista", use_container_width=True):
+            if st.button("➕ Criar lista", key="btn_criar_lista", width="stretch"):
                 _nome = _nome_input.strip()
                 if not _nome:
                     st.warning("Digite um nome.")
@@ -4138,7 +4138,7 @@ def _sidebar():
                 if not st.session_state.get("confirm_del_lista"):
                     if st.button(
                         f"🗑 Excluir lista atual  ({st.session_state.lista_atual})",
-                        key="btn_del_lista_ask", use_container_width=True,
+                        key="btn_del_lista_ask", width="stretch",
                     ):
                         st.session_state.confirm_del_lista = True
                         st.rerun()
@@ -4146,7 +4146,7 @@ def _sidebar():
                     st.warning(f"Excluir **{st.session_state.lista_atual}** e todas as ações nela?")
                     _cd1, _cd2 = st.columns(2)
                     with _cd1:
-                        if st.button("✅ Confirmar", key="btn_del_lista_ok", use_container_width=True):
+                        if st.button("✅ Confirmar", key="btn_del_lista_ok", width="stretch"):
                             _lista_del = st.session_state.lista_atual
                             del st.session_state.todas_listas[_lista_del]
                             _nova = list(st.session_state.todas_listas.keys())[0]
@@ -4155,13 +4155,13 @@ def _sidebar():
                             st.session_state.confirm_del_lista = False
                             st.rerun()
                     with _cd2:
-                        if st.button("✗ Cancelar", key="btn_del_lista_cancel", use_container_width=True):
+                        if st.button("✗ Cancelar", key="btn_del_lista_cancel", width="stretch"):
                             st.session_state.confirm_del_lista = False
                             st.rerun()
 
         # Botão especial da lista "🔍 Pesquisa"
         if st.session_state.lista_atual == "🔍 Pesquisa" and st.session_state.acoes:
-            if st.button("Limpar tudo da Pesquisa", use_container_width=True, key="btn_clear_pesq"):
+            if st.button("Limpar tudo da Pesquisa", width="stretch", key="btn_clear_pesq"):
                 st.session_state.acoes.clear()
                 _save_all()
                 st.rerun()
@@ -4176,7 +4176,7 @@ def _sidebar():
             help="Separe múltiplos tickers por vírgula ou espaço.",
         )
 
-        if st.button("➕ Adicionar e Buscar", use_container_width=True):
+        if st.button("➕ Adicionar e Buscar", width="stretch"):
             tickers_raw = tickers_input.replace(",", " ").split()
             if not tickers_raw:
                 st.warning("Digite ao menos um ticker.")
@@ -4245,7 +4245,7 @@ def _sidebar():
                         if checked and not already:
                             to_add.append(tk)
                     if to_add:
-                        if st.button("➕ Adicionar selecionadas", use_container_width=True, key="sec_add_btn"):
+                        if st.button("➕ Adicionar selecionadas", width="stretch", key="sec_add_btn"):
                             added2, erros2 = [], []
                             with st.spinner("Buscando dados…"):
                                 for tk in to_add:
@@ -4281,7 +4281,7 @@ def _sidebar():
 
                 col_a, col_b, col_c = st.columns([3, 2, 1])
                 with col_a:
-                    if st.button(ticker, key=f"sel_{ticker}", use_container_width=True):
+                    if st.button(ticker, key=f"sel_{ticker}", width="stretch"):
                         st.session_state.selected_ticker = ticker
                 with col_b:
                     st.markdown(
@@ -4655,8 +4655,8 @@ def _show_fii_screener(fiis_lista_atual: dict) -> None:
         with c9:
             st.caption("")
             col_busca, col_limpa = st.columns(2)
-            buscar = col_busca.button("🔍 Buscar", key="btn_fscr_buscar", use_container_width=True, type="primary")
-            limpar = col_limpa.button("♻ Limpar", key="btn_fscr_limpar", use_container_width=True)
+            buscar = col_busca.button("🔍 Buscar", key="btn_fscr_buscar", width="stretch", type="primary")
+            limpar = col_limpa.button("♻ Limpar", key="btn_fscr_limpar", width="stretch")
 
     if limpar:
         _fetch_fii_screener_batch.clear()
@@ -4728,7 +4728,7 @@ def _show_fii_screener(fiis_lista_atual: dict) -> None:
         key="fscr_sel_add",
         placeholder="Selecione um ou mais tickers…",
     )
-    if st.button("➕ Adicionar selecionados à lista", key="btn_fscr_add", use_container_width=True, disabled=not scr_sel):
+    if st.button("➕ Adicionar selecionados à lista", key="btn_fscr_add", width="stretch", disabled=not scr_sel):
         added, erros = [], []
         with st.spinner("Buscando dados completos…"):
             for _t in scr_sel:
@@ -4858,7 +4858,7 @@ def _fii_list_selector() -> dict:
             placeholder="ex: FIIs Tijolo, Papel, Diversificado…",
             label_visibility="collapsed",
         )
-        if st.button("➕ Criar lista FII", key="btn_criar_fii_lista", use_container_width=True):
+        if st.button("➕ Criar lista FII", key="btn_criar_fii_lista", width="stretch"):
             _fn = _fii_nome_in.strip()
             if not _fn:
                 st.warning("Digite um nome.")
@@ -4876,7 +4876,7 @@ def _fii_list_selector() -> dict:
             if not st.session_state.get("confirm_del_fii_lista"):
                 if st.button(
                     f"🗑 Excluir lista ({st.session_state.lista_fii_atual})",
-                    key="btn_del_fii_lista_ask", use_container_width=True,
+                    key="btn_del_fii_lista_ask", width="stretch",
                 ):
                     st.session_state.confirm_del_fii_lista = True
                     st.rerun()
@@ -4884,13 +4884,13 @@ def _fii_list_selector() -> dict:
                 st.warning(f"Excluir **{st.session_state.lista_fii_atual}**?")
                 _dc1, _dc2 = st.columns(2)
                 with _dc1:
-                    if st.button("✅ Confirmar", key="btn_del_fii_ok", use_container_width=True):
+                    if st.button("✅ Confirmar", key="btn_del_fii_ok", width="stretch"):
                         del st.session_state.fiis_listas[st.session_state.lista_fii_atual]
                         st.session_state.lista_fii_atual = list(st.session_state.fiis_listas.keys())[0]
                         st.session_state.confirm_del_fii_lista = False
                         st.rerun()
                 with _dc2:
-                    if st.button("✗ Cancelar", key="btn_del_fii_cancel", use_container_width=True):
+                    if st.button("✗ Cancelar", key="btn_del_fii_cancel", width="stretch"):
                         st.session_state.confirm_del_fii_lista = False
                         st.rerun()
 
@@ -4907,7 +4907,7 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
             key="fii_ticker_input", label_visibility="collapsed",
         )
     with col_btn:
-        if st.button("➕ Adicionar FII", key="btn_add_fii", use_container_width=True):
+        if st.button("➕ Adicionar FII", key="btn_add_fii", width="stretch"):
             # Aceita vários tickers separados por vírgula e/ou espaço.
             _tickers = [t for t in fii_input.upper().replace(",", " ").split() if t]
             if not _tickers:
@@ -4965,7 +4965,7 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
             "Remover FII", ["—"] + _fii_tickers, key="fii_remover_sel",
             label_visibility="collapsed")
     with col_att:
-        if st.button("🗑 Remover", key="btn_rem_fii", use_container_width=True):
+        if st.button("🗑 Remover", key="btn_rem_fii", width="stretch"):
             if _rem_sel != "—":
                 fiis_atuais.pop(_rem_sel, None)
                 if st.session_state.selected_fii == _rem_sel:
@@ -5039,7 +5039,7 @@ def _show_fii_carteira(fiis_atuais: dict) -> None:
                     help="Opcional — para calcular lucro/prejuízo"),
                 "Data de Compra": st.column_config.DateColumn("Data de Compra", width="medium"),
             },
-            hide_index=True, use_container_width=True, key="fii_qty_data_editor",
+            hide_index=True, width="stretch", key="fii_qty_data_editor",
         )
         if st.button("Salvar posições", key="btn_salvar_fii_qtd"):
             _changed = False
@@ -5133,10 +5133,10 @@ def _qty_editor(enriched: list[dict], acoes: dict) -> None:
                 ),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             key="qty_data_editor",
         )
-        if st.button("Salvar posições", key="btn_salvar_qtd", use_container_width=False):
+        if st.button("Salvar posições", key="btn_salvar_qtd", width="content"):
             changed = False
             for _, row in edited.iterrows():
                 t       = str(row["Ticker"])
@@ -5399,7 +5399,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     except Exception:
         styled_pos = pos_df
 
-    st.dataframe(styled_pos, hide_index=True, use_container_width=True,
+    st.dataframe(styled_pos, hide_index=True, width="stretch",
                  height=min(42 + 35 * len(pos_data), 400))
 
     # ── Gráficos de rosca ─────────────────────────────────────────
@@ -5472,7 +5472,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
             legend=dict(font=dict(color="#c8cce0", size=11), bgcolor="rgba(0,0,0,0)"),
             height=350,
         )
-        st.plotly_chart(fig_tick, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig_tick, width="stretch", config={"displayModeBar": False})
 
     # Rosca por setor
     with col_p2:
@@ -5504,7 +5504,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
             legend=dict(font=dict(color="#c8cce0", size=11), bgcolor="rgba(0,0,0,0)"),
             height=350,
         )
-        st.plotly_chart(fig_set, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig_set, width="stretch", config={"displayModeBar": False})
 
 
 # ────────────────────────────────────────────────────────────────
@@ -5686,7 +5686,7 @@ def _show_ciclo_relogio(mx: float, my: float, fase: str, trail: Optional[list] =
                    title=dict(text="←  Inflação caindo      Inflação subindo  →",
                               font=dict(size=10, color="#9e9e9e"))),
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 def _show_ibov_small_section() -> None:
@@ -5728,7 +5728,7 @@ def _show_ibov_small_section() -> None:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(color="#e8eaf6")),
     )
     st.caption(f"Retorno acumulado, base 100 no início do período ({per}).")
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     st.caption(
         "Duas leituras: o **acumulado** mostra quanto as Small renderam a menos no período; "
@@ -6026,7 +6026,7 @@ def _show_alertas_tab() -> None:
         op_sel = cc2.selectbox("Op", al.OPERADORES, key="_alert_op", label_visibility="collapsed")
         val_sel = cc3.number_input("Valor", value=0.0, step=0.5, key="_alert_val",
                                    label_visibility="collapsed")
-        if cc4.button("➕ Condição", key="_alert_add_cond", use_container_width=True):
+        if cc4.button("➕ Condição", key="_alert_add_cond", width="stretch"):
             st.session_state._alert_conds.append(
                 {"fator": f_sel, "operador": op_sel, "valor": float(val_sel)})
             st.rerun()
@@ -6104,11 +6104,11 @@ def _show_alertas_tab() -> None:
                                     unsafe_allow_html=True)
             with cbtn:
                 _lbl_toggle = "▶ Ativar" if not ativo else "⏸ Pausar"
-                if st.button(_lbl_toggle, key=f"_alert_toggle_{idx}", use_container_width=True):
+                if st.button(_lbl_toggle, key=f"_alert_toggle_{idx}", width="stretch"):
                     alert["ativo"] = not ativo
                     _save_all()
                     st.rerun()
-                if st.button("🗑 Excluir", key=f"_alert_excl_{idx}", use_container_width=True):
+                if st.button("🗑 Excluir", key=f"_alert_excl_{idx}", width="stretch"):
                     st.session_state.alertas.pop(idx)
                     _save_all()
                     st.rerun()
@@ -6414,7 +6414,7 @@ div[data-testid="stPopover"] button:hover {
 
         event = st.dataframe(
             styled,
-            use_container_width=True,
+            width="stretch",
             on_select="rerun",
             selection_mode="single-row",
             height=min(42 + 35 * len(enriched), 600),
@@ -6490,7 +6490,7 @@ div[data-testid="stPopover"] button:hover {
                 data=csv_bytes,
                 file_name="analise_b3.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
 
     # ────────────────────────────────────────────────────────────
@@ -6583,7 +6583,7 @@ div[data-testid="stPopover"] button:hover {
                     )
 
                 fig_cmp = _radar_chart(_cmp_stocks, _cmp_tickers)
-                st.plotly_chart(fig_cmp, use_container_width=True,
+                st.plotly_chart(fig_cmp, width="stretch",
                                 config={"displayModeBar": False})
 
                 st.markdown("##### Valores por indicador")
