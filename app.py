@@ -638,17 +638,18 @@ def _na(v) -> bool:
     return v is None or (isinstance(v, float) and math.isnan(v))
 
 
-# Formatadores de exibição (o dtype continua numérico → ordenação correta)
-def _ff_score(v): return "—" if _na(v) else f"{v:.0f}"
-def _ff_price(v): return "—" if _na(v) else _fmt_price(v)
-def _ff_var(v):   return "—" if _na(v) else f"{v:+.2f}%"
+# Formatadores de exibição (o dtype continua numérico → ordenação correta).
+# N/D = dado ausente (fallback); as overrides em _apply_styles distinguem N/A vs N/D.
+def _ff_score(v): return "N/D" if _na(v) else f"{v:.0f}"
+def _ff_price(v): return "N/D" if _na(v) else _fmt_price(v)
+def _ff_var(v):   return "N/D" if _na(v) else f"{v:+.2f}%"
 def _ff_pot(v):   return "N/D" if _na(v) else (f"↑ {v:.1f}%" if v >= 0 else f"↓ {abs(v):.1f}%")
-def _ff_pct(v):   return "—" if _na(v) else f"{v:.1f}%"
-def _ff_mult(v):  return "—" if _na(v) else f"{v:.2f}x"
-def _ff_pvp(v):   return "—" if _na(v) else f"{v:.2f}×"
-def _ff_liqM(v):  return "—" if _na(v) else f"R$ {v:.1f}M"
+def _ff_pct(v):   return "N/D" if _na(v) else f"{v:.1f}%"
+def _ff_mult(v):  return "N/D" if _na(v) else f"{v:.2f}x"
+def _ff_pvp(v):   return "N/D" if _na(v) else f"{v:.2f}×"
+def _ff_liqM(v):  return "N/D" if _na(v) else f"R$ {v:.1f}M"
 def _ff_pl(v):
-    if _na(v):  return "—"
+    if _na(v):  return "N/D"
     if v < 0:   return "Prejuízo"
     if v < 5:   return f"⚠️ {v:.2f}x"
     return f"{v:.2f}x"
@@ -790,6 +791,21 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
     ).fillna("")
 
     styler = display_df.style.format(_fmt_map)
+
+    # Override por célula: N/A (não aplicável ao setor) vs N/D (dado ausente).
+    # Necessário pois column_config format= sobrescreveria o texto do Styler.
+    for _col in display_df.columns:
+        if _col not in class_aligned.columns:
+            continue
+        _na_rows = [i for i in display_df.index if class_aligned.loc[i, _col] == "NA"]
+        _nd_rows = [i for i in display_df.index if class_aligned.loc[i, _col] == "ND"]
+        try:
+            if _na_rows:
+                styler = styler.format("N/A", subset=pd.IndexSlice[_na_rows, [_col]])
+            if _nd_rows:
+                styler = styler.format("N/D", subset=pd.IndexSlice[_nd_rows, [_col]])
+        except Exception:
+            pass  # subset inválido em edge case — ignora silenciosamente
 
     for col in display_df.columns:
         if col not in colored_cols:
@@ -1164,7 +1180,7 @@ def _show_macro_panel() -> None:
             _fetch_macro.clear()
             st.rerun()
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
 
     with c1:
         st.markdown("**Ibovespa (BOVA11)**")
@@ -1264,6 +1280,30 @@ def _show_macro_panel() -> None:
         else:
             st.caption("Indisponível")
 
+    with c7:
+        _cart = st.session_state.get("_macro_cart") or {}
+        st.markdown("**Minha Carteira**")
+        _cv  = _cart.get("valor")
+        _cp  = _cart.get("pnl_pct")
+        _cvd = _cart.get("var_dia")
+        if _cv is not None:
+            _pnl_col = "#34d399" if (_cp or 0) >= 0 else "#f87171"
+            _vd_col  = "#34d399" if (_cvd or 0) >= 0 else "#f87171"
+            st.markdown(
+                f"R$ {_cv:,.0f}<br>"
+                f"<span style='color:{_pnl_col};font-size:0.85rem'>"
+                f"{'↑' if (_cp or 0) >= 0 else '↓'} {abs(_cp):.1f}% total</span>",
+                unsafe_allow_html=True,
+            )
+            if _cvd is not None:
+                st.caption(
+                    f"Hoje: "
+                    f"<span style='color:{_vd_col}'>{_cvd:+.2f}%</span>",
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.caption("Sem posições")
+
     st.divider()
 
 
@@ -1320,6 +1360,21 @@ def _fetch_price_history(ticker: str) -> Optional[pd.DataFrame]:
         return None
 
 
+def _chart_pct_pill(label_left: str, pct: float, extra: str = "") -> str:
+    """Pill destacado com a variação do período (verde/vermelho) + rótulo à esquerda."""
+    up = pct >= 0
+    txt = "#34d399" if up else "#f87171"
+    bg  = "#0c2a23" if up else "#2a0f14"
+    bd  = "#1f4a3d" if up else "#4a1f28"
+    return (
+        "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:2px 0 10px'>"
+        f"<span style='font-weight:600;color:#e8ecf4;font-size:0.95rem'>{label_left}</span>"
+        f"<span style='font-size:1.2rem;font-weight:800;color:{txt};background:{bg};"
+        f"border:1px solid {bd};padding:4px 15px;border-radius:999px'>{pct:+.2f}%</span>"
+        f"{extra}</div>"
+    )
+
+
 def _show_price_history_chart(s: dict) -> None:
     ticker = s.get("ticker", "")
     df = _fetch_price_history(ticker)
@@ -1358,8 +1413,16 @@ def _show_price_history_chart(s: dict) -> None:
         show_ibov = st.checkbox("📊 Comparar com Ibovespa", value=False, key=f"hist_ibov_{ticker}")
 
     n_days  = periods[sel]
-    df_plot = df.tail(n_days)
-    _line_mode = "lines+markers" if n_days <= 7 else "lines"  # períodos curtos: marcadores
+    # 1D: usa os 2 últimos pregões (fechamento anterior → atual) para formar uma linha
+    # em vez de um único ponto. API só tem dados diários — intraday não disponível.
+    df_plot = df.tail(max(n_days, 2) if n_days == 1 else n_days)
+    _line_mode = "lines+markers" if n_days <= 7 else "lines"
+
+    # Pill destacado com a variação do período
+    _pct_period = (df_plot["adjusted_close"].iloc[-1] / df_plot["adjusted_close"].iloc[0] - 1) * 100
+    _daily_chg  = s.get("daily_change_pct")  # variação do dia atual (API)
+    _pct_show   = _daily_chg if (n_days == 1 and _daily_chg is not None) else _pct_period
+    st.markdown(_chart_pct_pill(f"{ticker} — {sel}", _pct_show), unsafe_allow_html=True)
 
     # Modo comparativo (normalizado em base 100) vs. modo preço absoluto
     if show_ibov:
@@ -1371,7 +1434,7 @@ def _show_price_history_chart(s: dict) -> None:
             y_ibov  = (df_ibov["close"] / base_i * 100).values
             pct     = (y_stock[-1] - 100)
             pct_ibov= (y_ibov[-1] - 100)
-            line_col = "#4caf50" if pct >= 0 else "#f44336"
+            line_col = "#34d399" if pct >= 0 else "#f87171"
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=df_plot["trade_date"].values, y=y_stock,
@@ -1394,7 +1457,7 @@ def _show_price_history_chart(s: dict) -> None:
                     hovertemplate="MM50: %{y:.1f}<extra></extra>",
                 ))
             fig.update_layout(
-                height=300, margin=dict(l=0, r=0, t=30, b=0),
+                height=280, margin=dict(l=0, r=0, t=8, b=0),
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                 xaxis=dict(showgrid=False, color="#9e9e9e"),
                 yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e",
@@ -1411,17 +1474,18 @@ def _show_price_history_chart(s: dict) -> None:
             st.caption("⚠️ Dados do Ibovespa indisponíveis — exibindo preço absoluto.")
 
     # Modo padrão: preço absoluto
-    pct = (df_plot["adjusted_close"].iloc[-1] / df_plot["adjusted_close"].iloc[0] - 1) * 100
-    line_col = "#4caf50" if pct >= 0 else "#f44336"
-    fill_col = "rgba(76,175,80,0.08)" if pct >= 0 else "rgba(244,67,54,0.08)"
+    pct = _pct_period
+    line_col = "#34d399" if pct >= 0 else "#f87171"
+    fill_col = "rgba(52,211,153,0.07)" if pct >= 0 else "rgba(248,113,113,0.07)"
 
+    _xfmt = "%d/%m" if n_days > 5 else "%d/%m %Hh"
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=df_plot["trade_date"], y=df_plot["adjusted_close"],
         mode=_line_mode, name="Preço ajustado",
         line=dict(color=line_col, width=2),
         fill="tozeroy", fillcolor=fill_col,
-        hovertemplate="<b>%{x|%d/%m/%Y}</b><br>R$ %{y:.2f}<extra></extra>",
+        hovertemplate=f"<b>%{{x|{_xfmt}}}</b><br>R$ %{{y:.2f}}<extra></extra>",
     ))
     if show_ma:
         fig.add_trace(go.Scatter(
@@ -1430,13 +1494,18 @@ def _show_price_history_chart(s: dict) -> None:
             line=dict(color="#ff9800", width=1.5, dash="dot"),
             hovertemplate="MM50: R$ %{y:.2f}<extra></extra>",
         ))
+    # Eixo X: 1D/5D → formato de data curto sem horário degenerado
+    _xaxis_cfg = dict(
+        showgrid=False, color="#9e9e9e",
+        tickformat="%d/%m/%y" if n_days >= 21 else "%d/%m",
+        nticks=6,
+    )
     fig.update_layout(
-        height=300, margin=dict(l=0, r=0, t=30, b=0),
+        height=280, margin=dict(l=0, r=0, t=8, b=0),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False, color="#9e9e9e"),
+        xaxis=_xaxis_cfg,
         yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", color="#9e9e9e"),
         showlegend=show_ma, legend=dict(bgcolor="rgba(0,0,0,0)"),
-        title=dict(text=f"{ticker} — {sel}: {pct:+.1f}%", font=dict(size=13, color="#e8eaf6")),
     )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
@@ -5848,6 +5917,32 @@ footer {visibility: hidden;}
         reverse=True,
     )
 
+    # ── Rendimento da carteira atual → passa para painel macro ──
+    _cart_valor, _cart_custo, _cart_var_dia = 0.0, 0.0, []
+    for e in enriched:
+        t   = e.get("ticker", "")
+        en  = st.session_state.acoes.get(t, {})
+        qtd = int(en.get("qtd", 0) or 0)
+        if qtd <= 0:
+            continue
+        price = e.get("close_price") or 0
+        pm    = float(en.get("preco_medio", 0) or 0)
+        val   = qtd * price
+        _cart_valor += val
+        if pm > 0:
+            _cart_custo += qtd * pm
+        chg = e.get("daily_change_pct")
+        if chg is not None:
+            _cart_var_dia.append((chg, val))
+    _cart_pnl_pct   = (_cart_valor / _cart_custo - 1) * 100 if _cart_custo > 0 else None
+    _cart_var_d_pct = (sum(c * v for c, v in _cart_var_dia) / sum(v for _, v in _cart_var_dia)
+                       if _cart_var_dia else None)
+    st.session_state["_macro_cart"] = {
+        "valor": _cart_valor if _cart_custo > 0 else None,
+        "pnl_pct": _cart_pnl_pct,
+        "var_dia": _cart_var_d_pct,
+    }
+
     # ── Painel macro ──────────────────────────────────────────
     _show_macro_panel()
 
@@ -5969,18 +6064,20 @@ div[data-testid="stPopover"] button:hover {
                          "Os 3 cenários (Conservador/Base/Otimista) ficam na aba Detalhe.",
                 ),
                 "Var.Dia":         st.column_config.NumberColumn("Var.Dia", width="small", format="%+.2f%%"),
-                "Dív.Líq/EBITDA":  st.column_config.NumberColumn("Dív/EBITDA", width="small", format="%.2fx"),
-                "ROE":             st.column_config.NumberColumn("ROE", width="small", format="%.1f%%"),
-                "EV/EBITDA":       st.column_config.NumberColumn("EV/EBITDA", width="small", format="%.2fx"),
-                "P/L":             st.column_config.NumberColumn("P/L", width="small", format="%.2fx"),
-                "Mg. EBITDA":      st.column_config.NumberColumn("Mg.EBITDA", width="small", format="%.1f%%"),
-                "CAGR Lucro 5a":   st.column_config.NumberColumn("CAGR Lucro", width="small", format="%.1f%%"),
-                "P/FCF":           st.column_config.NumberColumn("P/FCF", width="small", format="%.2fx"),
-                "Div. Yield":      st.column_config.NumberColumn("DY", width="small", format="%.1f%%"),
-                "Liquidez":        st.column_config.NumberColumn("Liq. (R$M)", width="small", format="%.1f"),
-                "CAGR Rec. 5a":    st.column_config.NumberColumn("CAGR Rec.", width="small", format="%.1f%%"),
-                "P/VP":            st.column_config.NumberColumn("P/VP", width="small", format="%.2fx"),
-                "PSR":             st.column_config.NumberColumn("PSR", width="small", format="%.2fx"),
+                # Indicadores: sem format= para que o Styler mostre N/A ou N/D
+                # corretamente (format= sobrescreveria NaN → "None")
+                "Dív.Líq/EBITDA":  st.column_config.NumberColumn("Dív/EBITDA", width="small"),
+                "ROE":             st.column_config.NumberColumn("ROE", width="small"),
+                "EV/EBITDA":       st.column_config.NumberColumn("EV/EBITDA", width="small"),
+                "P/L":             st.column_config.NumberColumn("P/L", width="small"),
+                "Mg. EBITDA":      st.column_config.NumberColumn("Mg.EBITDA", width="small"),
+                "CAGR Lucro 5a":   st.column_config.NumberColumn("CAGR Lucro", width="small"),
+                "P/FCF":           st.column_config.NumberColumn("P/FCF", width="small"),
+                "Div. Yield":      st.column_config.NumberColumn("DY", width="small"),
+                "Liquidez":        st.column_config.NumberColumn("Liq. (R$M)", width="small"),
+                "CAGR Rec. 5a":    st.column_config.NumberColumn("CAGR Rec.", width="small"),
+                "P/VP":            st.column_config.NumberColumn("P/VP", width="small"),
+                "PSR":             st.column_config.NumberColumn("PSR", width="small"),
             },
         )
 
