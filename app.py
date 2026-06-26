@@ -4429,10 +4429,6 @@ _FII_TYPE_LABELS = {
     "desenvolvimento": "🏗 Desenvolvimento",
 }
 
-_FII_COL_HEADERS = [
-    "Ticker", "Nome", "Tipo", "Preço", "DY TTM", "P/VP",
-    "Vacância", "Inadimp.", "Liquidez", "Qualidade", "Preço*", "Diagnóstico",
-]
 
 @st.cache_data(ttl=3600)
 def _fetch_fii(ticker: str) -> dict:
@@ -4464,91 +4460,65 @@ def _fmt_fii_val(key: str, fii: dict):
     return "N/D"
 
 
-def _fii_table_html(fiis_data: list[dict]) -> str:
-    """Renderiza tabela de FIIs com células coloridas por classificação."""
-    th = "padding:9px 10px;color:#8b94a7;border-bottom:1px solid #232b3a;background:#151b26;font-weight:600;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em"
-    html = "<div style='overflow-x:auto'>"
-    html += "<table style='width:100%;border-collapse:collapse;font-size:0.87rem'>"
-    html += "<thead><tr>"
-    for h in _FII_COL_HEADERS:
-        html += f"<th style='{th};text-align:center'>{h}</th>"
-    html += "</tr></thead><tbody>"
-
-    _calc_scores = getattr(sf, "calculate_fii_scores", None)
-    for i, fii in enumerate(fiis_data):
-        row_bg = "#0e1117" if i % 2 == 0 else "#131629"
-        scf = _calc_scores(fii) if _calc_scores else {}
-        html += f"<tr style='background:{row_bg}'>"
-
-        # Ticker
-        html += f"<td style='padding:6px 10px;text-align:center;font-weight:700;color:#90caf9'>{fii.get('ticker','')}</td>"
-        # Nome (truncado)
-        nome = (fii.get("name") or "")[:30]
-        html += f"<td style='padding:6px 10px;color:#c8cce0'>{nome}</td>"
-        # Tipo
-        ft = (fii.get("fund_type") or "").lower()
-        tipo_lbl = _FII_TYPE_LABELS.get(ft, fii.get("fund_type") or "N/D")
-        html += f"<td style='padding:6px 10px;text-align:center;color:#c8cce0'>{tipo_lbl}</td>"
-
-        # Preço
-        price_disp = _fmt_fii_val("close_price", fii)
-        html += f"<td style='padding:6px 10px;text-align:center;color:#e8eaf6'>{price_disp}</td>"
-
-        # DY TTM
-        dy_cls, dy_disp = sf.classify_fii_dy(fii.get("dividend_yield"))
-        dy_bg = BG_COLORS.get(dy_cls, "#37474f")
-        html += f"<td style='padding:6px 10px;text-align:center;background:{dy_bg};border-radius:4px'>{dy_disp}</td>"
-
-        # P/VP
+def _build_fii_table(fiis_data: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(display_df strings, color_df hex) p/ st.dataframe + Styler + seleção de
+    linha — padroniza a tabela de FIIs com a de Ações (clique-na-linha)."""
+    _calc = getattr(sf, "calculate_fii_scores", None)
+    rows, colors = [], []
+    _GRAY = "#37474f"
+    for fii in fiis_data:
+        scf = _calc(fii) if _calc else {}
+        paper = scf.get("paper", False)
+        dy_cls, dy_disp   = sf.classify_fii_dy(fii.get("dividend_yield"))
         pvp_cls, pvp_disp = sf.classify_fii_pvp(fii.get("pvp"))
-        pvp_bg = BG_COLORS.get(pvp_cls, "#37474f")
-        html += f"<td style='padding:6px 10px;text-align:center;background:{pvp_bg};border-radius:4px'>{pvp_disp}</td>"
-
-        # Vacância e Inadimplência — N/A para papel (não tem imóvel físico)
-        _is_paper_row = scf.get("paper", False)
-        if _is_paper_row:
-            for _ in range(2):
-                html += ("<td style='padding:6px 10px;text-align:center;background:#37474f;"
-                         "border-radius:4px;color:#b0bec5;font-size:0.8rem'>N/A</td>")
-        else:
-            vac_cls, vac_disp = sf.classify_fii_vacancy(fii.get("vacancy_pct"))
-            vac_bg = BG_COLORS.get(vac_cls, "#37474f")
-            html += f"<td style='padding:6px 10px;text-align:center;background:{vac_bg};border-radius:4px'>{vac_disp}</td>"
-            ina_cls, ina_disp = sf.classify_fii_delinquency(fii.get("delinquency_pct"))
-            ina_bg = BG_COLORS.get(ina_cls, "#37474f")
-            html += f"<td style='padding:6px 10px;text-align:center;background:{ina_bg};border-radius:4px'>{ina_disp}</td>"
-
-        # Liquidez
         liq_cls, liq_disp = sf.classify_fii_liquidity(fii.get("liquidity"))
-        liq_bg = BG_COLORS.get(liq_cls, "#37474f")
-        html += f"<td style='padding:6px 10px;text-align:center;background:{liq_bg};border-radius:4px'>{liq_disp}</td>"
+        vac_cls, vac_disp = sf.classify_fii_vacancy(fii.get("vacancy_pct"))
+        ina_cls, ina_disp = sf.classify_fii_delinquency(fii.get("delinquency_pct"))
+        _q, _p, _diag = scf.get("quality"), scf.get("price"), scf.get("diagnosis")
+        ft = (fii.get("fund_type") or "").lower()
+        rows.append({
+            "Ticker":      fii.get("ticker", ""),
+            "Nome":        (fii.get("name") or "")[:30],
+            "Tipo":        _FII_TYPE_LABELS.get(ft, fii.get("fund_type") or "N/D"),
+            "Preço":       _fmt_fii_val("close_price", fii),
+            "DY TTM":      dy_disp,
+            "P/VP":        pvp_disp,
+            "Vacância":    "N/A" if paper else vac_disp,
+            "Inadimp.":    "N/A" if paper else ina_disp,
+            "Liquidez":    liq_disp,
+            "Qualidade":   "papel" if paper else (f"{_q:.0f}" if _q is not None else "—"),
+            "Preço*":      f"{_p:.0f}" if _p is not None else "—",
+            "Diagnóstico": _diag["label"] if _diag else "—",
+        })
+        colors.append({
+            "Ticker": fii.get("ticker", ""),  # vira o índice (alinha c/ display)
+            "Nome": "", "Tipo": "", "Preço": "",
+            "DY TTM":      BG_COLORS.get(dy_cls, _GRAY),
+            "P/VP":        BG_COLORS.get(pvp_cls, _GRAY),
+            "Vacância":    _GRAY if paper else BG_COLORS.get(vac_cls, _GRAY),
+            "Inadimp.":    _GRAY if paper else BG_COLORS.get(ina_cls, _GRAY),
+            "Liquidez":    BG_COLORS.get(liq_cls, _GRAY),
+            "Qualidade":   _GRAY if paper else (_score_color_hex(_q) if _q is not None else _GRAY),
+            "Preço*":      _score_color_hex(_p) if _p is not None else _GRAY,
+            "Diagnóstico": _diag["color"] if _diag else _GRAY,
+        })
+    return pd.DataFrame(rows), pd.DataFrame(colors)
 
-        # Qualidade (tijolo) — papel não tem nota
-        _q, _p = scf.get("quality"), scf.get("price")
-        _diag = scf.get("diagnosis")
-        if scf.get("paper"):
-            html += ("<td style='padding:6px 10px;text-align:center;background:#37474f;"
-                     "border-radius:4px;color:#cfd8dc;font-size:0.8rem'>papel</td>")
-        else:
-            _qbg = _score_color_hex(_q) if _q is not None else "#37474f"
-            _qs = f"{_q:.0f}" if _q is not None else "—"
-            html += (f"<td style='padding:6px 10px;text-align:center;background:{_qbg};"
-                     f"border-radius:4px;font-weight:700'>{_qs}</td>")
-        # Preço (atratividade)
-        _pbg = _score_color_hex(_p) if _p is not None else "#37474f"
-        _ps = f"{_p:.0f}" if _p is not None else "—"
-        html += (f"<td style='padding:6px 10px;text-align:center;background:{_pbg};"
-                 f"border-radius:4px;font-weight:700'>{_ps}</td>")
-        # Diagnóstico
-        _dbg = _diag["color"] if _diag else "#37474f"
-        _dlbl = _diag["label"] if _diag else "—"
-        html += (f"<td style='padding:6px 10px;text-align:center;background:{_dbg};"
-                 f"border-radius:4px;font-weight:600;font-size:0.82rem'>{_dlbl}</td>")
 
-        html += "</tr>"
-
-    html += "</tbody></table></div>"
-    return html
+def _apply_fii_styles(df_disp: pd.DataFrame, df_color: pd.DataFrame):
+    """Styler: cor de fundo (hex) por célula a partir de df_color (texto branco)."""
+    # Guard: índice/colunas duplicados quebram o reindex → devolve sem cor.
+    if not df_disp.index.is_unique or not df_disp.columns.is_unique:
+        return df_disp.style
+    _c = df_color.reindex(index=df_disp.index, columns=df_disp.columns,
+                          fill_value="").fillna("")
+    def _col_style(series: pd.Series) -> list:
+        out = []
+        for idx in series.index:
+            bg = _c.loc[idx, series.name] if series.name in _c.columns else ""
+            out.append(f"background-color:{bg};color:#fff;font-weight:600" if bg else "")
+        return out
+    return df_disp.style.apply(_col_style, axis=0)
 
 
 _FII_IND_LABELS = {
@@ -4831,10 +4801,11 @@ def _show_fii_screener(fiis_lista_atual: dict) -> None:
     if not filtered:
         return
 
-    # ── Tabela de resultados ──────────────────────────────────────
-    st.markdown(
-        _fii_table_html(filtered),
-        unsafe_allow_html=True,
+    # ── Tabela de resultados (mesmo estilo da Tabela; sem seleção) ──
+    _scr_disp, _scr_color = _build_fii_table(filtered)
+    st.dataframe(
+        _apply_fii_styles(_scr_disp.set_index("Ticker"), _scr_color.set_index("Ticker")),
+        width="stretch", height=min(42 + 35 * len(filtered), 520),
     )
 
     # ── Adicionar à lista atual ───────────────────────────────────
@@ -4995,28 +4966,45 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
                 st.rerun()
     st.caption("🔄 Para atualizar os dados dos FIIs, use **Atualizar FIIs** no menu lateral.")
 
-    # ── Selecionar para ver no Detalhe (a tabela é HTML, sem clique-na-linha) ──
-    col_ver, _ = st.columns([2, 1.5])
-    with col_ver:
-        _ver = st.selectbox(
-            "🔍 Ver no Detalhe", ["—"] + _fii_tickers, key="fii_ver_detalhe_sel",
-            format_func=lambda t: ("—" if t == "—"
-                                   else f"{t} — {fiis_atuais.get(t, {}).get('name', '')}"))
-    if _ver != "—":
-        st.session_state.selected_fii = _ver
-        st.caption(f"✓ **{_ver}** selecionado — abra a aba **🔍 Detalhe** acima para ver.")
-
     st.divider()
 
-    # ── Tabela ────────────────────────────────────────────────────
+    # ── Tabela (st.dataframe + Styler + seleção de linha, igual às Ações) ──
     if fiis_filtrados:
-        st.markdown(
-            _fii_table_html(fiis_filtrados),
-            unsafe_allow_html=True,
+        _disp, _color = _build_fii_table(fiis_filtrados)
+        _tickers_ord = _disp["Ticker"].tolist()
+        _styled = _apply_fii_styles(_disp.set_index("Ticker"), _color.set_index("Ticker"))
+        _ev = st.dataframe(
+            _styled, width="stretch", on_select="rerun", selection_mode="single-row",
+            height=min(42 + 35 * len(fiis_filtrados), 600),
+            column_config={
+                "Nome":        st.column_config.TextColumn("Nome", width="medium"),
+                "Tipo":        st.column_config.TextColumn("Tipo", width="small"),
+                "Preço":       st.column_config.TextColumn("Preço", width="small"),
+                "DY TTM":      st.column_config.TextColumn("DY TTM", width="small"),
+                "P/VP":        st.column_config.TextColumn("P/VP", width="small"),
+                "Vacância":    st.column_config.TextColumn("Vacância", width="small"),
+                "Inadimp.":    st.column_config.TextColumn("Inadimp.", width="small"),
+                "Liquidez":    st.column_config.TextColumn("Liquidez", width="small"),
+                "Qualidade":   st.column_config.TextColumn(
+                    "Qualidade", width="small",
+                    help="Qualidade do FII de tijolo (vacância/inadimplência/liquidez). "
+                         "FIIs de papel não têm nota."),
+                "Preço*":      st.column_config.TextColumn(
+                    "Preço*", width="small",
+                    help="Atratividade de preço (0-100): P/VP + DY. Maior = mais barato."),
+                "Diagnóstico": st.column_config.TextColumn("Diagnóstico", width="medium"),
+            },
         )
+        if _ev.selection and _ev.selection.rows:
+            _ri = _ev.selection.rows[0]
+            if _ri < len(_tickers_ord):
+                st.session_state.selected_fii = _tickers_ord[_ri]
+                st.info(f"**{_tickers_ord[_ri]}** selecionado. "
+                        "Veja o detalhamento na aba **🔍 Detalhe**.")
         st.caption("**Qualidade** e **Preço\\*** = scores 0–100 (Preço\\* alto = mais "
                    "atrativo/barato). FIIs de **papel** não têm nota de qualidade "
-                   "(sem dados de crédito) — veja os alertas no Detalhe.")
+                   "(sem dados de crédito) — veja os alertas no Detalhe. "
+                   "Clique numa linha para abrir no Detalhe.")
     else:
         st.info(f"Nenhum FII do tipo '{_tipo_filtro}' na lista.")
 
