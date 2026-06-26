@@ -4,6 +4,7 @@ Fonte de dados: API Bolsai (usebolsai.com)
 """
 from __future__ import annotations
 
+import functools
 import json
 import math
 import time
@@ -3571,20 +3572,44 @@ def _show_screener():
 # Tela de seleção de usuário
 # ────────────────────────────────────────────────────────────────
 
+@functools.lru_cache(maxsize=1)
+def _login_dotfield_uri() -> str:
+    """Gera um campo de pontos em ONDA concentrado à direita (estilo Empiricus):
+    cortina vertical ondulada que esmaece para a esquerda. Retorna data-URI SVG."""
+    import urllib.parse
+    W, H, STEP = 1440, 900, 26
+    dots = []
+    for iy in range(0, H // STEP + 2):
+        for ix in range(0, W // STEP + 2):
+            x, y = ix * STEP, iy * STEP
+            # borda esquerda ondulada da cortina (concava no meio)
+            left_edge = W * 0.50 + 150 * math.sin(y / H * math.pi * 1.15)
+            d = x - left_edge
+            if d <= 0:
+                continue
+            # opacidade cresce para a direita (satura) + leve fade no topo/base
+            op = min(0.44, d / 320) * (1 - abs(y - H / 2) / (H * 0.62))
+            if op <= 0.03:
+                continue
+            col = "#34d399" if (ix + iy) % 5 else "#7dd3fc"   # esmeralda + toque azul-céu
+            dots.append(f'<circle cx="{x}" cy="{y}" r="1.15" fill="{col}" opacity="{op:.3f}"/>')
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
+           f'preserveAspectRatio="xMidYMid slice">{"".join(dots)}</svg>')
+    return "data:image/svg+xml," + urllib.parse.quote(svg)
+
+
 def _tela_selecao_usuario() -> None:
     """Exibida antes do app quando nenhum usuário está selecionado."""
     st.markdown(
         "<style>[data-testid='stAppViewContainer']{background:"
         # glow esmeralda no topo
         "radial-gradient(900px 480px at 50% -10%, rgba(52,211,153,0.10), transparent 62%),"
-        # malha de pontos sutil (textura — evita o aspecto 'cru'), mais densa nas bordas
-        "radial-gradient(rgba(52,211,153,0.07) 1px, transparent 1.5px) 0 0 / 26px 26px,"
-        "radial-gradient(rgba(255,255,255,0.035) 1px, transparent 1.5px) 13px 13px / 26px 26px,"
         "#0b0e14;}"
-        # esmaece os pontos em direção ao centro p/ não competir com o card de login
+        # campo de pontos em onda (estilo Empiricus) atrás de tudo, à direita
         "[data-testid='stAppViewContainer']::before{content:'';position:fixed;inset:0;"
-        "pointer-events:none;background:radial-gradient(680px 520px at 50% 42%,"
-        "#0b0e14 12%, transparent 80%);}"
+        "pointer-events:none;z-index:0;"
+        f"background-image:url(\"{_login_dotfield_uri()}\");"
+        "background-size:cover;background-position:center right;}"
         "</style>", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 2.2, 1])
     with col:
