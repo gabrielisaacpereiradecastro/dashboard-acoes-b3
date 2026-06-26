@@ -1865,11 +1865,38 @@ def _dcf_conservative_price(s: dict, wacc: float = 0.12, g5: float = 0.10, perp_
 # Bancos com participação relevante do governo → prêmio de governança no Ke
 _BANCOS_ESTATAIS = {"BBAS3", "BBAS11", "BAZA3", "BRSR3", "BRSR6", "BNBR3"}
 
+# Prêmios de risco de equity sobre a Rf estrutural (CAPM simplificado, β≈1).
+# Privado: ERP sobre a NTN-B longa (~4pp). Estatal: + governança/risco político.
+_KE_PREMIO_PRIVADO = 0.040
+_KE_PREMIO_ESTATAL = 0.065
+_KE_MIN, _KE_MAX   = 0.12, 0.20   # faixa sã para clamp do Ke nominal
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _rf_estrutural() -> float:
+    """Risk-free de perpetuidade = Selic estrutural (mediana Focus do horizonte
+    mais distante, ~10%), NÃO a Selic spot (cíclica). Fração; fallback 0.10.
+
+    Para um modelo de perpetuidade (Gordon), a taxa livre de risco deve refletir
+    o juro normalizado de longo prazo — é assim que as casas ancoram o Ke."""
+    try:
+        focus = api.get_focus("Selic", top=80)
+        if focus:
+            v = focus[max(focus.keys())]   # ano de referência mais distante
+            if v is not None and 6.0 <= v <= 20.0:
+                return v / 100
+    except Exception:
+        pass
+    return 0.10
+
 
 def _bank_ke(ticker: str) -> float:
-    """Ke do Gordon: 15% para bancos estatais (risco de governança/interferência),
-    12% para bancos privados grandes (Selic + prêmio de risco bancário)."""
-    return 0.15 if (ticker or "").upper() in _BANCOS_ESTATAIS else 0.12
+    """Ke dinâmico (CAPM) = Rf estrutural (Selic de longo prazo do Focus, ~10%)
+    + prêmio de risco de equity. Privado +4pp; estatal +6,5pp (governança).
+    Clamp 12–20%. Ancorado na Selic NORMALIZADA, não na spot (perpetuidade)."""
+    rf = _rf_estrutural()
+    premio = _KE_PREMIO_ESTATAL if (ticker or "").upper() in _BANCOS_ESTATAIS else _KE_PREMIO_PRIVADO
+    return min(max(rf + premio, _KE_MIN), _KE_MAX)
 
 
 def _bank_roe_norm(s: dict) -> Optional[float]:
@@ -1988,14 +2015,24 @@ def _show_gordon_growth(s: dict) -> None:
     else:
         st.caption(f"ROE base: **{roe:.1f}%** · VPA: **R\\$ {vpa:.2f}**")
 
-    _ke_default = _bank_ke(ticker) * 100   # 15% estatal, 12% privado
+    _rf = _rf_estrutural() * 100
+    _ke_default = _bank_ke(ticker) * 100
+    _premio_pp = (_KE_PREMIO_ESTATAL if ticker.upper() in _BANCOS_ESTATAIS
+                  else _KE_PREMIO_PRIVADO) * 100
+    st.caption(
+        f"Ke ancorado na **Selic estrutural** (Focus longo prazo ≈ {_rf:.1f}%) "
+        f"+ prêmio de equity de {_premio_pp:.1f}pp "
+        f"({'estatal' if ticker.upper() in _BANCOS_ESTATAIS else 'privado'}) "
+        f"= **{_ke_default:.1f}%**. Não usa a Selic spot, pois o modelo é de perpetuidade."
+    )
     col_ke, col_g = st.columns(2)
     with col_ke:
         ke = st.slider(
             "Ke — Custo do Capital Próprio (%)",
             min_value=8.0, max_value=25.0, value=_ke_default, step=0.5,
             key=f"gg_ke_{ticker}",
-            help="12% para bancos privados grandes; 15% para estatais (prêmio de governança).",
+            help="Padrão = Selic estrutural (Focus, ~10%) + prêmio de equity "
+                 "(+4pp privado, +6,5pp estatal). Ajuste livre para testar cenários.",
         ) / 100
     with col_g:
         g = st.slider(
