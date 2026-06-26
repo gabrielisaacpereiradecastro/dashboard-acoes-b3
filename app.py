@@ -38,6 +38,9 @@ INSURER_KEYWORDS = getattr(
     ["seguradora", "seguradoras", "seguros", "seguridade", "resseguro"],
 )
 INSURER_FAIR_PE = getattr(_cfg, "INSURER_FAIR_PE", 10.0)
+# Drogarias: valuation por P/L × LPA (não EV/EBITDA — o EBITDA IFRS16 é inflado
+# por arrendamentos e a dívida inclui o passivo de aluguel). P/L through-cycle.
+DRUGSTORE_FAIR_PE = getattr(_cfg, "DRUGSTORE_FAIR_PE", 12.0)
 SHOPPING_KEYWORDS = getattr(
     _cfg, "SHOPPING_KEYWORDS", ["shopping", "centros comerciais"],
 )
@@ -712,6 +715,8 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
             _target = _cyclical_base_price(s)
         elif _is_utility(sector):
             _target = _utility_base_price(s)
+        elif _is_drugstore(sector):
+            _target = _drugstore_base_price(s)
         else:
             _target = _geral_base_price(s)
         if _target is not None and _price_now and _price_now > 0:
@@ -1661,6 +1666,27 @@ def _insurer_base_price(s: dict, fair_pe: float = INSURER_FAIR_PE) -> Optional[f
     return fair_pe * lpa
 
 
+def _is_drugstore(sector: str) -> bool:
+    """True se for varejo de farmácia/drogaria (valuation por P/L, não EV/EBITDA).
+    Distribuidoras ('Farmacêutica (Distribuidora)') NÃO entram aqui."""
+    sl = (sector or "").lower()
+    return ("farmácia" in sl or "farmacia" in sl or "drogaria" in sl)
+
+
+def _drugstore_base_price(s: dict, fair_pe: float = DRUGSTORE_FAIR_PE) -> Optional[float]:
+    """Preço justo de drogaria via P/L × LPA (trailing).
+
+    P/L evita a distorção do EV/EBITDA sob IFRS16 (EBITDA e dívida líquida
+    inflados por arrendamentos das lojas) e capta a alavancagem (juros já estão
+    no lucro). Dinâmico: a LPA atualiza a cada balanço. Sem aposta em crescimento
+    futuro (usa LPA atual). Fallback p/ EV/EBITDA setorial quando há prejuízo.
+    """
+    lpa = s.get("lpa")
+    if lpa is not None and lpa > 0:
+        return fair_pe * lpa
+    return _geral_base_price(s)   # prejuízo/sem LPA → EV/EBITDA (bucket drogaria 9×)
+
+
 def _is_shopping(sector: str) -> bool:
     """True se for shopping/centro comercial (valuation por EV/EBITDA)."""
     sl = (sector or "").lower()
@@ -2193,8 +2219,11 @@ def _show_gordon_growth(s: dict) -> None:
 # Valuation DCF
 # ────────────────────────────────────────────────────────────────
 
-def _show_insurer_valuation(s: dict) -> None:
-    """Valuation para seguradoras via múltiplo P/L × LPA (3 cenários de P/L)."""
+def _show_pl_valuation(s: dict, *, fair_pe: float, info: str, pe_help: str,
+                       aviso: str, key_prefix: str, pe_min: float = 5.0,
+                       pe_max: float = 18.0) -> None:
+    """Valuation por múltiplo P/L × LPA (3 cenários). Base para seguradoras e
+    drogarias — ambos avaliados por lucro, não por EV/EBITDA / DCF."""
     lpa   = s.get("lpa")
     price = s.get("close_price")
     pl_atual = s.get("pl")
@@ -2202,11 +2231,7 @@ def _show_insurer_valuation(s: dict) -> None:
 
     st.divider()
     st.subheader("Valuation — Múltiplo de Lucro (P/L)")
-    st.info(
-        "ℹ️ Para seguradoras, o valuation usa **múltiplo de lucro (P/L × LPA)** — "
-        "método padrão do setor. O DCF de fluxo de caixa não se aplica porque o "
-        "caixa de uma seguradora é distorcido pelo *float* de prêmios."
-    )
+    st.info(info)
 
     if lpa is None or lpa <= 0:
         st.warning("⚠️ LPA não disponível ou negativo — múltiplo P/L não aplicável.")
@@ -2219,9 +2244,9 @@ def _show_insurer_valuation(s: dict) -> None:
 
     pe_base = st.slider(
         "P/L justo de referência (×)",
-        min_value=5.0, max_value=18.0, value=float(INSURER_FAIR_PE), step=0.5,
-        key=f"ins_pe_{ticker}",
-        help="P/L através do ciclo. Padrão 10× para seguradoras brasileiras estáveis.",
+        min_value=pe_min, max_value=pe_max, value=float(fair_pe), step=0.5,
+        key=f"{key_prefix}_pe_{ticker}",
+        help=pe_help,
     )
 
     cenarios = [
@@ -2268,10 +2293,36 @@ def _show_insurer_valuation(s: dict) -> None:
     )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    st.warning(
-        "⚠️ **Aviso:** Múltiplo de referência simplificado. Seguradoras com perfil "
-        "de crescimento diferenciado (ex.: forte expansão ou franquia em maturação) "
-        "podem justificar P/L acima ou abaixo do padrão. Não é recomendação de investimento."
+    if aviso:
+        st.warning(aviso)
+
+
+def _show_insurer_valuation(s: dict) -> None:
+    """Valuation para seguradoras via múltiplo P/L × LPA."""
+    _show_pl_valuation(
+        s, fair_pe=INSURER_FAIR_PE, pe_min=5.0, pe_max=18.0, key_prefix="ins",
+        info=("ℹ️ Para seguradoras, o valuation usa **múltiplo de lucro (P/L × LPA)** — "
+              "método padrão do setor. O DCF de fluxo de caixa não se aplica porque o "
+              "caixa de uma seguradora é distorcido pelo *float* de prêmios."),
+        pe_help="P/L através do ciclo. Padrão 10× para seguradoras brasileiras estáveis.",
+        aviso=("⚠️ **Aviso:** Múltiplo de referência simplificado. Seguradoras com perfil "
+               "de crescimento diferenciado (ex.: forte expansão ou franquia em maturação) "
+               "podem justificar P/L acima ou abaixo do padrão. Não é recomendação de investimento."),
+    )
+
+
+def _show_drugstore_valuation(s: dict) -> None:
+    """Valuation para drogarias via P/L × LPA (evita a distorção do EV/EBITDA IFRS16)."""
+    _show_pl_valuation(
+        s, fair_pe=DRUGSTORE_FAIR_PE, pe_min=6.0, pe_max=22.0, key_prefix="drg",
+        info=("ℹ️ Para drogarias, o valuation usa **P/L × LPA** em vez de EV/EBITDA. O "
+              "EBITDA reportado (IFRS16) é inflado pelos arrendamentos das lojas e a dívida "
+              "líquida inclui o passivo de aluguel — o que distorce o EV/EBITDA. O lucro já "
+              "absorve aluguéis e juros, refletindo melhor a realidade econômica."),
+        pe_help="P/L através do ciclo. ~12× para redes de drogaria; líderes premium (ex. RADL3) negociam acima.",
+        aviso=("⚠️ **Aviso:** usa o LPA **atual** (trailing) — não projeta o crescimento futuro "
+               "que os analistas precificam (novas lojas, GLP-1). Tende a ser mais conservador "
+               "que preços-alvo de casas que modelam o ano seguinte. Não é recomendação."),
     )
 
 
@@ -2561,6 +2612,9 @@ def _show_dcf(s: dict) -> None:
         return
     if _is_insurer(sector):
         _show_insurer_valuation(s)
+        return
+    if _is_drugstore(sector):
+        _show_drugstore_valuation(s)
         return
     if _is_shopping(sector):
         _show_shopping_valuation(s)
@@ -5740,6 +5794,8 @@ def _target_price(s: dict) -> Optional[float]:
         return _cyclical_base_price(s)
     if _is_utility(sector):
         return _utility_base_price(s)
+    if _is_drugstore(sector):
+        return _drugstore_base_price(s)
     return _geral_base_price(s)
 
 
