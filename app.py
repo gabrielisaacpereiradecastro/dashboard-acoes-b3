@@ -3601,15 +3601,21 @@ def _login_dotfield_uri() -> str:
 def _tela_selecao_usuario() -> None:
     """Exibida antes do app quando nenhum usuário está selecionado."""
     st.markdown(
-        "<style>[data-testid='stAppViewContainer']{background:"
-        # glow esmeralda no topo
-        "radial-gradient(900px 480px at 50% -10%, rgba(52,211,153,0.10), transparent 62%),"
-        "#0b0e14;}"
-        # campo de pontos em onda (estilo Empiricus) atrás de tudo, à direita
+        "<style>"
+        "[data-testid='stAppViewContainer']{background:#0b0e14;}"
+        # respiração suave (pulsa opacidade) — dá sensação de vida sem cansar
+        "@keyframes loginBreathe{0%,100%{opacity:.5}50%{opacity:1}}"
+        # campo de pontos em onda (estilo Empiricus), à direita, respirando
         "[data-testid='stAppViewContainer']::before{content:'';position:fixed;inset:0;"
         "pointer-events:none;z-index:0;"
         f"background-image:url(\"{_login_dotfield_uri()}\");"
-        "background-size:cover;background-position:center right;}"
+        "background-size:cover;background-position:center right;"
+        "opacity:.55;animation:loginBreathe 4.8s ease-in-out infinite;}"
+        # glow esmeralda no topo, pulsando em sincronia com os pontos
+        "[data-testid='stAppViewContainer']::after{content:'';position:fixed;inset:0;"
+        "pointer-events:none;z-index:0;"
+        "background:radial-gradient(900px 480px at 50% -10%, rgba(52,211,153,0.13), transparent 62%);"
+        "opacity:.6;animation:loginBreathe 4.8s ease-in-out infinite;}"
         "</style>", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 2.2, 1])
     with col:
