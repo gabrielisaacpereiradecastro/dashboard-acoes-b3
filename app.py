@@ -668,6 +668,29 @@ _TABLE_NUM_FMT = {
 }
 
 
+def _format_for_display(display_df: pd.DataFrame, class_df: pd.DataFrame) -> pd.DataFrame:
+    """Converte o df numérico em strings de exibição, distinguindo N/A vs N/D.
+
+    N/A = não aplicável ao setor (classe 'NA', ex. EV/EBITDA de banco);
+    N/D = dado ausente (o formatador devolve 'N/D' para None/NaN).
+    Necessário porque o st.dataframe ignora o texto do Styler quando a coluna é
+    NumberColumn — o texto final precisa estar no próprio VALOR da célula (as
+    colunas viram TextColumn). O df numérico original segue intacto p/ o CSV.
+    """
+    out = display_df.astype(object).copy()
+    _same_len = len(class_df) == len(display_df)
+    for col in out.columns:
+        fmt = _TABLE_NUM_FMT.get(col)
+        if fmt is None:
+            continue
+        vals = display_df[col].tolist()
+        clss = (class_df[col].tolist() if (col in class_df.columns and _same_len)
+                else [""] * len(vals))
+        # Atribuição posicional (robusta a índice não-único)
+        out[col] = ["N/A" if c == "NA" else fmt(v) for v, c in zip(vals, clss)]
+    return out
+
+
 def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
     rows_display = []
     rows_class = []
@@ -779,13 +802,14 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
     }
     colored_cols = {"Qualidade", "Atratividade", "Diagnóstico", "P/VP", "PSR", "Balanço", "Potencial"} | {INDICATOR_LABELS.get(i, i) for i in SCORED_COLS_ORDER}
 
-    # Formata as colunas numéricas (display); o dtype continua numérico → ordena certo.
-    _fmt_map = {c: f for c, f in _TABLE_NUM_FMT.items() if c in display_df.columns}
+    # Pré-formata os valores como STRING (N/A vs N/D no próprio valor da célula).
+    # O st.dataframe ignora o texto do Styler quando há NumberColumn — por isso as
+    # colunas viram TextColumn e o texto final mora no valor. CSV usa o df numérico.
+    _num_cols = [c for c in display_df.columns if c in _TABLE_NUM_FMT]
 
-    # Pandas >= 2.x: _update_ctx lança KeyError se index ou columns não forem únicos.
-    # Retorna sem cores em vez de travar o app.
+    # Pandas >= 2.x: Styler quebra com índice/colunas não-únicos → devolve sem cor.
     if not display_df.index.is_unique or not display_df.columns.is_unique:
-        return display_df.style.format(_fmt_map)
+        return _format_for_display(display_df, class_df).style
 
     # Alinha class_df ao display_df (colunas extras recebem "" → sem cor)
     class_aligned = class_df.reindex(
@@ -794,22 +818,9 @@ def _apply_styles(display_df: pd.DataFrame, class_df: pd.DataFrame):
         fill_value="",
     ).fillna("")
 
-    styler = display_df.style.format(_fmt_map)
-
-    # Override por célula: N/A (não aplicável ao setor) vs N/D (dado ausente).
-    # Necessário pois column_config format= sobrescreveria o texto do Styler.
-    for _col in display_df.columns:
-        if _col not in class_aligned.columns:
-            continue
-        _na_rows = [i for i in display_df.index if class_aligned.loc[i, _col] == "NA"]
-        _nd_rows = [i for i in display_df.index if class_aligned.loc[i, _col] == "ND"]
-        try:
-            if _na_rows:
-                styler = styler.format("N/A", subset=pd.IndexSlice[_na_rows, [_col]])
-            if _nd_rows:
-                styler = styler.format("N/D", subset=pd.IndexSlice[_nd_rows, [_col]])
-        except Exception:
-            pass  # subset inválido em edge case — ignora silenciosamente
+    styler = _format_for_display(display_df, class_aligned).style
+    if _num_cols:
+        styler = styler.set_properties(subset=_num_cols, **{"text-align": "center"})
 
     for col in display_df.columns:
         if col not in colored_cols:
@@ -6187,12 +6198,14 @@ div[data-testid="stPopover"] button:hover {
             selection_mode="single-row",
             height=min(42 + 35 * len(enriched), 600),
             column_config={
-                "Qualidade":       st.column_config.NumberColumn(
-                    "Qualidade", width="small", format="%.0f",
+                # Valores já vêm formatados como string (com N/A/N/D) → TextColumn.
+                # A ordenação correta é feita pelo selectbox "Ordenar por" (server-side).
+                "Qualidade":       st.column_config.TextColumn(
+                    "Qualidade", width="small",
                     help="Qualidade do negócio (0-100): ROE, solidez, margem e crescimento. "
                          "Maior = melhor empresa."),
-                "Atratividade":    st.column_config.NumberColumn(
-                    "Preço", width="small", format="%.0f",
+                "Atratividade":    st.column_config.TextColumn(
+                    "Preço", width="small",
                     help="Atratividade do preço (0-100): EV/EBITDA, P/L, P/FCF (bancos: P/VP, P/L). "
                          "Maior = mais barata."),
                 "Diagnóstico":     st.column_config.TextColumn(
@@ -6202,28 +6215,26 @@ div[data-testid="stPopover"] button:hover {
                 "Empresa":         st.column_config.TextColumn("Empresa", width="medium"),
                 "Setor":           st.column_config.TextColumn("Setor", width="medium"),
                 "Balanço":         st.column_config.TextColumn("Balanço", width="small"),
-                "Cotação":         st.column_config.NumberColumn("Cotação", width="small", format="R$ %.2f"),
-                "Potencial":       st.column_config.NumberColumn(
-                    "Potencial", width="small", format="%+.1f%%",
+                "Cotação":         st.column_config.TextColumn("Cotação", width="small"),
+                "Potencial":       st.column_config.TextColumn(
+                    "Potencial", width="small",
                     help="Potencial de valorização vs preço atual no cenário Esperado (Base): "
                          "DCF para ações em geral, Gordon Growth para bancos. "
                          "Os 3 cenários (Conservador/Base/Otimista) ficam na aba Detalhe.",
                 ),
-                "Var.Dia":         st.column_config.NumberColumn("Var.Dia", width="small", format="%+.2f%%"),
-                # Indicadores: sem format= para que o Styler mostre N/A ou N/D
-                # corretamente (format= sobrescreveria NaN → "None")
-                "Dív.Líq/EBITDA":  st.column_config.NumberColumn("Dív/EBITDA", width="small"),
-                "ROE":             st.column_config.NumberColumn("ROE", width="small"),
-                "EV/EBITDA":       st.column_config.NumberColumn("EV/EBITDA", width="small"),
-                "P/L":             st.column_config.NumberColumn("P/L", width="small"),
-                "Mg. EBITDA":      st.column_config.NumberColumn("Mg.EBITDA", width="small"),
-                "CAGR Lucro 5a":   st.column_config.NumberColumn("CAGR Lucro", width="small"),
-                "P/FCF":           st.column_config.NumberColumn("P/FCF", width="small"),
-                "Div. Yield":      st.column_config.NumberColumn("DY", width="small"),
-                "Liquidez":        st.column_config.NumberColumn("Liq. (R$M)", width="small"),
-                "CAGR Rec. 5a":    st.column_config.NumberColumn("CAGR Rec.", width="small"),
-                "P/VP":            st.column_config.NumberColumn("P/VP", width="small"),
-                "PSR":             st.column_config.NumberColumn("PSR", width="small"),
+                "Var.Dia":         st.column_config.TextColumn("Var.Dia", width="small"),
+                "Dív.Líq/EBITDA":  st.column_config.TextColumn("Dív/EBITDA", width="small"),
+                "ROE":             st.column_config.TextColumn("ROE", width="small"),
+                "EV/EBITDA":       st.column_config.TextColumn("EV/EBITDA", width="small"),
+                "P/L":             st.column_config.TextColumn("P/L", width="small"),
+                "Mg. EBITDA":      st.column_config.TextColumn("Mg.EBITDA", width="small"),
+                "CAGR Lucro 5a":   st.column_config.TextColumn("CAGR Lucro", width="small"),
+                "P/FCF":           st.column_config.TextColumn("P/FCF", width="small"),
+                "Div. Yield":      st.column_config.TextColumn("DY", width="small"),
+                "Liquidez":        st.column_config.TextColumn("Liq. (R$M)", width="small"),
+                "CAGR Rec. 5a":    st.column_config.TextColumn("CAGR Rec.", width="small"),
+                "P/VP":            st.column_config.TextColumn("P/VP", width="small"),
+                "PSR":             st.column_config.TextColumn("PSR", width="small"),
             },
         )
 
