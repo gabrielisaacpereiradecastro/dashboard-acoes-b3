@@ -1899,6 +1899,25 @@ def _bank_ke(ticker: str) -> float:
     return min(max(rf + premio, _KE_MIN), _KE_MAX)
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def _g_perpetuidade() -> float:
+    """Crescimento de perpetuidade NOMINAL = PIB real + IPCA de longo prazo
+    (medianas Focus do horizonte mais distante). Convenção das casas brasileiras
+    (g = PIB nominal de longo prazo) e consistente com o Ke nominal — descontar
+    fluxo nominal com g real subavalia. Clamp 3–7%; fallback 0.055."""
+    try:
+        ipca = api.get_focus("IPCA", top=80)
+        pib  = api.get_focus("PIB Total", top=80)
+        if ipca and pib:
+            gi = ipca[max(ipca.keys())]
+            gp = pib[max(pib.keys())]
+            if gi is not None and gp is not None:
+                return min(max((gi + gp) / 100, 0.03), 0.07)
+    except Exception:
+        pass
+    return 0.055
+
+
 def _bank_roe_norm(s: dict) -> Optional[float]:
     """ROE normalizado = max(ROE atual, mediana dos últimos 8 trimestres).
 
@@ -1960,8 +1979,11 @@ def _dcf_base_price(s: dict, wacc: Optional[float] = None, g5: float = 0.10,
     return max(0.0, equity_k * 1000 / shares)
 
 
-def _gordon_base_price(s: dict, g: float = 0.04) -> Optional[float]:
-    """Preço alvo bancos — Gordon Growth Base/Esperado. ROE normalizado + Ke por tipo."""
+def _gordon_base_price(s: dict, g: Optional[float] = None) -> Optional[float]:
+    """Preço alvo bancos — Gordon Growth Base/Esperado. ROE normalizado + Ke
+    dinâmico + g de perpetuidade nominal (PIB+IPCA de longo prazo do Focus)."""
+    if g is None:
+        g = _g_perpetuidade()
     roe = _bank_roe_norm(s)
     vpa = s.get("vpa")
     if roe is None or vpa is None or vpa <= 0:
@@ -2019,11 +2041,14 @@ def _show_gordon_growth(s: dict) -> None:
     _ke_default = _bank_ke(ticker) * 100
     _premio_pp = (_KE_PREMIO_ESTATAL if ticker.upper() in _BANCOS_ESTATAIS
                   else _KE_PREMIO_PRIVADO) * 100
+    _g_default = _g_perpetuidade() * 100
     st.caption(
         f"Ke ancorado na **Selic estrutural** (Focus longo prazo ≈ {_rf:.1f}%) "
         f"+ prêmio de equity de {_premio_pp:.1f}pp "
         f"({'estatal' if ticker.upper() in _BANCOS_ESTATAIS else 'privado'}) "
-        f"= **{_ke_default:.1f}%**. Não usa a Selic spot, pois o modelo é de perpetuidade."
+        f"= **{_ke_default:.1f}%**. · g de perpetuidade = **PIB + IPCA** de longo "
+        f"prazo (Focus) ≈ **{_g_default:.1f}%** (nominal, coerente com o Ke). "
+        f"Nenhum dos dois usa o juro spot — o modelo é de perpetuidade."
     )
     col_ke, col_g = st.columns(2)
     with col_ke:
@@ -2037,8 +2062,10 @@ def _show_gordon_growth(s: dict) -> None:
     with col_g:
         g = st.slider(
             "Crescimento na perpetuidade (%)",
-            min_value=0.0, max_value=8.0, value=4.0, step=0.25,
+            min_value=0.0, max_value=8.0, value=_g_default, step=0.25,
             key=f"gg_g_{ticker}",
+            help="Padrão = PIB real + IPCA de longo prazo (Focus) = PIB nominal. "
+                 "Teto teórico do crescimento perpétuo de um banco maduro.",
         ) / 100
 
     if ke <= g:
