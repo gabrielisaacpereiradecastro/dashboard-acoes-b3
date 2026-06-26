@@ -1365,6 +1365,43 @@ def _show_macro_panel() -> None:
 # Histórico de preços (Pro) + BOVA11 para comparação
 # ────────────────────────────────────────────────────────────────
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _precos_ao_vivo(tickers: tuple) -> dict:
+    """Preço ao vivo (~15 min de delay) + fechamento anterior via yfinance, para a
+    CARTEIRA refletir o intraday. O close_price do Bolsai é end-of-day (não muda
+    durante o pregão). Retorna {ticker_b3: {'price', 'prev_close'}}. Cache 10 min.
+
+    Usado só no valor/variação da carteira — o valuation segue no close_price do
+    Bolsai (preço justo deve ser estável, não oscilar a cada tick)."""
+    out: dict = {}
+    if not tickers:
+        return out
+    try:
+        _df = yf.download([f"{t}.SA" for t in tickers], period="2d",
+                          progress=False, group_by="ticker", threads=True)
+        for t in tickers:
+            sa = f"{t}.SA"
+            _col = None
+            # robusto aos layouts do yfinance (multi-ticker agrupado, tupla, ou flat)
+            for _try in (lambda: _df[sa]["Close"], lambda: _df[(sa, "Close")],
+                         lambda: _df["Close"]):
+                try:
+                    _col = _try()
+                    break
+                except Exception:
+                    continue
+            if _col is None:
+                continue
+            _cl = _col.dropna()
+            if len(_cl):
+                _p = float(_cl.iloc[-1])
+                _prev = float(_cl.iloc[-2]) if len(_cl) >= 2 else _p
+                out[t] = {"price": _p, "prev_close": _prev}
+    except Exception:
+        pass
+    return out
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_bova11_history(n_days: int) -> Optional[pd.DataFrame]:
     """Busca histórico do BOVA11 via yfinance para os últimos n_days pregões."""
@@ -5138,12 +5175,20 @@ def _weighted_avg_portfolio(positions: list[dict], field: str) -> Optional[float
 
 def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     """Seção 📊 Análise da Carteira — visível apenas quando ⭐ Carteira com posições > 0."""
+    # Preço ao vivo (yfinance) — carteira reflete o intraday; valuation segue Bolsai.
+    _tk_pos = tuple(e["ticker"] for e in enriched
+                    if int(acoes.get(e["ticker"], {}).get("qtd", 0) or 0) > 0)
+    _live = _precos_ao_vivo(_tk_pos)
     positions = []
     for e in enriched:
         t     = e["ticker"]
         en    = acoes.get(t, {})
         qtd   = int(en.get("qtd", 0) or 0)
-        price = e.get("close_price")
+        _lv   = _live.get(t)
+        price = (_lv["price"] if _lv else e.get("close_price"))
+        # variação do dia: ao vivo (preço vs fech. anterior) ou fallback Bolsai
+        _chg  = (((_lv["price"] / _lv["prev_close"] - 1) * 100)
+                 if (_lv and _lv.get("prev_close")) else e.get("daily_change_pct"))
         pm    = float(en.get("preco_medio", 0) or 0)
         if qtd > 0 and price:
             pnl_r   = (price - pm) * qtd if pm > 0 else None
@@ -5163,7 +5208,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
                 "quality":          _sc.get("quality"),
                 "price_score":      _sc.get("price"),
                 "nd_ebitda":        e.get("net_debt_ebitda"),
-                "daily_change_pct": e.get("daily_change_pct"),
+                "daily_change_pct": _chg,
                 "weight":           0.0,
             })
 
@@ -6243,6 +6288,11 @@ footer {visibility: hidden;}
     )
 
     # ── Rendimento da carteira atual → passa para painel macro ──
+    # Preço AO VIVO (yfinance) para a carteira refletir o intraday — o close_price
+    # do Bolsai é end-of-day e fica travado durante o pregão.
+    _tk_pos = tuple(e.get("ticker", "") for e in enriched
+                    if int(st.session_state.acoes.get(e.get("ticker", ""), {}).get("qtd", 0) or 0) > 0)
+    _live = _precos_ao_vivo(_tk_pos)
     _cart_valor, _cart_custo, _cart_var_dia = 0.0, 0.0, []
     for e in enriched:
         t   = e.get("ticker", "")
@@ -6250,13 +6300,16 @@ footer {visibility: hidden;}
         qtd = int(en.get("qtd", 0) or 0)
         if qtd <= 0:
             continue
-        price = e.get("close_price") or 0
+        _lv   = _live.get(t)
+        price = (_lv["price"] if _lv else e.get("close_price")) or 0
         pm    = float(en.get("preco_medio", 0) or 0)
         val   = qtd * price
         _cart_valor += val
         if pm > 0:
             _cart_custo += qtd * pm
-        chg = e.get("daily_change_pct")
+        # variação do dia: ao vivo (preço vs fech. anterior) ou fallback Bolsai
+        chg = (((_lv["price"] / _lv["prev_close"] - 1) * 100)
+               if (_lv and _lv.get("prev_close")) else e.get("daily_change_pct"))
         if chg is not None:
             _cart_var_dia.append((chg, val))
     _cart_pnl_pct   = (_cart_valor / _cart_custo - 1) * 100 if _cart_custo > 0 else None
