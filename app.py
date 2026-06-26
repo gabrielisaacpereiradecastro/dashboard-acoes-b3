@@ -2701,8 +2701,17 @@ def _show_dcf(s: dict) -> None:
                      if k in _h[0]}
             st.write("Valores de interesse (1º período):")
             st.json(_alvo)
-        st.caption(f"stock_history tem dados de preço? "
-                   f"{'sim' if (api.get_stock_history(s.get('ticker',''), limit=5) or {}).get('prices') else 'não'}")
+        st.divider()
+        _stored_ev = s.get("ev_ebitda_historico") or []
+        _stored_pl = s.get("pl_historico") or []
+        st.write(f"**ARMAZENADO no dado da ação** (o que o motor usa): "
+                 f"ev_ebitda_historico = **{len(_stored_ev)}** valores · "
+                 f"pl_historico = **{len(_stored_pl)}** valores")
+        st.caption(
+            "Se a API (acima) tem 20 mas o ARMAZENADO está em 0 → o `api.py` "
+            "rodou código antigo. Faça **Reboot completo** (não só Updated app) "
+            "e depois **Atualizar Tudo** para repopular."
+        )
 
     if sc.is_bank(sector):
         _show_gordon_growth(s)
