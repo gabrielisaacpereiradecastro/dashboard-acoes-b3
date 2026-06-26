@@ -2642,9 +2642,42 @@ def _show_cyclical_valuation(s: dict) -> None:
     )
 
 
+def _mr_caption(s: dict) -> Optional[str]:
+    """Legenda de transparência: qual múltiplo move o Potencial — reversão à média
+    (mediana histórica da própria empresa) ou fallback setorial. None p/ motores
+    que não usam reversão à média (bancos, shoppings, cíclicas, drogarias)."""
+    sector = s.get("sector", "")
+    if (sc.is_bank(sector) or _is_shopping(sector) or _is_cyclical(sector)
+            or _is_drugstore(sector)):
+        return None
+    if _is_insurer(sector):
+        serie, bounds, nome = s.get("pl_historico"), _MR_PL_BOUNDS, "P/L"
+        setorial = f"{INSURER_FAIR_PE:.0f}× (referência setorial)"
+    elif _is_utility(sector):
+        serie, bounds, nome = s.get("ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS, "EV/EBITDA"
+        setorial = f"DCF com teto de {UTILITY_FAIR_EV_EBITDA:.0f}×"
+    else:  # geral
+        serie, bounds, nome = s.get("ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS, "EV/EBITDA"
+        _m, _lbl = _geral_bucket(sector)
+        setorial = f"{_m:.0f}× ({_lbl})"
+    lo, hi = bounds
+    n_valid = len([v for v in (serie or []) if v is not None and lo <= v <= hi])
+    med = _hist_median_mult(serie, bounds)
+    if med is not None:
+        return (f"🟢 **Reversão à média ativa** — Potencial calculado com **{nome} "
+                f"{med:.1f}×**, a mediana histórica da própria empresa ({n_valid} "
+                f"trimestres). Auto-calibrante.")
+    return (f"⚪ **Fallback setorial** — histórico insuficiente p/ reversão à média "
+            f"({n_valid} trim. válidos, mín. {_MR_MIN_PONTOS}). Potencial usa "
+            f"**{setorial}**.")
+
+
 def _show_dcf(s: dict) -> None:
     """Seção de Valuation por Fluxo de Caixa Descontado (DCF)."""
     sector = s.get("sector", "")
+    _capt = _mr_caption(s)
+    if _capt:
+        st.caption(_capt)
     if sc.is_bank(sector):
         _show_gordon_growth(s)
         return
