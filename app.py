@@ -2010,18 +2010,27 @@ def _show_gordon_growth(s: dict) -> None:
 
     roe_f = roe / 100
 
-    def _gg_price(g_s: float, ke_s: float) -> Optional[float]:
-        if ke_s <= g_s:
-            return None
-        pvp_j = (roe_f - g_s) / (ke_s - g_s)
-        return max(0.0, pvp_j * vpa) if pvp_j > 0 else 0.0
+    # P/VP justificado de Gordon com guarda-corpos: piso no spread (Ke−g) e teto
+    # de P/VP evitam a explosão do modelo quando Ke≈g (denominador → 0).
+    _GG_FLOOR_SPREAD = 0.03   # spread mínimo Ke−g
+    _GG_PVP_CAP      = 4.0     # nenhum banco BR justifica P/VP > 4x via Gordon
 
+    def _gg_price(roe_s: float, g_s: float, ke_s: float) -> Optional[float]:
+        den   = max(ke_s - g_s, _GG_FLOOR_SPREAD)
+        pvp_j = min(max((roe_s - g_s) / den, 0.0), _GG_PVP_CAP)
+        return pvp_j * vpa
+
+    # Ke FIXO entre cenários: a taxa de desconto não oscila ±30% de um cenário p/
+    # outro — mover Ke e g juntos colapsava o denominador e inflava o Otimista
+    # (gerava P/VP de 6x+). Varia o que de fato é incerto num banco: o ROE
+    # sustentável (assimétrico, pois ROE alto reverte à média p/ baixo) e o
+    # crescimento de longo prazo (±1pp absoluto).
     scenarios = [
-        ("Conservador", g * 0.7, ke * 1.3, "#f44336"),
-        ("Base",        g,       ke,        "#4caf50"),
-        ("Otimista",    g * 1.3, ke * 0.7,  "#2196f3"),
+        ("Conservador", roe_f * 0.80, max(g - 0.01, 0.0), ke, "#f44336"),
+        ("Base",        roe_f,        g,                   ke, "#4caf50"),
+        ("Otimista",    roe_f * 1.05, g + 0.01,            ke, "#2196f3"),
     ]
-    prices_gg = {name: _gg_price(g_s, ke_s) for name, g_s, ke_s, _ in scenarios}
+    prices_gg = {name: _gg_price(rs, gs, ks) for name, rs, gs, ks, _ in scenarios}
 
     def _upside(p: Optional[float]) -> Optional[str]:
         # Sem parênteses para o st.metric detectar o sinal e colorir
@@ -2032,9 +2041,9 @@ def _show_gordon_growth(s: dict) -> None:
 
     c_r, c_b, c_o = st.columns(3)
     p_c, p_b, p_o = prices_gg["Conservador"], prices_gg["Base"], prices_gg["Otimista"]
-    c_r.metric("Conservador (g−30%, Ke+30%)", f"R$ {p_c:.2f}" if p_c is not None else "N/D", _upside(p_c))
-    c_b.metric("Base",                         f"R$ {p_b:.2f}" if p_b is not None else "N/D", _upside(p_b))
-    c_o.metric("Otimista (g+30%, Ke−30%)",    f"R$ {p_o:.2f}" if p_o is not None else "N/D", _upside(p_o))
+    c_r.metric("Conservador (ROE−20%, g−1pp)", f"R$ {p_c:.2f}" if p_c is not None else "N/D", _upside(p_c))
+    c_b.metric("Base",                          f"R$ {p_b:.2f}" if p_b is not None else "N/D", _upside(p_b))
+    c_o.metric("Otimista (ROE+5%, g+1pp)",     f"R$ {p_o:.2f}" if p_o is not None else "N/D", _upside(p_o))
 
     fig = go.Figure()
     names  = [n for n, *_ in scenarios]
