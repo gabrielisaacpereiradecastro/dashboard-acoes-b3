@@ -42,6 +42,9 @@ SHOPPING_KEYWORDS = getattr(
     _cfg, "SHOPPING_KEYWORDS", ["shopping", "centros comerciais"],
 )
 SHOPPING_FAIR_EV_EBITDA = getattr(_cfg, "SHOPPING_FAIR_EV_EBITDA", 10.5)
+# Teto de EV/EBITDA para o valuation de utilities — limita o estouro do DCF
+# quando o FCL de 1 ano vem inflado (capex incompleto). Ver SAPR11 (+1285%).
+UTILITY_FAIR_EV_EBITDA = getattr(_cfg, "UTILITY_FAIR_EV_EBITDA", 9.0)
 
 # ────────────────────────────────────────────────────────────────
 # Configuração da página
@@ -685,7 +688,7 @@ def _build_table(stocks: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
         elif _is_cyclical(sector):
             _target = _cyclical_base_price(s)
         elif _is_utility(sector):
-            _target = _dcf_base_price(s)
+            _target = _utility_base_price(s)
         else:
             _target = _geral_base_price(s)
         if _target is not None and _price_now and _price_now > 0:
@@ -1676,7 +1679,10 @@ def _shopping_base_price(s: dict, mult: float = SHOPPING_FAIR_EV_EBITDA) -> Opti
 # EV/EBITDA justo por sub-bucket do "Geral" (normas BR through-cycle, não
 # ajustados a um analista). Ordem importa: o primeiro match vence.
 GERAL_EV_EBITDA_BUCKETS = [
-    (["farmácia", "farmacia", "drogaria", "saúde", "saude", "médic", "medic",
+    # Drogarias = varejo de margem fina (demanda defensiva, mas não é serviço de
+    # saúde). Múltiplo menor que hospitais/diagnósticos. Vem ANTES do Saúde/Farma.
+    (["farmácia", "farmacia", "drogaria"], 9.0, "Drogarias (varejo farma)"),
+    (["saúde", "saude", "médic", "medic",
       "diagnóstic", "diagnostic", "hospital", "odonto"], 11.0, "Saúde / Farma"),
     (["bebida", "alimento", "fumo", "frigorífic", "frigorific", "proteína",
       "proteina"], 11.0, "Consumo (alimentos/bebidas)"),
@@ -1995,6 +2001,19 @@ def _dcf_base_price(s: dict, wacc: Optional[float] = None, g5: float = 0.10,
     pv += tv / (1 + wacc) ** 5
     equity_k = pv - net_debt
     return max(0.0, equity_k * 1000 / shares)
+
+
+def _utility_base_price(s: dict) -> Optional[float]:
+    """Preço justo de utility = min(DCF, EV/EBITDA a UTILITY_FAIR_EV_EBITDA).
+
+    O teto por EV/EBITDA evita o estouro do DCF quando o FCL de um único ano vem
+    inflado (capex incompleto na DFC) — caso SAPR11, que dava +1285% via DCF puro.
+    Quando o DCF é razoável (abaixo do teto), ele prevalece.
+    """
+    dcf = _dcf_base_price(s)
+    cap = _ev_ebitda_price(s, UTILITY_FAIR_EV_EBITDA)
+    vals = [v for v in (dcf, cap) if v is not None]
+    return min(vals) if vals else None
 
 
 def _gordon_base_price(s: dict, g: Optional[float] = None) -> Optional[float]:
@@ -5709,7 +5728,7 @@ def _target_price(s: dict) -> Optional[float]:
     if _is_cyclical(sector):
         return _cyclical_base_price(s)
     if _is_utility(sector):
-        return _dcf_base_price(s)
+        return _utility_base_price(s)
     return _geral_base_price(s)
 
 
