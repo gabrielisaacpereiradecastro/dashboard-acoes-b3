@@ -1311,7 +1311,7 @@ def _show_macro_panel() -> None:
             _pnl_col = "#34d399" if (_cp or 0) >= 0 else "#f87171"
             _vd_col  = "#34d399" if (_cvd or 0) >= 0 else "#f87171"
             st.markdown(
-                f"R$ {_cv:,.0f}<br>"
+                f"R$ {_cv:,.0f}".replace(",", ".") + "<br>"
                 f"<span style='color:{_pnl_col};font-size:0.85rem'>"
                 f"{'↑' if (_cp or 0) >= 0 else '↓'} {abs(_cp):.1f}% total</span>",
                 unsafe_allow_html=True,
