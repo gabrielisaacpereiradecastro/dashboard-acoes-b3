@@ -72,7 +72,7 @@ st.set_page_config(
 DATA_FILE = Path("acoes_salvas.json")
 TZ_BSB    = timezone(timedelta(hours=-3))
 LISTAS_PADRAO = ["⭐ Carteira", "👁 Watchlist", "🔍 Pesquisa"]
-USUARIOS = ["Gabriel", "Bolivar", "Danilo"]
+USUARIOS = ["Gabriel", "Bolivar", "Danilo", "Fabio"]
 
 def _now_bsb() -> datetime:
     return datetime.now(TZ_BSB)
