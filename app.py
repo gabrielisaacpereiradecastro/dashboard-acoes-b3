@@ -62,9 +62,10 @@ _MR_PL_BOUNDS       = getattr(_cfg, "MR_PL_BOUNDS", (3.0, 45.0))
 # ────────────────────────────────────────────────────────────────
 # Configuração da página
 # ────────────────────────────────────────────────────────────────
+_FAVICON = Path(__file__).parent / "favicon.svg"
 st.set_page_config(
     page_title="Análise Fundamentalista B3",
-    page_icon="📈",
+    page_icon=str(_FAVICON) if _FAVICON.exists() else "📈",  # favicon esmeralda da marca
     layout="wide",
     initial_sidebar_state="expanded",
 )
