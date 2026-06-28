@@ -64,7 +64,7 @@ _MR_PL_BOUNDS       = getattr(_cfg, "MR_PL_BOUNDS", (3.0, 45.0))
 # ────────────────────────────────────────────────────────────────
 _FAVICON = Path(__file__).parent / "favicon.svg"
 st.set_page_config(
-    page_title="Análise Fundamentalista B3",
+    page_title="Valor B3 — Análise Fundamentalista",
     page_icon=str(_FAVICON) if _FAVICON.exists() else "📈",  # favicon esmeralda da marca
     layout="wide",
     initial_sidebar_state="expanded",
@@ -3893,7 +3893,7 @@ def _tela_selecao_usuario() -> None:
             "fill='none' stroke='#34d399' stroke-width='2' stroke-linecap='round' "
             "stroke-linejoin='round'><path d='M3 17l6 -6l4 4l8 -8'/>"
             "<path d='M14 7l7 0l0 7'/></svg></div>"
-            "<h1 style='margin:0;font-size:2.1rem;letter-spacing:-0.02em'>Análise Fundamentalista B3</h1>"
+            "<h1 style='margin:0;font-size:2.4rem;letter-spacing:-0.02em'>Valor B3</h1>"
             "<p style='color:#8b94a7;margin:12px 0 0;font-size:1.02rem'>"
             "Ações e FIIs · scores de qualidade e preço · valuation por setor · alertas</p>"
             "</div>", unsafe_allow_html=True)
@@ -4133,7 +4133,7 @@ def _sidebar():
                 st.session_state.pop(_k, None)
             st.rerun()
 
-        st.markdown("# 📈 Análise B3")
+        st.markdown("# Valor B3")
         st.caption("Análise fundamentalista de ações brasileiras")
 
         # ── Navegação por área ─────────────────────────────────
