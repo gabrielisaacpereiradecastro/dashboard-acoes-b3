@@ -6430,7 +6430,7 @@ def _show_proventos_area() -> None:
             for _it in _data["payments"]:
                 _dt = _it["pay"] or _it["ex"]   # FII não tem payment_date → usa data-com
                 if _dt and _dt >= _hoje:
-                    _prox.append({"Ticker": _t, "Pagamento": _dt,
+                    _prox.append({"Ticker": _t, "Classe": _cls, "Pagamento": _dt,
                                   "Tipo": _it["type"] or ("Rendimento" if _cls == "FII" else "—"),
                                   "Valor/cota": _it["value"], "Renda (R$)": _it["value"] * _q})
                 _mk = (_dt or "")[:7]   # YYYY-MM (pagamento ou data-com)
@@ -6485,7 +6485,40 @@ def _show_proventos_area() -> None:
     # Próximos pagamentos
     if _prox:
         st.markdown("#### Próximos pagamentos anunciados")
+
+        # Gráfico: renda futura JÁ ANUNCIADA por mês (empilhado Ações + FIIs)
+        _fut = {}
+        for _p in _prox:
+            _k = _p["Pagamento"][:7]   # YYYY-MM
+            _fut.setdefault(_k, {"Ação": 0.0, "FII": 0.0})
+            _fut[_k][_p["Classe"]] += _p["Renda (R$)"]
+        _fmeses = sorted(_fut.keys())
+        if _fmeses:
+            _flbl = [f"{_m[5:7]}/{_m[2:4]}" for _m in _fmeses]   # MM/AA
+            _fa = [_fut[_m]["Ação"] for _m in _fmeses]
+            _ff = [_fut[_m]["FII"] for _m in _fmeses]
+            _ftot = sum(_fa) + sum(_ff)
+            figf = go.Figure()
+            figf.add_trace(go.Bar(x=_flbl, y=_fa, name="Ações", marker_color="#34d399",
+                                  hovertemplate="Ações: R$ %{y:.0f}<extra></extra>"))
+            figf.add_trace(go.Bar(x=_flbl, y=_ff, name="FIIs", marker_color="#7dd3fc",
+                                  hovertemplate="FIIs: R$ %{y:.0f}<extra></extra>"))
+            figf.update_layout(
+                barmode="stack", height=300, margin=dict(l=0, r=0, t=28, b=0),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                xaxis=dict(color="#9e9e9e", type="category"),
+                yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)", tickprefix="R$ "),
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#c8cce0"),
+                            orientation="h", y=1.06, x=0))
+            st.plotly_chart(figf, width="stretch", config={"displayModeBar": False})
+            st.caption(
+                f"Soma **R$ {_ftot:,.0f}".replace(",", ".") +
+                "** em proventos **já anunciados** (não é projeção). O horizonte é curto — "
+                "FIIs costumam anunciar só o rendimento do mês seguinte; ações concentram "
+                "JCP/dividendos em algumas datas.")
+
         _pdf = pd.DataFrame(sorted(_prox, key=lambda d: d["Pagamento"]))
+        _pdf = _pdf.drop(columns=["Classe"])   # coluna auxiliar só p/ o gráfico
         _pdf["Valor/cota"] = _pdf["Valor/cota"].map(lambda v: f"R$ {v:.4f}".rstrip("0").rstrip("."))
         _pdf["Renda (R$)"] = _pdf["Renda (R$)"].map(lambda v: f"R$ {v:,.0f}".replace(",", "."))
         st.dataframe(_pdf, width="stretch", hide_index=True)
@@ -6762,8 +6795,11 @@ div[data-testid="stPopover"] button:hover {
             "**⚖️ Comparar** para o radar. A consolidação das suas posições está em **📊 Carteira**."
         )
 
-        # Ordenação confiável (server-side) — útil p/ agrupar por setor.
+        # Ordenação confiável (server-side) — clicar no cabeçalho ordena a string
+        # (texto N/A/N/D), então a ordem correta vem por aqui.
         _sort_opts = {
+            "Potencial ↓": (lambda e: e.get("_pot") if e.get("_pot") is not None else -9e9, True),
+            "Potencial ↑": (lambda e: e.get("_pot") if e.get("_pot") is not None else 9e9, False),
             "Qualidade ↓": (lambda e: (e.get("scores") or {}).get("quality") or -1, True),
             "Preço ↓":     (lambda e: (e.get("scores") or {}).get("price") or -1, True),
             "Setor (A-Z)": (lambda e: (e.get("sector") or "").lower(), False),
@@ -6774,6 +6810,13 @@ div[data-testid="stPopover"] button:hover {
         _sc1, _ = st.columns([2, 4])
         _sort_sel = _sc1.selectbox("Ordenar por", list(_sort_opts.keys()),
                                    key="tabela_sort", label_visibility="collapsed")
+        # Potencial só é computado quando esse sort está ativo (custo só quando preciso)
+        if _sort_sel.startswith("Potencial"):
+            for _e in enriched:
+                _tg = _target_price(_e)
+                _px = _e.get("close_price")
+                _e["_pot"] = ((_tg / _px - 1) * 100
+                              if (_tg is not None and _px and _px > 0) else None)
         _key, _rev = _sort_opts[_sort_sel]
         enriched = sorted(enriched, key=_key, reverse=_rev)
 
