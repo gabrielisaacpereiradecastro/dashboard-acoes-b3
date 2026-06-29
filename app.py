@@ -6341,16 +6341,17 @@ def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0,
     # Resumo anual (R$/cota)
     if annual:
         _anos = list(annual.items())[:6][::-1]
+        st.markdown("**Proventos por ano (R$/cota)**")
         fig = go.Figure(go.Bar(
-            x=[a for a, _ in _anos], y=[v for _, v in _anos],
+            x=[str(a) for a, _ in _anos], y=[v for _, v in _anos],
             marker_color="#34d399", text=[f"R$ {v:.2f}" for _, v in _anos],
             textposition="outside"))
-        fig.update_layout(height=200, margin=dict(l=0, r=0, t=10, b=0),
+        fig.update_layout(height=210, margin=dict(l=0, r=0, t=12, b=0),
                           paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                           yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)"),
-                          xaxis=dict(color="#9e9e9e"), showlegend=False,
-                          title=dict(text="Proventos por ano (R$/cota)",
-                                     font=dict(size=12, color="#e8eaf6")))
+                          # eixo categórico: ano é rótulo, não número (evita 2024,6/2025,2)
+                          xaxis=dict(color="#9e9e9e", type="category"),
+                          bargap=0.55, showlegend=False)
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     # Histórico de pagamentos
