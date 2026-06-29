@@ -6336,6 +6336,13 @@ def _show_proventos_area() -> None:
                 "(ações) ou na Carteira de FIIs para ver sua renda passiva.")
         return
 
+    _n_acao = sum(1 for _c, *_r in _pos if _c == "Ação")
+    _n_fii = sum(1 for _c, *_r in _pos if _c == "FII")
+    st.caption(
+        f"Considerando **{_n_acao} açõe(s)** e **{_n_fii} FII(s)** com quantidade na ⭐ Carteira."
+        + ("" if _n_fii else "  ⚠️ Nenhum FII com qtd — defina as quantidades na "
+                             "**Carteira de FIIs** (aba 📊 Carteira) para incluí-los aqui."))
+
     _rows = []
     _renda_total = _custo_total = 0.0
     _prox = []   # próximos pagamentos
@@ -6391,6 +6398,7 @@ def _show_proventos_area() -> None:
     if sum(_tot) > 0:
         _media = sum(_tot) / len(_tot)
         _lbl = [f"{_m[5:7]}/{_m[2:4]}" for _m in _meses]   # MM/AA
+        st.markdown("#### Proventos recebidos por mês (últimos 12 meses)")
         fig = go.Figure()
         fig.add_trace(go.Bar(x=_lbl, y=_acao, name="Ações", marker_color="#34d399",
                              hovertemplate="Ações: R$ %{y:.0f}<extra></extra>"))
@@ -6400,14 +6408,12 @@ def _show_proventos_area() -> None:
                       annotation_text=f"Média: R$ {_media:,.0f}".replace(",", "."),
                       annotation_position="top left", annotation_font_color="#fbbf24")
         fig.update_layout(
-            barmode="stack", height=320, margin=dict(l=0, r=0, t=34, b=0),
+            barmode="stack", height=320, margin=dict(l=0, r=0, t=28, b=0),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             xaxis=dict(color="#9e9e9e"),
             yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)", tickprefix="R$ "),
             legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#c8cce0"),
-                        orientation="h", y=1.14, x=0),
-            title=dict(text="Proventos recebidos por mês (últimos 12 meses)",
-                       font=dict(size=13, color="#e8eaf6")))
+                        orientation="h", y=1.06, x=0))
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
         st.caption("Barras empilham **Ações + FIIs** por mês; a linha tracejada é a "
                    "**média mensal**. Meses acima da linha superaram a média — útil pra ver "
