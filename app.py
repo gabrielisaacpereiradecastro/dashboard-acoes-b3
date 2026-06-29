@@ -1863,17 +1863,31 @@ def _geral_bucket(sector: str) -> tuple[float, str]:
     return GERAL_EV_EBITDA_DEFAULT, "Geral (default)"
 
 
+# P/L "justo" de fallback quando o EBITDA é inutilizável (nulo/negativo) mas há
+# lucro líquido positivo — média de mercado, conservador (não aposta crescimento).
+_GERAL_FALLBACK_PE = 12.0
+
+
 def _geral_base_price(s: dict) -> Optional[float]:
     """Preço justo para empresas 'gerais' — EV/EBITDA.
 
     1º: reversão à média (EV/EBITDA mediano histórico da própria empresa) —
     captura o prêmio/desconto estrutural de cada nome (ex.: WEGE3 ~22×). Se o
     histórico for curto/distorcido, cai no múltiplo do sub-bucket setorial.
+    2º (fallback): quando o EBITDA é nulo/negativo (ex.: MLAS3), usa P/L × LPA com
+    P/L de mercado — desde que haja lucro líquido positivo. Sem lucro → N/D (não há
+    base de múltiplo: empresa sem geração operacional não se avalia assim).
     """
     mult = _hist_median_mult(_hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS)
     if mult is None:
         mult, _ = _geral_bucket(s.get("sector", ""))
-    return _ev_ebitda_price(s, mult)
+    preco = _ev_ebitda_price(s, mult)
+    if preco is not None:
+        return preco
+    lpa = s.get("lpa")
+    if lpa and lpa > 0:
+        return max(0.0, _GERAL_FALLBACK_PE * lpa)
+    return None
 
 
 def _growth_context(s: dict, fair_mult: Optional[float]) -> Optional[str]:
