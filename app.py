@@ -4698,7 +4698,7 @@ def _show_fii_detail(fii: dict) -> None:
     st.subheader("Proventos")
     _show_proventos_ativo(fii.get("ticker", ""),
                           preco_medio=float(fii.get("preco_medio", 0) or 0),
-                          qtd=int(fii.get("qtd", 0) or 0), is_fii=True, debug=True)
+                          qtd=int(fii.get("qtd", 0) or 0), is_fii=True)
 
 
 @st.cache_data(ttl=1800)
@@ -6320,26 +6320,12 @@ def _fetch_dividends(ticker: str, is_fii: bool = False) -> dict:
 
 
 def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0,
-                          is_fii: bool = False, debug: bool = False) -> None:
+                          is_fii: bool = False) -> None:
     """Visão de proventos de UM ativo (usada no Detalhe de ação e FII)."""
     data = _fetch_dividends(ticker, is_fii=is_fii)
     ttm = data["ttm"]
     pays = data["payments"]
     annual = data["annual"]
-    if debug and is_fii:
-        with st.expander("🔧 [debug] distribuições do FII"):
-            try:
-                _d1 = api.get_fii_distributions(ticker)
-            except Exception as _e:
-                _d1 = f"erro: {_e}"
-            st.write("get_fii_distributions → tipo:", type(_d1).__name__)
-            if isinstance(_d1, dict):
-                st.write("chaves:", list(_d1.keys()))
-                _p = _d1.get("payments") or _d1.get("distributions")
-                st.write("1º item:", _p[0] if isinstance(_p, list) and _p else _p)
-            else:
-                st.write(_d1)
-            st.write(f"→ parseado: ttm={ttm}, {len(pays)} pagamentos")
     if ttm <= 0 and not pays:
         st.caption("Sem histórico de proventos para este ativo (ou a API não retornou).")
         return
@@ -6441,11 +6427,12 @@ def _show_proventos_area() -> None:
                 "YoC": (_ttm / _pm * 100) if _pm > 0 else None,
             })
             for _it in _data["payments"]:
-                if _it["pay"] and _it["pay"] >= _hoje:
-                    _prox.append({"Ticker": _t, "Pagamento": _it["pay"],
+                _dt = _it["pay"] or _it["ex"]   # FII não tem payment_date → usa data-com
+                if _dt and _dt >= _hoje:
+                    _prox.append({"Ticker": _t, "Pagamento": _dt,
                                   "Tipo": _it["type"] or "—",
                                   "Valor/cota": _it["value"], "Renda (R$)": _it["value"] * _q})
-                _mk = (_it["pay"] or "")[:7]   # YYYY-MM do pagamento
+                _mk = (_dt or "")[:7]   # YYYY-MM (pagamento ou data-com)
                 if _mk in _mensal:
                     _mensal[_mk][_cls] += _it["value"] * _q
 
