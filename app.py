@@ -3314,7 +3314,7 @@ def _show_detail(s: dict):
     _tk = s.get("ticker", "")
     _en = st.session_state.acoes.get(_tk, {})
     _show_proventos_ativo(_tk, preco_medio=float(_en.get("preco_medio", 0) or 0),
-                          qtd=int(_en.get("qtd", 0) or 0), debug=True)
+                          qtd=int(_en.get("qtd", 0) or 0))
 
     # ── Indicadores informativos ────────────────────────────────
     st.divider()
@@ -4698,7 +4698,7 @@ def _show_fii_detail(fii: dict) -> None:
     st.subheader("Proventos")
     _show_proventos_ativo(fii.get("ticker", ""),
                           preco_medio=float(fii.get("preco_medio", 0) or 0),
-                          qtd=int(fii.get("qtd", 0) or 0), debug=True)
+                          qtd=int(fii.get("qtd", 0) or 0))
 
 
 @st.cache_data(ttl=1800)
@@ -6233,8 +6233,8 @@ def _fetch_dividends(ticker: str) -> dict:
         for it in _as:
             if isinstance(it, dict):
                 _yr = str(it.get("year") or it.get("ano") or str(it.get("date", ""))[:4])
-                _tot = next((it[c] for c in ("total", "value", "amount", "sum")
-                             if it.get(c) is not None), None)
+                _tot = next((it[c] for c in ("total_per_share", "total", "value",
+                                             "amount", "sum") if it.get(c) is not None), None)
                 try:
                     annual[_yr] = float(_tot)
                 except (TypeError, ValueError):
@@ -6268,28 +6268,12 @@ def _fetch_dividends(ticker: str) -> dict:
             "annual": dict(sorted(annual.items(), reverse=True)), "payments": pays}
 
 
-def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0,
-                          debug: bool = False) -> None:
+def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0) -> None:
     """Visão de proventos de UM ativo (usada no Detalhe de ação e FII)."""
     data = _fetch_dividends(ticker)
     ttm = data["ttm"]
     pays = data["payments"]
     annual = data["annual"]
-    if debug:
-        with st.expander("🔧 [debug] estrutura de get_dividends"):
-            try:
-                _raw = api.get_dividends(ticker)
-            except Exception as _e:
-                _raw = None
-                st.write("erro:", _e)
-            if isinstance(_raw, dict):
-                st.write("chaves:", list(_raw.keys()))
-                st.write("ttm_per_share:", _raw.get("ttm_per_share"))
-                st.write("annual_summary:", _raw.get("annual_summary"))
-                _p = _raw.get("payments")
-                st.write("payments[0]:", _p[0] if isinstance(_p, list) and _p else _p)
-            st.write(f"→ parseado: ttm={ttm}, {len(pays)} pagamentos, {len(annual)} anos")
-
     if ttm <= 0 and not pays:
         st.caption("Sem histórico de proventos para este ativo (ou a API não retornou).")
         return
