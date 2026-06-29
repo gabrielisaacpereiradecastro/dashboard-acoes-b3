@@ -288,6 +288,12 @@ def get_fii(ticker: str) -> Optional[dict]:
     return _get(f"fiis/{ticker.upper()}")
 
 
+def get_fii_distributions(ticker: str) -> Optional[dict]:
+    """GET /fiis/{ticker}/distributions — histórico de rendimentos do FII (Pro).
+    Estrutura confirmada ao vivo via debug; parser no app é flexível."""
+    return _get(f"fiis/{ticker.upper()}/distributions")
+
+
 def get_fii_screener(limit: int = 20, **filters) -> Optional[dict]:
     """GET /fiis/screener — screener de FIIs."""
     params: dict = {"limit": limit}

@@ -4698,7 +4698,7 @@ def _show_fii_detail(fii: dict) -> None:
     st.subheader("Proventos")
     _show_proventos_ativo(fii.get("ticker", ""),
                           preco_medio=float(fii.get("preco_medio", 0) or 0),
-                          qtd=int(fii.get("qtd", 0) or 0))
+                          qtd=int(fii.get("qtd", 0) or 0), is_fii=True, debug=True)
 
 
 @st.cache_data(ttl=1800)
@@ -5015,6 +5015,9 @@ def _show_fii_tabela(fiis_atuais: dict) -> None:
             _ri = _ev.selection.rows[0]
             if _ri < len(_tickers_ord):
                 st.session_state.selected_fii = _tickers_ord[_ri]
+                # Sincroniza a key do selectbox do Detalhe (senão o widget mantém
+                # o valor antigo e ignora o index → abria sempre o 1º FII).
+                st.session_state["fii_detalhe_sel"] = _tickers_ord[_ri]
                 st.info(f"**{_tickers_ord[_ri]}** selecionado. "
                         "Veja o detalhamento na aba **🔍 Detalhe**.")
         st.caption("**Qualidade** e **Preço\\*** = scores 0–100 (Preço\\* alto = mais "
@@ -5033,11 +5036,14 @@ def _show_fii_detail_tab(fiis_atuais: dict) -> None:
         st.info("Adicione um FII na aba 📋 Tabela para ver o detalhe.")
     else:
         try:
-            _det_default = (_det_tickers.index(st.session_state.selected_fii)
-                            if st.session_state.selected_fii in _det_tickers else 0)
+            # Pré-semeia a key do selectbox (evita conflito index+key e respeita a
+            # seleção vinda da Tabela). Reseta se o FII salvo saiu da lista.
+            if st.session_state.get("fii_detalhe_sel") not in _det_tickers:
+                st.session_state["fii_detalhe_sel"] = (
+                    st.session_state.selected_fii
+                    if st.session_state.selected_fii in _det_tickers else _det_tickers[0])
             _det_chosen = st.selectbox(
-                "Selecione o FII", _det_tickers, index=_det_default,
-                key="fii_detalhe_sel",
+                "Selecione o FII", _det_tickers, key="fii_detalhe_sel",
                 format_func=lambda t: f"{t} — {fiis_atuais.get(t, {}).get('name', '')}",
             )
             st.session_state.selected_fii = _det_chosen
@@ -6219,15 +6225,28 @@ def _show_alert_banner(resultados: list[dict]) -> None:
 # ────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=21600, show_spinner=False)   # 6h
-def _fetch_dividends(ticker: str) -> dict:
-    """Proventos via Bolsai (get_dividends). Estrutura real:
-    {ticker, dividend_yield_ttm, ttm_per_share, current_price, total_payments,
-    annual_summary, payments}. Funciona p/ ações E FIIs (mesmo endpoint).
+def _fetch_dividends(ticker: str, is_fii: bool = False) -> dict:
+    """Proventos via Bolsai. Ações → /dividends/{t} (ttm_per_share/annual/payments).
+    FIIs → /fiis/{t}/distributions (com fallback p/ /dividends). Parser flexível.
     Retorna {'ttm','dy_ttm','annual':{ano:total},'payments':[{value,ex,pay,type}]}."""
-    try:
-        raw = api.get_dividends(ticker)
-    except Exception:
-        raw = None
+    raw = None
+    if is_fii:
+        try:
+            raw = api.get_fii_distributions(ticker)
+        except Exception:
+            raw = None
+        if not (isinstance(raw, dict) and (raw.get("payments") or raw.get("distributions")
+                                           or raw.get("ttm_per_share"))) \
+                and not isinstance(raw, list):
+            try:
+                raw = api.get_dividends(ticker) or raw
+            except Exception:
+                pass
+    else:
+        try:
+            raw = api.get_dividends(ticker)
+        except Exception:
+            raw = None
     if not isinstance(raw, dict):
         raw = {"payments": raw if isinstance(raw, list) else []}
 
@@ -6260,7 +6279,8 @@ def _fetch_dividends(ticker: str) -> dict:
 
     # payments → lista normalizada (campos flexíveis)
     pays = []
-    _pl = raw.get("payments") or raw.get("dividends") or raw.get("data") or []
+    _pl = (raw.get("payments") or raw.get("distributions") or raw.get("dividends")
+           or raw.get("data") or raw.get("history") or [])
     for it in (_pl if isinstance(_pl, list) else []):
         if not isinstance(it, dict):
             continue
@@ -6282,16 +6302,44 @@ def _fetch_dividends(ticker: str) -> dict:
         pays.append({"value": val, "ex": str(ex)[:10], "pay": str(pay)[:10],
                      "type": str(typ).strip()})
     pays.sort(key=lambda d: (d["pay"] or d["ex"] or ""), reverse=True)
+
+    # TTM: se a API não trouxe ttm_per_share (ex.: FII), soma os pagamentos dos
+    # últimos 365 dias. Mesmo p/ o annual, se vazio, monta a partir dos pagamentos.
+    if ttm <= 0 and pays:
+        from datetime import date, timedelta
+        _lim = (date.today() - timedelta(days=365)).isoformat()
+        ttm = sum(p["value"] for p in pays if (p["pay"] or p["ex"]) >= _lim)
+    if not annual and pays:
+        for p in pays:
+            _d = p["pay"] or p["ex"]
+            if _d and len(_d) >= 4:
+                annual[_d[:4]] = annual.get(_d[:4], 0.0) + p["value"]
+
     return {"ttm": ttm, "dy_ttm": dy,
             "annual": dict(sorted(annual.items(), reverse=True)), "payments": pays}
 
 
-def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0) -> None:
+def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0,
+                          is_fii: bool = False, debug: bool = False) -> None:
     """Visão de proventos de UM ativo (usada no Detalhe de ação e FII)."""
-    data = _fetch_dividends(ticker)
+    data = _fetch_dividends(ticker, is_fii=is_fii)
     ttm = data["ttm"]
     pays = data["payments"]
     annual = data["annual"]
+    if debug and is_fii:
+        with st.expander("🔧 [debug] distribuições do FII"):
+            try:
+                _d1 = api.get_fii_distributions(ticker)
+            except Exception as _e:
+                _d1 = f"erro: {_e}"
+            st.write("get_fii_distributions → tipo:", type(_d1).__name__)
+            if isinstance(_d1, dict):
+                st.write("chaves:", list(_d1.keys()))
+                _p = _d1.get("payments") or _d1.get("distributions")
+                st.write("1º item:", _p[0] if isinstance(_p, list) and _p else _p)
+            else:
+                st.write(_d1)
+            st.write(f"→ parseado: ttm={ttm}, {len(pays)} pagamentos")
     if ttm <= 0 and not pays:
         st.caption("Sem histórico de proventos para este ativo (ou a API não retornou).")
         return
@@ -6380,7 +6428,7 @@ def _show_proventos_area() -> None:
 
     with st.spinner("Buscando proventos das posições…"):
         for _cls, _t, _q, _pm in _pos:
-            _data = _fetch_dividends(_t)
+            _data = _fetch_dividends(_t, is_fii=(_cls == "FII"))
             _ttm = _data["ttm"]
             _renda = _ttm * _q
             _renda_total += _renda
