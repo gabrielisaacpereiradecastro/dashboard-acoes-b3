@@ -6201,28 +6201,53 @@ def _show_alert_banner(resultados: list[dict]) -> None:
 # ────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=21600, show_spinner=False)   # 6h
-def _fetch_dividends(ticker: str) -> list:
-    """Histórico de proventos via Bolsai (get_dividends). Parser FLEXÍVEL — o
-    formato exato é confirmado ao vivo (debug). Retorna lista de
-    {'value','ex','pay','type'} ordenada do mais recente p/ o mais antigo."""
+def _fetch_dividends(ticker: str) -> dict:
+    """Proventos via Bolsai (get_dividends). Estrutura real:
+    {ticker, dividend_yield_ttm, ttm_per_share, current_price, total_payments,
+    annual_summary, payments}. Funciona p/ ações E FIIs (mesmo endpoint).
+    Retorna {'ttm','dy_ttm','annual':{ano:total},'payments':[{value,ex,pay,type}]}."""
     try:
         raw = api.get_dividends(ticker)
     except Exception:
-        return []
-    items = []
-    if isinstance(raw, list):
-        items = raw
-    elif isinstance(raw, dict):
-        for _k in ("dividends", "data", "events", "results", "proventos",
-                   "distributions", "history"):
-            if isinstance(raw.get(_k), list):
-                items = raw[_k]
-                break
-    out = []
-    for it in items:
+        raw = None
+    if not isinstance(raw, dict):
+        raw = {"payments": raw if isinstance(raw, list) else []}
+
+    try:
+        ttm = float(raw.get("ttm_per_share") or 0.0)
+    except (TypeError, ValueError):
+        ttm = 0.0
+    dy = raw.get("dividend_yield_ttm")
+
+    # annual_summary → {ano: total} (aceita dict {ano:total|{...}} ou lista)
+    annual: dict = {}
+    _as = raw.get("annual_summary")
+    if isinstance(_as, dict):
+        for k, v in _as.items():
+            _v = v.get("total") if isinstance(v, dict) else v
+            try:
+                annual[str(k)] = float(_v)
+            except (TypeError, ValueError):
+                pass
+    elif isinstance(_as, list):
+        for it in _as:
+            if isinstance(it, dict):
+                _yr = str(it.get("year") or it.get("ano") or str(it.get("date", ""))[:4])
+                _tot = next((it[c] for c in ("total", "value", "amount", "sum")
+                             if it.get(c) is not None), None)
+                try:
+                    annual[_yr] = float(_tot)
+                except (TypeError, ValueError):
+                    pass
+
+    # payments → lista normalizada (campos flexíveis)
+    pays = []
+    _pl = raw.get("payments") or raw.get("dividends") or raw.get("data") or []
+    for it in (_pl if isinstance(_pl, list) else []):
         if not isinstance(it, dict):
             continue
-        val = next((it[k] for k in ("value", "amount", "valor", "rate", "value_per_share")
+        val = next((it[k] for k in ("value", "amount", "valor", "rate",
+                                    "value_per_share", "per_share")
                     if it.get(k) is not None), None)
         if val is None:
             continue
@@ -6236,52 +6261,39 @@ def _fetch_dividends(ticker: str) -> list:
                                     "paid_at", "payment") if it.get(k)), "")
         typ = next((it[k] for k in ("type", "tipo", "event_type", "label", "kind")
                     if it.get(k)), "")
-        out.append({"value": val, "ex": str(ex)[:10], "pay": str(pay)[:10],
-                    "type": str(typ).strip()})
-    out.sort(key=lambda d: (d["pay"] or d["ex"] or ""), reverse=True)
-    return out
-
-
-def _proventos_resumo(items: list) -> dict:
-    """Total por ano + total TTM (últimos 365 dias, pela data de pagamento/com)."""
-    from datetime import date, timedelta
-    por_ano: dict = {}
-    ttm = 0.0
-    _lim = date.today() - timedelta(days=365)
-    for it in items:
-        d = it["pay"] or it["ex"]
-        if not d or len(d) < 4:
-            continue
-        por_ano[d[:4]] = por_ano.get(d[:4], 0.0) + it["value"]
-        try:
-            if date.fromisoformat(d[:10]) >= _lim:
-                ttm += it["value"]
-        except ValueError:
-            pass
-    return {"por_ano": dict(sorted(por_ano.items(), reverse=True)), "ttm": ttm}
+        pays.append({"value": val, "ex": str(ex)[:10], "pay": str(pay)[:10],
+                     "type": str(typ).strip()})
+    pays.sort(key=lambda d: (d["pay"] or d["ex"] or ""), reverse=True)
+    return {"ttm": ttm, "dy_ttm": dy,
+            "annual": dict(sorted(annual.items(), reverse=True)), "payments": pays}
 
 
 def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0,
                           debug: bool = False) -> None:
     """Visão de proventos de UM ativo (usada no Detalhe de ação e FII)."""
-    items = _fetch_dividends(ticker)
+    data = _fetch_dividends(ticker)
+    ttm = data["ttm"]
+    pays = data["payments"]
+    annual = data["annual"]
     if debug:
-        with st.expander("🔧 [debug] retorno bruto de get_dividends"):
-            _raw = None
+        with st.expander("🔧 [debug] estrutura de get_dividends"):
             try:
                 _raw = api.get_dividends(ticker)
             except Exception as _e:
+                _raw = None
                 st.write("erro:", _e)
-            st.write("tipo:", type(_raw).__name__)
             if isinstance(_raw, dict):
                 st.write("chaves:", list(_raw.keys()))
-            st.json(_raw if _raw is not None else {}, expanded=False)
-            st.write(f"parseados: {len(items)} proventos")
-    if not items:
+                st.write("ttm_per_share:", _raw.get("ttm_per_share"))
+                st.write("annual_summary:", _raw.get("annual_summary"))
+                _p = _raw.get("payments")
+                st.write("payments[0]:", _p[0] if isinstance(_p, list) and _p else _p)
+            st.write(f"→ parseado: ttm={ttm}, {len(pays)} pagamentos, {len(annual)} anos")
+
+    if ttm <= 0 and not pays:
         st.caption("Sem histórico de proventos para este ativo (ou a API não retornou).")
         return
-    resumo = _proventos_resumo(items)
-    ttm = resumo["ttm"]
+
     c1, c2, c3 = st.columns(3)
     c1.metric("Provento 12m / cota", f"R$ {ttm:.4f}".rstrip("0").rstrip("."))
     if preco_medio and preco_medio > 0:
@@ -6289,9 +6301,10 @@ def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0,
                   help="Provento dos últimos 12m ÷ seu preço médio.")
     if qtd > 0:
         c3.metric("Renda anual estim.", f"R$ {ttm * qtd:,.0f}".replace(",", "."))
-    # Resumo anual
-    if resumo["por_ano"]:
-        _anos = list(resumo["por_ano"].items())[:6][::-1]
+
+    # Resumo anual (R$/cota)
+    if annual:
+        _anos = list(annual.items())[:6][::-1]
         fig = go.Figure(go.Bar(
             x=[a for a, _ in _anos], y=[v for _, v in _anos],
             marker_color="#34d399", text=[f"R$ {v:.2f}" for _, v in _anos],
@@ -6303,15 +6316,17 @@ def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0,
                           title=dict(text="Proventos por ano (R$/cota)",
                                      font=dict(size=12, color="#e8eaf6")))
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-    # Histórico
-    _df = pd.DataFrame([{
-        "Tipo": it["type"] or "—",
-        "Data-com": it["ex"] or "—",
-        "Pagamento": it["pay"] or "—",
-        "Valor/cota": f"R$ {it['value']:.4f}".rstrip("0").rstrip("."),
-    } for it in items[:30]])
-    st.dataframe(_df, width="stretch", hide_index=True,
-                 height=min(42 + 35 * len(_df), 420))
+
+    # Histórico de pagamentos
+    if pays:
+        _df = pd.DataFrame([{
+            "Tipo": it["type"] or "—",
+            "Data-com": it["ex"] or "—",
+            "Pagamento": it["pay"] or "—",
+            "Valor/cota": f"R$ {it['value']:.4f}".rstrip("0").rstrip("."),
+        } for it in pays[:30]])
+        st.dataframe(_df, width="stretch", hide_index=True,
+                     height=min(42 + 35 * len(_df), 420))
 
 
 def _show_proventos_area() -> None:
@@ -6344,8 +6359,8 @@ def _show_proventos_area() -> None:
     _hoje = _date.today().isoformat()
     with st.spinner("Buscando proventos das posições…"):
         for _cls, _t, _q, _pm in _pos:
-            _items = _fetch_dividends(_t)
-            _ttm = _proventos_resumo(_items)["ttm"]
+            _data = _fetch_dividends(_t)
+            _ttm = _data["ttm"]
             _renda = _ttm * _q
             _renda_total += _renda
             if _pm > 0:
@@ -6356,7 +6371,7 @@ def _show_proventos_area() -> None:
                 "Renda anual (R$)": _renda,
                 "YoC": (_ttm / _pm * 100) if _pm > 0 else None,
             })
-            for _it in _items:
+            for _it in _data["payments"]:
                 if _it["pay"] and _it["pay"] >= _hoje:
                     _prox.append({"Ticker": _t, "Pagamento": _it["pay"],
                                   "Tipo": _it["type"] or "—",
