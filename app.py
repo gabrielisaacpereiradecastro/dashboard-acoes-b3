@@ -5354,6 +5354,29 @@ def _show_portfolio_performance(positions: list[dict]) -> None:
         "do período — não considera aportes/vendas. Ativos recém-listados encurtam a janela "
         "(usa só datas com todos em negociação).")
 
+    with st.expander("ℹ️ Como ler estes indicadores (educacional)"):
+        st.markdown(
+            "Todas as métricas são **históricas** — descrevem como a carteira se comportou no "
+            "passado, **não preveem** o futuro. Use como termômetro de risco, não como recomendação.\n\n"
+            "- **Sharpe** — retorno **acima da Selic** dividido pela volatilidade **total**. "
+            "Mede quanto retorno extra você ganhou por unidade de risco. Referência geral: "
+            "**<0** ruim (não bateu o risk-free), **0–1** modesto, **1–2** bom, **>2** excelente.\n"
+            "- **Sortino** — igual ao Sharpe, mas no denominador usa só a volatilidade de **queda** "
+            "(ignora as oscilações para cima, que não incomodam o investidor). Costuma ser **maior** "
+            "que o Sharpe; é uma leitura mais justa para quem só se importa com o risco de perder.\n"
+            "- **Volatilidade (a.a.)** — o quanto os retornos diários oscilam, anualizado. "
+            "Não diz se é bom ou ruim por si só — é o 'tamanho do balanço' da carteira. "
+            "Ações brasileiras costumam ficar na casa de 20–30%.\n"
+            "- **Max Drawdown** — a **maior queda do topo até o fundo** no período. Responde "
+            "'qual o pior tombo que eu teria aguentado?'. O gráfico *underwater* mostra essa "
+            "distância do topo ao longo do tempo (0% = em nova máxima).\n"
+            "- **Calmar** — retorno anualizado dividido pelo |max drawdown|. Recompensa quem "
+            "entrega retorno **sem sustos grandes**; quanto maior, melhor.\n"
+            "- **Retorno no período / anualizado** — ganho total da janela e seu equivalente "
+            "ao ano (CAGR). Inclui proventos (preço ajustado).\n\n"
+            "⚠️ Ferramenta **educacional**. As referências de faixa são convenções de mercado, "
+            "não regras; o risk-free usado é a Selic atual. **Não é recomendação de investimento.**")
+
 
 def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     """Seção 📊 Análise da Carteira — visível apenas quando ⭐ Carteira com posições > 0."""
