@@ -3662,6 +3662,7 @@ _SCREENER_PRESETS: dict = {
 
 
 def _apply_scr_preset(params: dict) -> None:
+    st.session_state.pop("scr_strategy", None)   # volta ao screener manual
     st.session_state.scr_roe_min   = int(params.get("roe_min", 15))
     st.session_state.scr_pl_max    = int(params.get("pl_max", 15))
     st.session_state.scr_nd_max    = int(params.get("nd_max", 2))
@@ -3671,6 +3672,179 @@ def _apply_scr_preset(params: dict) -> None:
     st.session_state.scr_qual_min  = int(params.get("qual_min", params.get("score_min", 0)))
     st.session_state.scr_price_min = int(params.get("price_min", 0))
     st.session_state.scr_excl_bancos = bool(params.get("excl_bancos", True))
+
+
+def _screener_stock_from_raw(raw: dict) -> dict:
+    """Converte uma linha do screener Bolsai para o dict de ação do app."""
+    t = raw.get("ticker", "")
+    return {
+        "ticker":           t,
+        "trade_name":       raw.get("corporate_name", ""),
+        "corporate_name":   raw.get("corporate_name", ""),
+        "sector":           SECTOR_REMAP.get(t, raw.get("sector", "")),
+        "close_price":      raw.get("close_price"),
+        "daily_change_pct": None,
+        "reference_date":   raw.get("reference_date"),
+        "net_debt_ebitda":  raw.get("net_debt_ebitda"),
+        "roe":              raw.get("roe"),
+        "ev_ebitda":        raw.get("ev_ebitda"),
+        "pl":               raw.get("pl"),
+        "ebitda_margin":    raw.get("ebitda_margin"),
+        "cagr_earnings_5y": raw.get("cagr_earnings_5y"),
+        "cagr_revenue_5y":  raw.get("cagr_revenue_5y"),
+        "p_fcf":            None,
+        "dividend_yield":   raw.get("dividend_yield"),
+        "liquidity":        None,
+        "pvp":              raw.get("pvp"),
+        "net_margin":       raw.get("net_margin"),
+    }
+
+
+# Estratégias clássicas (filtragem/ranking local sobre o universo do screener)
+_CLASSIC_STRATEGIES: dict = {
+    "graham": {
+        "label": "🛡️ Graham (Valor)",
+        "desc":  "Ações baratas e sólidas pelo critério defensivo de Benjamin Graham.",
+        "help":  "P/L ≤ 15 · P/VP ≤ 1,5 · P/L×P/VP ≤ 22,5 · dívida controlada.",
+        "edu": (
+            "**Origem:** Benjamin Graham (mentor de Warren Buffett), *O Investidor Inteligente*. "
+            "A estratégia 'defensiva' busca empresas lucrativas e baratas, com margem de segurança.\n\n"
+            "**Critérios aplicados aqui:**\n"
+            "- **P/L ≤ 15** (não paga caro pelo lucro);\n"
+            "- **P/VP ≤ 1,5** (não paga caro pelo patrimônio);\n"
+            "- **Número de Graham: P/L × P/VP ≤ 22,5** — combinação que aprova só o que está "
+            "barato nas duas dimensões ao mesmo tempo;\n"
+            "- **Dívida líq./EBITDA ≤ 3** (balanço saudável).\n\n"
+            "Ordenado pelo número de Graham (menor = mais barata). "
+            "⚠️ Não verificamos histórico de lucros/dividendos de 5–10 anos que Graham também exigia."),
+    },
+    "bazin": {
+        "label": "💵 Bazin (Dividendos)",
+        "desc":  "Pagadoras de dividendos com preço-teto atrativo, no estilo de Décio Bazin.",
+        "help":  "DY ≥ 6% · lucro positivo · dívida controlada.",
+        "edu": (
+            "**Origem:** Décio Bazin, *Faça Fortuna com Ações*. A regra do **preço-teto**: pague no "
+            "máximo o preço que entrega **6% de dividend yield** (DY = dividendo ÷ preço ≥ 6%).\n\n"
+            "**Critérios aplicados aqui:**\n"
+            "- **Dividend Yield ≥ 6%** (a 'regra dos 6%');\n"
+            "- **Lucro positivo** (P/L > 0);\n"
+            "- **Dívida líq./EBITDA ≤ 3** (dividendo sustentável, não financiado por dívida).\n\n"
+            "Ordenado pelo maior DY. ⚠️ Bazin exigia **consistência** de dividendos por vários anos — "
+            "aqui olhamos só o DY atual (12m); DY muito alto pode ser provento não recorrente."),
+    },
+    "magic": {
+        "label": "🧮 Magic Formula",
+        "desc":  "Empresas boas e baratas pelo ranking de Joel Greenblatt.",
+        "help":  "Combina maior retorno (ROE) com menor preço (EV/EBITDA).",
+        "edu": (
+            "**Origem:** Joel Greenblatt, *The Little Book That Beats the Market*. Ordena o universo "
+            "por dois rankings e soma as posições: empresas **boas** (alto retorno sobre capital) e "
+            "**baratas** (alto earnings yield).\n\n"
+            "**Aproximação aplicada aqui:**\n"
+            "- **Qualidade → ROE** (proxy do retorno sobre capital);\n"
+            "- **Preço → EV/EBITDA** (proxy invertido do earnings yield — menor é melhor);\n"
+            "- Cada ação recebe a soma das duas posições no ranking; menor soma = melhor.\n\n"
+            "Exclui **bancos e utilities** (como no método original). "
+            "⚠️ Greenblatt usa **EBIT/EV** e **ROIC**; usamos EV/EBITDA e ROE como proxies dos campos "
+            "disponíveis. O ranking é feito dentro do universo das maiores empresas retornado pela API."),
+    },
+}
+
+
+def _classic_strategy_pick(key: str, cands: list[dict]) -> list[dict]:
+    """Aplica os critérios/ranking da estratégia e devolve as selecionadas (ordenadas)."""
+    out: list[dict] = []
+    if key == "graham":
+        for c in cands:
+            pl, pvp, nd = c.get("pl"), c.get("pvp"), c.get("net_debt_ebitda")
+            if not (pl and pl > 0 and pvp and pvp > 0):
+                continue
+            if pl > 15 or pvp > 1.5 or pl * pvp > 22.5:
+                continue
+            if nd is not None and nd > 3:
+                continue
+            c["_strat"] = f"Graham {pl * pvp:.1f}"
+            out.append((pl * pvp, c))
+        out.sort(key=lambda x: x[0])
+        return [c for _, c in out][:25]
+    if key == "bazin":
+        for c in cands:
+            dy, pl, nd = c.get("dividend_yield"), c.get("pl"), c.get("net_debt_ebitda")
+            if not (dy and dy >= 6) or not (pl and pl > 0):
+                continue
+            if nd is not None and nd > 3:
+                continue
+            c["_strat"] = f"DY {dy:.1f}%"
+            out.append((dy, c))
+        out.sort(key=lambda x: -x[0])
+        return [c for _, c in out][:25]
+    if key == "magic":
+        pool = [c for c in cands
+                if c.get("ev_ebitda") and c["ev_ebitda"] > 0
+                and c.get("roe") and c["roe"] > 0
+                and not sc.is_bank(c.get("sector", ""))
+                and not _is_utility(c.get("sector", ""))]
+        if not pool:
+            return []
+        by_ey  = sorted(pool, key=lambda c: c["ev_ebitda"])      # mais barata primeiro
+        by_roe = sorted(pool, key=lambda c: -c["roe"])           # maior retorno primeiro
+        rk: dict[str, int] = {}
+        for i, c in enumerate(by_ey):
+            rk[c["ticker"]] = i
+        for i, c in enumerate(by_roe):
+            rk[c["ticker"]] = rk.get(c["ticker"], 0) + i
+        for c in pool:
+            c["_strat"] = f"#{rk[c['ticker']] + 2}"   # +2 = soma das melhores posições (0+0 → #2)
+        pool.sort(key=lambda c: rk[c["ticker"]])
+        return pool[:25]
+    return []
+
+
+def _render_classic_strategy(key: str) -> None:
+    """Renderiza uma estratégia clássica: busca universo amplo, filtra/ranqueia local."""
+    meta = _CLASSIC_STRATEGIES[key]
+    h1, h2 = st.columns([4, 1])
+    h1.markdown(f"### {meta['label']}")
+    if h2.button("← Screener manual", key="strat_clear", width="stretch"):
+        st.session_state.pop("scr_strategy", None)
+        st.rerun()
+    st.caption(meta["desc"])
+    with st.expander("ℹ️ Critérios e origem (educacional)"):
+        st.markdown(meta["edu"]
+                    + "\n\n⚠️ Ferramenta **educacional** — não é recomendação de investimento.")
+
+    with st.spinner("Buscando universo na B3…"):
+        result = api.get_screener(limit=150)
+    if not result or not result.get("data"):
+        st.warning("Não foi possível buscar o universo de ações agora. Tente novamente.")
+        return
+
+    cands = _dedup_enriched([_screener_stock_from_raw(r) for r in result["data"]])
+    picks = _classic_strategy_pick(key, cands)
+    if not picks:
+        st.warning("Nenhuma ação passou nos critérios desta estratégia no universo atual.")
+        return
+
+    enriched_scr = [{**s, "scores": sc.calculate_scores(s)} for s in picks]
+    st.info(f"**{len(enriched_scr)}** ações selecionadas de **{len(cands)}** analisadas "
+            "(universo das maiores da B3 retornado pela API).")
+
+    display_df, class_df = _build_table(enriched_scr)
+    styled = _apply_styles(display_df.set_index("Ticker"), class_df.set_index("Ticker"))
+    st.dataframe(styled, width="stretch", height=min(42 + 35 * len(enriched_scr), 480))
+
+    if st.button("➕ Adicionar todas à lista atual", width="stretch", key="strat_add_all"):
+        added, erros = [], []
+        with st.spinner("Buscando dados completos…"):
+            for e in enriched_scr:
+                t = e["ticker"]
+                if t not in st.session_state.acoes:
+                    err = _fetch_ticker(t)
+                    (erros if err else added).append(f"{t}: {err}" if err else t)
+        st.session_state.flash_success = (
+            f"Adicionadas à {st.session_state.lista_atual}: {', '.join(added)}" if added else "")
+        st.session_state.flash_errors = erros
+        st.rerun()
 
 
 def _show_screener():
@@ -3705,7 +3879,20 @@ def _show_screener():
         else:
             st.caption("Nenhum filtro salvo ainda.")
 
+    # ── Estratégias clássicas ──────────────────────────────────
+    st.markdown("**Estratégias clássicas:**")
+    _cstr = st.columns(len(_CLASSIC_STRATEGIES))
+    for _col, (_k, _m) in zip(_cstr, _CLASSIC_STRATEGIES.items()):
+        if _col.button(_m["label"], key=f"strat_{_k}", width="stretch", help=_m["help"]):
+            st.session_state["scr_strategy"] = _k
+            st.rerun()
+
     st.divider()
+
+    # Estratégia clássica ativa → renderiza e encerra (sem o painel manual)
+    if st.session_state.get("scr_strategy") in _CLASSIC_STRATEGIES:
+        _render_classic_strategy(st.session_state["scr_strategy"])
+        return
 
     # ── Painel de filtros ──────────────────────────────────────
     with st.expander("⚙️ Ajustar filtros", expanded=True):
@@ -3770,31 +3957,9 @@ def _show_screener():
     # Converte resultado do screener para formato do app e calcula score
     enriched_scr: list[dict] = []
     for raw in result["data"]:
-        t_remap = SECTOR_REMAP.get(raw.get("ticker", ""), raw.get("sector", ""))
-        _sec = t_remap
-        if excl_bancos and sc.is_bank(_sec):
+        stock = _screener_stock_from_raw(raw)
+        if excl_bancos and sc.is_bank(stock["sector"]):
             continue
-        stock = {
-            "ticker":           raw.get("ticker", ""),
-            "trade_name":       raw.get("corporate_name", ""),
-            "corporate_name":   raw.get("corporate_name", ""),
-            "sector":           _sec,
-            "close_price":      raw.get("close_price"),
-            "daily_change_pct": None,
-            "reference_date":   raw.get("reference_date"),
-            "net_debt_ebitda":  raw.get("net_debt_ebitda"),
-            "roe":              raw.get("roe"),
-            "ev_ebitda":        raw.get("ev_ebitda"),
-            "pl":               raw.get("pl"),
-            "ebitda_margin":    raw.get("ebitda_margin"),
-            "cagr_earnings_5y": raw.get("cagr_earnings_5y"),
-            "cagr_revenue_5y":  raw.get("cagr_revenue_5y"),
-            "p_fcf":            None,
-            "dividend_yield":   raw.get("dividend_yield"),
-            "liquidity":        None,
-            "pvp":              raw.get("pvp"),
-            "net_margin":       raw.get("net_margin"),
-        }
         scr_scores = sc.calculate_scores(stock)
         _q, _p = scr_scores.get("quality"), scr_scores.get("price")
         if qual_min > 0 and (_q is None or _q < qual_min):
