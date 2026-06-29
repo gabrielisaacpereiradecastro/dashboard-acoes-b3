@@ -5219,55 +5219,9 @@ def _show_fii_detail_tab(fiis_atuais: dict) -> None:
 
 def _show_fii_carteira(fiis_atuais: dict) -> None:
     """Carteira de FIIs: editor de posições + análise consolidada."""
-    from datetime import date as _date  # usado no parse de data_compra
-    with st.expander("✏️ Editar posições (quantidade e preço médio)", expanded=False):
-        _fii_pos_rows = []
-        for _t, _f in fiis_atuais.items():
-            _dc_raw = _f.get("data_compra", "")
-            try:
-                _dc_val = _date.fromisoformat(_dc_raw) if _dc_raw else None
-            except ValueError:
-                _dc_val = None
-            _fii_pos_rows.append({
-                "Ticker": _t,
-                "Quantidade": int(_f.get("qtd", 0) or 0),
-                "Preço Médio (R$)": float(_f.get("preco_medio", 0) or 0),
-                "Data de Compra": _dc_val,
-            })
-        _fii_pos_df = pd.DataFrame(_fii_pos_rows)
-        _fii_edited = st.data_editor(
-            _fii_pos_df,
-            column_config={
-                "Ticker": st.column_config.TextColumn("Ticker", disabled=True, width="small"),
-                "Quantidade": st.column_config.NumberColumn(
-                    "Qtd", min_value=0, max_value=10_000_000, step=1, width="small"),
-                "Preço Médio (R$)": st.column_config.NumberColumn(
-                    "Preço Médio (R$)", min_value=0.0, format="%.2f", width="medium",
-                    help="Opcional — para calcular lucro/prejuízo"),
-                "Data de Compra": st.column_config.DateColumn(
-                    "Data de Compra", width="medium", format="DD/MM/YYYY"),
-            },
-            hide_index=True, width="stretch", key="fii_qty_data_editor",
-        )
-        if st.button("Salvar posições", key="btn_salvar_fii_qtd"):
-            _changed = False
-            for _, _row in _fii_edited.iterrows():
-                _t = str(_row["Ticker"])
-                _nq = int(_row["Quantidade"] or 0)
-                _npm = float(_row["Preço Médio (R$)"] or 0)
-                _ndc = _date_cell_to_iso(_row["Data de Compra"])
-                if _t in fiis_atuais:
-                    _o = fiis_atuais[_t]
-                    if (_o.get("qtd", 0) != _nq or _o.get("preco_medio", 0) != _npm
-                            or _o.get("data_compra", "") != _ndc):
-                        _o["qtd"], _o["preco_medio"], _o["data_compra"] = _nq, _npm, _ndc
-                        _changed = True
-            if _changed:
-                _save_all()
-                st.success("Posições salvas.")
-                st.rerun()
-            else:
-                st.info("Nenhuma alteração detectada.")
+    with st.expander("✏️ Editar compras e posições", expanded=False):
+        _lotes_editor(list(fiis_atuais.keys()), fiis_atuais,
+                      key="fiis_lotes", unidade="Preço/cota")
 
         # ── Remover FII da carteira (direto aqui, sem ir na Tabela) ──
         st.divider()
@@ -5333,68 +5287,116 @@ def _date_cell_to_iso(cell) -> str:
         return ""
 
 
-def _qty_editor(enriched: list[dict], acoes: dict) -> None:
-    """Exibe editor de quantidades, preço médio e data de compra para a Carteira."""
+def _brl(v: float, dec: int = 2) -> str:
+    """Formata número como R$ no padrão BR (1.234,56)."""
+    return f"R$ {v:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _migra_lotes(entry: dict) -> list[dict]:
+    """Lista de compras de uma posição. Migra do agregado legado (qtd/preco_medio/
+    data_compra) para 1 lote quando ainda não há 'compras'."""
+    compras = entry.get("compras")
+    if compras:
+        return [c for c in compras if int(c.get("qtd", 0) or 0) > 0]
+    q = int(entry.get("qtd", 0) or 0)
+    if q > 0:
+        return [{"data": entry.get("data_compra", ""), "qtd": q,
+                 "preco": float(entry.get("preco_medio", 0) or 0)}]
+    return []
+
+
+def _consolida_lotes(lots: list[dict]) -> dict:
+    """Deriva agregados de uma lista de lotes: qtd total, preço médio ponderado,
+    data mais antiga, valor investido."""
+    tq = sum(int(l.get("qtd", 0) or 0) for l in lots)
+    tc = sum(int(l.get("qtd", 0) or 0) * float(l.get("preco", 0) or 0) for l in lots)
+    dts = [l.get("data", "") for l in lots if l.get("data")]
+    return {"qtd": tq, "preco_medio": (tc / tq) if tq > 0 else 0.0,
+            "investido": tc, "data_compra": min(dts) if dts else "", "lotes": len(lots)}
+
+
+def _lotes_editor(tickers: list[str], store: dict, *, key: str,
+                  unidade: str = "Preço/ação") -> None:
+    """Editor de COMPRAS (lotes) para ações ou FIIs. store = dict ticker→entry.
+    Persiste entry['compras']=[{data,qtd,preco}] e mantém qtd/preco_medio/data_compra
+    derivados (consistência com o resto do app). Cada linha = uma compra."""
     from datetime import date as _date
-    with st.expander("Carteira — Quantidades e Posições", expanded=False):
-        qty_rows = []
-        for e in enriched:
-            t  = e["ticker"]
-            en = acoes.get(t, {})
-            dc_raw = en.get("data_compra", "")
-            try:
-                dc_val = _date.fromisoformat(dc_raw) if dc_raw else None
-            except ValueError:
-                dc_val = None
-            qty_rows.append({
-                "Ticker":         t,
-                "Quantidade":     int(en.get("qtd", 0) or 0),
-                "Preço Médio (R$)": float(en.get("preco_medio", 0) or 0),
-                "Data de Compra": dc_val,
-            })
-        qty_df = pd.DataFrame(qty_rows)
-        edited = st.data_editor(
-            qty_df,
-            column_config={
-                "Ticker": st.column_config.TextColumn("Ticker", disabled=True, width="small"),
-                "Quantidade": st.column_config.NumberColumn(
-                    "Qtd", min_value=0, max_value=10_000_000, step=1, width="small",
-                ),
-                "Preço Médio (R$)": st.column_config.NumberColumn(
-                    "Preço Médio (R$)", min_value=0.0, format="%.2f", width="medium",
-                    help="Opcional — preço médio de compra para calcular lucro/prejuízo",
-                ),
-                "Data de Compra": st.column_config.DateColumn(
-                    "Data de Compra", width="medium", format="DD/MM/YYYY",
-                    help="Opcional — data de compra ou início da posição",
-                ),
-            },
-            hide_index=True,
-            width="stretch",
-            key="qty_data_editor",
-        )
-        if st.button("Salvar posições", key="btn_salvar_qtd", width="content"):
-            changed = False
-            for _, row in edited.iterrows():
-                t       = str(row["Ticker"])
-                new_qty = int(row["Quantidade"] or 0)
-                new_pm  = float(row["Preço Médio (R$)"] or 0)
-                new_dc  = _date_cell_to_iso(row["Data de Compra"])
-                if t in acoes:
-                    old = acoes[t]
-                    if (old.get("qtd", 0) != new_qty or
-                            old.get("preco_medio", 0) != new_pm or
-                            old.get("data_compra", "") != new_dc):
-                        acoes[t]["qtd"]         = new_qty
-                        acoes[t]["preco_medio"]  = new_pm
-                        acoes[t]["data_compra"]  = new_dc
-                        changed = True
-            if changed:
-                _save_all()
-                st.success("Posições salvas.")
-                st.rerun()
-            else:
-                st.info("Nenhuma alteração detectada.")
+
+    def _to_date(s: str):
+        try:
+            return _date.fromisoformat(s) if s else None
+        except (ValueError, TypeError):
+            return None
+
+    rows = []
+    for t in tickers:
+        for c in _migra_lotes(store.get(t, {})):
+            rows.append({"Ticker": t, "Data": _to_date(c.get("data", "")),
+                         "Quantidade": int(c.get("qtd", 0) or 0),
+                         "Preço (R$)": float(c.get("preco", 0) or 0)})
+    lot_df = pd.DataFrame(rows, columns=["Ticker", "Data", "Quantidade", "Preço (R$)"])
+
+    st.caption("Cada linha é **uma compra**. Use ➕ para adicionar lotes da mesma ação "
+               "em datas/preços diferentes — o consolidado é calculado automaticamente.")
+    edited = st.data_editor(
+        lot_df,
+        column_config={
+            "Ticker": st.column_config.SelectboxColumn(
+                "Ticker", options=tickers, required=True, width="small"),
+            "Data": st.column_config.DateColumn(
+                "Data da compra", format="DD/MM/YYYY", width="medium"),
+            "Quantidade": st.column_config.NumberColumn(
+                "Qtd", min_value=0, step=1, width="small"),
+            "Preço (R$)": st.column_config.NumberColumn(
+                unidade + " (R$)", min_value=0.0, format="%.2f", width="medium",
+                help="Preço pago NESSA compra (não o médio)."),
+        },
+        num_rows="dynamic", hide_index=True, width="stretch", key=key,
+    )
+
+    # Agrupa por ticker (ao vivo) e mostra o consolidado derivado
+    by_t: dict[str, list[dict]] = {}
+    for _, r in edited.iterrows():
+        t = r.get("Ticker")
+        if t is None or (isinstance(t, float) and pd.isna(t)) or not str(t).strip():
+            continue
+        q = int(r["Quantidade"] or 0)
+        if q <= 0:
+            continue
+        by_t.setdefault(str(t), []).append(
+            {"data": _date_cell_to_iso(r["Data"]), "qtd": q,
+             "preco": float(r["Preço (R$)"] or 0)})
+
+    if by_t:
+        resumo = []
+        for t, lots in sorted(by_t.items()):
+            cc = _consolida_lotes(lots)
+            resumo.append({"Ticker": t, "Lotes": cc["lotes"], "Qtd total": cc["qtd"],
+                           "Preço médio": _brl(cc["preco_medio"]),
+                           "Investido": _brl(cc["investido"], 0)})
+        st.markdown("**Consolidado (calculado a partir dos lotes):**")
+        st.dataframe(pd.DataFrame(resumo), hide_index=True, width="stretch")
+
+    if st.button("Salvar posições", key=f"{key}_save", width="content"):
+        for t in tickers:
+            if t not in store:
+                continue
+            lots = by_t.get(t, [])
+            cc = _consolida_lotes(lots)
+            store[t]["compras"]     = lots
+            store[t]["qtd"]         = cc["qtd"]
+            store[t]["preco_medio"] = cc["preco_medio"]
+            store[t]["data_compra"] = cc["data_compra"]
+        _save_all()
+        st.success("Posições salvas.")
+        st.rerun()
+
+
+def _qty_editor(enriched: list[dict], acoes: dict) -> None:
+    """Editor de compras (lotes), quantidade e preço médio da Carteira de ações."""
+    with st.expander("Carteira — Compras e Posições", expanded=False):
+        _lotes_editor([e["ticker"] for e in enriched], acoes,
+                      key="acoes_lotes", unidade="Preço/ação")
 
 
 def _weighted_avg_portfolio(positions: list[dict], field: str) -> Optional[float]:
