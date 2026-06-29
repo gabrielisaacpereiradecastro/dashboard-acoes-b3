@@ -5098,6 +5098,24 @@ def _show_fii_carteira(fiis_atuais: dict) -> None:
             else:
                 st.info("Nenhuma alteração detectada.")
 
+        # ── Remover FII da carteira (direto aqui, sem ir na Tabela) ──
+        st.divider()
+        _rem_keys = list(fiis_atuais.keys())
+        if _rem_keys:
+            _rc1, _rc2 = st.columns([3, 1])
+            with _rc1:
+                _rem_fii = st.selectbox(
+                    "Remover FII da carteira", ["—"] + _rem_keys,
+                    key="fii_cart_rem_sel", label_visibility="collapsed")
+            with _rc2:
+                if st.button("🗑 Remover", key="btn_rem_fii_cart", width="stretch"):
+                    if _rem_fii != "—":
+                        fiis_atuais.pop(_rem_fii, None)
+                        if st.session_state.selected_fii == _rem_fii:
+                            st.session_state.selected_fii = None
+                        _save_all()
+                        st.rerun()
+
     # ── Análise consolidada da carteira de FIIs ───────────────────
     try:
         _show_fii_portfolio_analysis(fiis_atuais)
