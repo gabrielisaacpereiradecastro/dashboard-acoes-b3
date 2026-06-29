@@ -1453,6 +1453,40 @@ def _fetch_ibov_vs_small(years: int = 5) -> Optional[pd.DataFrame]:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_fii_history(ticker: str) -> Optional[pd.DataFrame]:
+    """Histórico de preço AJUSTADO de um FII via yfinance (o Bolsai não tem
+    histórico de FII). Mesmo formato de _fetch_price_history (trade_date /
+    adjusted_close) para reaproveitar a engine de risco/retorno e backtest."""
+    try:
+        h = yf.Ticker(f"{ticker}.SA").history(period="6y", auto_adjust=True)
+        if h is None or h.empty:
+            return None
+        df = h.reset_index()[["Date", "Close"]].rename(
+            columns={"Date": "trade_date", "Close": "adjusted_close"})
+        df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.tz_localize(None)
+        df["adjusted_close"] = df["adjusted_close"].astype(float)
+        return df.sort_values("trade_date").reset_index(drop=True)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600 * 6, show_spinner=False)
+def _fetch_ifix_history(years: int = 5) -> Optional[pd.Series]:
+    """Série do IFIX (índice de FIIs) via yfinance como benchmark. Tenta símbolos
+    alternativos; retorna Series (close) indexada por data ou None se indisponível."""
+    start = (datetime.now() - timedelta(days=365 * years + 30)).strftime("%Y-%m-%d")
+    for sym in ("^IFIX", "IFIX.SA"):
+        try:
+            s = yf.Ticker(sym).history(start=start, auto_adjust=True)["Close"]
+            if s is not None and not s.empty and len(s) >= 30:
+                s.index = pd.to_datetime(s.index).tz_localize(None)
+                return s.astype(float)
+        except Exception:
+            continue
+    return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_price_history(ticker: str) -> Optional[pd.DataFrame]:
     try:
         data = api.get_stock_history(ticker, limit=1260)
@@ -5119,6 +5153,14 @@ def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
             st.caption(f"⚠ {_n_paper} FII(s) de papel não aparecem no mapa "
                        "(sem eixo de qualidade) — veja-os na tabela e nos alertas do Detalhe.")
 
+    # ── Risco & Retorno + Backtest (preço via yfinance, benchmark IFIX) ──
+    _show_portfolio_performance(positions, price_fn=_fetch_fii_history,
+                                key="fii_perf_period")
+    _show_portfolio_backtest(fiis_dict, [p["ticker"] for p in positions],
+                             price_fn=_fetch_fii_history,
+                             bench_fn=lambda anos: _fetch_ifix_history(min(anos, 10)),
+                             bench_label="IFIX", key="fii_run_backtest")
+
 
 def _show_fii_tabela(fiis_atuais: dict) -> None:
     """Tabela de FIIs: filtrar, remover/atualizar, listar.
@@ -5425,16 +5467,18 @@ def _weighted_avg_portfolio(positions: list[dict], field: str) -> Optional[float
     return sum(w * v for w, v in valid) / total_w
 
 
-def _show_portfolio_performance(positions: list[dict]) -> None:
+def _show_portfolio_performance(positions: list[dict], *,
+                                price_fn=_fetch_price_history,
+                                key: str = "perf_period") -> None:
     """Métricas de risco/retorno da carteira (Sharpe, Sortino, vol., max drawdown,
     Calmar). Monta o valor diário mantendo as QUANTIDADES ATUAIS constantes ao longo
     do período, sobre preço AJUSTADO (inclui proventos = retorno total). Risk-free =
-    Selic anualizada do painel macro."""
+    Selic anualizada do painel macro. `price_fn` permite usar yfinance p/ FIIs."""
     st.markdown("#### Risco & Retorno (histórico)")
 
     periods = {"6M": 126, "1A": 252, "2A": 504, "5A": 1260, "Máx": 10_000}
     sel = st.radio("Período", list(periods.keys()), index=1, horizontal=True,
-                   key="perf_period", label_visibility="collapsed")
+                   key=key, label_visibility="collapsed")
     look = periods[sel]
 
     # Série de valor por ticker (adjusted_close × qtd), interseção de datas
@@ -5442,7 +5486,7 @@ def _show_portfolio_performance(positions: list[dict]) -> None:
         series: dict[str, pd.Series] = {}
         lens: dict[str, int] = {}
         for p in positions:
-            _df = _fetch_price_history(p["ticker"])
+            _df = price_fn(p["ticker"])
             if _df is not None and not _df.empty and "adjusted_close" in _df:
                 _s = _df.set_index("trade_date")["adjusted_close"].astype(float)
                 _s = _s[~_s.index.duplicated(keep="last")]
@@ -5586,11 +5630,19 @@ def _xirr(flows: list[tuple]) -> Optional[float]:
     return (lo + hi) / 2
 
 
-def _show_portfolio_backtest(acoes: dict, tickers: list[str]) -> None:
+def _show_portfolio_backtest(acoes: dict, tickers: list[str], *,
+                             price_fn=_fetch_price_history,
+                             bench_fn=None, bench_label: str = "IBOV (BOVA11)",
+                             key: str = "run_backtest") -> None:
     """Backtest da carteira real (usa as datas/preços dos lotes): patrimônio ao longo
-    do tempo, drawdown real, retorno (XIRR) e comparação com IBOV (BOVA11) e CDI —
-    mesmos aportes, mesmas datas. Preço ajustado (retorno total) nas ações e no IBOV."""
-    st.markdown("#### Backtest — sua carteira vs IBOV e CDI")
+    do tempo, drawdown real, retorno (XIRR) e comparação com o benchmark e o CDI —
+    mesmos aportes, mesmas datas. Preço ajustado (retorno total). `price_fn`/`bench_fn`
+    permitem usar yfinance + IFIX para FIIs."""
+    if bench_fn is None:
+        bench_fn = lambda anos: (
+            _fetch_ibov_vs_small(min(anos, 10))["Ibov"]
+            if _fetch_ibov_vs_small(min(anos, 10)) is not None else None)
+    st.markdown(f"#### Backtest — sua carteira vs {bench_label.split(' (')[0]} e CDI")
 
     lots, sem_data = [], 0
     for t in tickers:
@@ -5611,7 +5663,7 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str]) -> None:
                    "o backtest — ele reconstrói a carteira a partir de cada aporte.")
         return
 
-    if not st.button("▶️ Rodar backtest", key="run_backtest"):
+    if not st.button("▶️ Rodar backtest", key=key):
         st.caption(f"{len(lots)} compra(s) com data cadastrada"
                    + (f" · {sem_data} sem data (ficam de fora)" if sem_data else "")
                    + ". Clique para reconstruir a evolução da carteira.")
@@ -5624,17 +5676,16 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str]) -> None:
         # Preço ajustado por ticker
         px: dict[str, pd.Series] = {}
         for t in {l[0] for l in lots}:
-            _df = _fetch_price_history(t)
+            _df = price_fn(t)
             if _df is not None and not _df.empty and "adjusted_close" in _df:
                 s = _df.set_index("trade_date")["adjusted_close"].astype(float)
                 px[t] = s[~s.index.duplicated(keep="last")]
         if not px:
-            st.warning("Histórico de preços indisponível para as ações da carteira.")
+            st.warning("Histórico de preços indisponível para os ativos da carteira.")
             return
 
         anos = max(1, (hoje - start).days // 365 + 1)
-        _bdf = _fetch_ibov_vs_small(min(anos, 10))
-        bench = _bdf["Ibov"] if _bdf is not None else None
+        bench = bench_fn(anos)
 
         idx = pd.bdate_range(start, hoje)
         pxm = pd.DataFrame(index=idx)
@@ -5699,7 +5750,7 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str]) -> None:
     _cf = float(C.iloc[-1])
     _linhas = [("Sua carteira", V, "#34d399")]
     if _bf is not None:
-        _linhas.append(("IBOV (BOVA11)", _bf, "#7dd3fc"))
+        _linhas.append((bench_label, _bf, "#7dd3fc"))
     _linhas.append(("CDI", _cf, "#fbbf24"))
     _best = max(v for _, v, _ in _linhas)
     cmp_html = "<div style='display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 4px'>"
@@ -5719,10 +5770,11 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str]) -> None:
     figc.add_trace(go.Scatter(x=E.index, y=E.values, name="Sua carteira",
                               line=dict(color="#34d399", width=2),
                               hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>Carteira</extra>"))
+    _bn = bench_label.split(" (")[0]
     if B is not None:
-        figc.add_trace(go.Scatter(x=B.index, y=B.values, name="IBOV",
+        figc.add_trace(go.Scatter(x=B.index, y=B.values, name=_bn,
                                   line=dict(color="#7dd3fc", width=1.5),
-                                  hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>IBOV</extra>"))
+                                  hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>" + _bn + "</extra>"))
     figc.add_trace(go.Scatter(x=C.index, y=C.values, name="CDI",
                               line=dict(color="#fbbf24", width=1.2, dash="dot"),
                               hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>CDI</extra>"))
@@ -5753,12 +5805,14 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str]) -> None:
         yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)", ticksuffix="%"))
     st.plotly_chart(figd, width="stretch", config={"displayModeBar": False})
 
+    _bnote = (f"{bench_label}/CDI recebem" if _bf is not None else "O CDI recebe")
     st.caption(
         "Reconstrói a carteira lote a lote a partir de cada aporte. Preço **ajustado** "
-        "(retorno total) nas ações e no IBOV (BOVA11 como proxy); **CDI** composto à Selic "
-        "atual (aprox.). O IBOV/CDI recebem os **mesmos R$**, nas **mesmas datas**. "
+        f"(retorno total) nos ativos e no benchmark; **CDI** composto à Selic atual (aprox.). "
+        f"{_bnote} os **mesmos R$**, nas **mesmas datas**. "
         "Os **proventos** que você sacou entram à parte (veja 💰 Proventos) — o benchmark "
         "assume reinvestimento. Precisão depende das datas/preços dos lotes."
+        + ("  ⚠️ Benchmark IFIX indisponível agora — mostrando só CDI." if _bf is None and bench_label.startswith("IFIX") else "")
         + (f"  ⚠️ {sem_data} compra(s) sem data ficaram de fora." if sem_data else ""))
 
 
