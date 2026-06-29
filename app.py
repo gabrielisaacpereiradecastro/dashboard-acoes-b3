@@ -3308,6 +3308,14 @@ def _show_detail(s: dict):
     # ── DCF Valuation ───────────────────────────────────────────
     _show_dcf(s)
 
+    # ── Proventos (dividendos / JCP) ────────────────────────────
+    st.divider()
+    st.subheader("Proventos")
+    _tk = s.get("ticker", "")
+    _en = st.session_state.acoes.get(_tk, {})
+    _show_proventos_ativo(_tk, preco_medio=float(_en.get("preco_medio", 0) or 0),
+                          qtd=int(_en.get("qtd", 0) or 0), debug=True)
+
     # ── Indicadores informativos ────────────────────────────────
     st.divider()
     st.subheader("Indicadores Informativos")
@@ -4137,7 +4145,7 @@ def _sidebar():
         st.caption("Análise fundamentalista de ações brasileiras")
 
         # ── Navegação por área ─────────────────────────────────
-        _AREAS = ["📊 Ações", "🏢 FIIs", "🔎 Screener", "🌐 Ciclo", "🔔 Alertas"]
+        _AREAS = ["📊 Ações", "🏢 FIIs", "💰 Proventos", "🔎 Screener", "🌐 Ciclo", "🔔 Alertas"]
         _cur_area = st.session_state.get("area", _AREAS[0])
         st.session_state.area = st.radio(
             "Navegação", _AREAS,
@@ -4684,6 +4692,13 @@ def _show_fii_detail(fii: dict) -> None:
                         pct = item.get("percentage") or item.get("pct")
                         pct_str = f" ({pct:.1f}%)" if pct is not None else ""
                         st.markdown(f"- **{nm}**{loc_str}{pct_str}")
+
+    # ── Proventos (distribuições do FII) ────────────────────────
+    st.divider()
+    st.subheader("Proventos")
+    _show_proventos_ativo(fii.get("ticker", ""),
+                          preco_medio=float(fii.get("preco_medio", 0) or 0),
+                          qtd=int(fii.get("qtd", 0) or 0), debug=True)
 
 
 @st.cache_data(ttl=1800)
@@ -6182,6 +6197,200 @@ def _show_alert_banner(resultados: list[dict]) -> None:
 
 
 # ────────────────────────────────────────────────────────────────
+# Proventos (dividendos / JCP / distribuições de FII)
+# ────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=21600, show_spinner=False)   # 6h
+def _fetch_dividends(ticker: str) -> list:
+    """Histórico de proventos via Bolsai (get_dividends). Parser FLEXÍVEL — o
+    formato exato é confirmado ao vivo (debug). Retorna lista de
+    {'value','ex','pay','type'} ordenada do mais recente p/ o mais antigo."""
+    try:
+        raw = api.get_dividends(ticker)
+    except Exception:
+        return []
+    items = []
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, dict):
+        for _k in ("dividends", "data", "events", "results", "proventos",
+                   "distributions", "history"):
+            if isinstance(raw.get(_k), list):
+                items = raw[_k]
+                break
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        val = next((it[k] for k in ("value", "amount", "valor", "rate", "value_per_share")
+                    if it.get(k) is not None), None)
+        if val is None:
+            continue
+        try:
+            val = float(val)
+        except (TypeError, ValueError):
+            continue
+        ex = next((it[k] for k in ("ex_date", "com_date", "data_com", "ex_dividend_date",
+                                   "date", "reference_date") if it.get(k)), "")
+        pay = next((it[k] for k in ("payment_date", "data_pagamento", "pay_date",
+                                    "paid_at", "payment") if it.get(k)), "")
+        typ = next((it[k] for k in ("type", "tipo", "event_type", "label", "kind")
+                    if it.get(k)), "")
+        out.append({"value": val, "ex": str(ex)[:10], "pay": str(pay)[:10],
+                    "type": str(typ).strip()})
+    out.sort(key=lambda d: (d["pay"] or d["ex"] or ""), reverse=True)
+    return out
+
+
+def _proventos_resumo(items: list) -> dict:
+    """Total por ano + total TTM (últimos 365 dias, pela data de pagamento/com)."""
+    from datetime import date, timedelta
+    por_ano: dict = {}
+    ttm = 0.0
+    _lim = date.today() - timedelta(days=365)
+    for it in items:
+        d = it["pay"] or it["ex"]
+        if not d or len(d) < 4:
+            continue
+        por_ano[d[:4]] = por_ano.get(d[:4], 0.0) + it["value"]
+        try:
+            if date.fromisoformat(d[:10]) >= _lim:
+                ttm += it["value"]
+        except ValueError:
+            pass
+    return {"por_ano": dict(sorted(por_ano.items(), reverse=True)), "ttm": ttm}
+
+
+def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0,
+                          debug: bool = False) -> None:
+    """Visão de proventos de UM ativo (usada no Detalhe de ação e FII)."""
+    items = _fetch_dividends(ticker)
+    if debug:
+        with st.expander("🔧 [debug] retorno bruto de get_dividends"):
+            _raw = None
+            try:
+                _raw = api.get_dividends(ticker)
+            except Exception as _e:
+                st.write("erro:", _e)
+            st.write("tipo:", type(_raw).__name__)
+            if isinstance(_raw, dict):
+                st.write("chaves:", list(_raw.keys()))
+            st.json(_raw if _raw is not None else {}, expanded=False)
+            st.write(f"parseados: {len(items)} proventos")
+    if not items:
+        st.caption("Sem histórico de proventos para este ativo (ou a API não retornou).")
+        return
+    resumo = _proventos_resumo(items)
+    ttm = resumo["ttm"]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Provento 12m / cota", f"R$ {ttm:.4f}".rstrip("0").rstrip("."))
+    if preco_medio and preco_medio > 0:
+        c2.metric("Yield on Cost", f"{ttm / preco_medio * 100:.1f}%",
+                  help="Provento dos últimos 12m ÷ seu preço médio.")
+    if qtd > 0:
+        c3.metric("Renda anual estim.", f"R$ {ttm * qtd:,.0f}".replace(",", "."))
+    # Resumo anual
+    if resumo["por_ano"]:
+        _anos = list(resumo["por_ano"].items())[:6][::-1]
+        fig = go.Figure(go.Bar(
+            x=[a for a, _ in _anos], y=[v for _, v in _anos],
+            marker_color="#34d399", text=[f"R$ {v:.2f}" for _, v in _anos],
+            textposition="outside"))
+        fig.update_layout(height=200, margin=dict(l=0, r=0, t=10, b=0),
+                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                          yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)"),
+                          xaxis=dict(color="#9e9e9e"), showlegend=False,
+                          title=dict(text="Proventos por ano (R$/cota)",
+                                     font=dict(size=12, color="#e8eaf6")))
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+    # Histórico
+    _df = pd.DataFrame([{
+        "Tipo": it["type"] or "—",
+        "Data-com": it["ex"] or "—",
+        "Pagamento": it["pay"] or "—",
+        "Valor/cota": f"R$ {it['value']:.4f}".rstrip("0").rstrip("."),
+    } for it in items[:30]])
+    st.dataframe(_df, width="stretch", hide_index=True,
+                 height=min(42 + 35 * len(_df), 420))
+
+
+def _show_proventos_area() -> None:
+    """Área 💰 Proventos — renda passiva consolidada da carteira (ações + FIIs)."""
+    st.markdown("## Proventos da carteira")
+    st.caption("Renda passiva estimada a partir dos proventos dos últimos 12 meses "
+               "(provento por cota × sua quantidade). Use o Detalhe de cada ativo "
+               "para o histórico completo.")
+
+    # Junta posições com qtd > 0 da ⭐ Carteira (ações + FIIs) — renda passiva real
+    _pos = []
+    for _t, _e in st.session_state.todas_listas.get("⭐ Carteira", {}).items():
+        _q = int(_e.get("qtd", 0) or 0)
+        if _q > 0:
+            _pos.append(("Ação", _t, _q, float(_e.get("preco_medio", 0) or 0)))
+    for _t, _f in st.session_state.fiis_listas.get("⭐ Carteira", {}).items():
+        _q = int(_f.get("qtd", 0) or 0)
+        if _q > 0:
+            _pos.append(("FII", _t, _q, float(_f.get("preco_medio", 0) or 0)))
+
+    if not _pos:
+        st.info("Sem posições com quantidade > 0. Cadastre posições na Carteira "
+                "(ações) ou na Carteira de FIIs para ver sua renda passiva.")
+        return
+
+    _rows = []
+    _renda_total = _custo_total = 0.0
+    _prox = []   # próximos pagamentos
+    from datetime import date as _date
+    _hoje = _date.today().isoformat()
+    with st.spinner("Buscando proventos das posições…"):
+        for _cls, _t, _q, _pm in _pos:
+            _items = _fetch_dividends(_t)
+            _ttm = _proventos_resumo(_items)["ttm"]
+            _renda = _ttm * _q
+            _renda_total += _renda
+            if _pm > 0:
+                _custo_total += _pm * _q
+            _rows.append({
+                "Ticker": _t, "Classe": _cls, "Qtd": _q,
+                "Provento 12m/cota": _ttm,
+                "Renda anual (R$)": _renda,
+                "YoC": (_ttm / _pm * 100) if _pm > 0 else None,
+            })
+            for _it in _items:
+                if _it["pay"] and _it["pay"] >= _hoje:
+                    _prox.append({"Ticker": _t, "Pagamento": _it["pay"],
+                                  "Tipo": _it["type"] or "—",
+                                  "Valor/cota": _it["value"], "Renda (R$)": _it["value"] * _q})
+
+    # Métricas de topo
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Renda anual estimada", f"R$ {_renda_total:,.0f}".replace(",", "."))
+    c2.metric("Renda mensal (média)", f"R$ {_renda_total/12:,.0f}".replace(",", "."))
+    if _custo_total > 0:
+        c3.metric("Yield on Cost da carteira", f"{_renda_total/_custo_total*100:.1f}%",
+                  help="Renda anual estimada ÷ custo total das posições.")
+
+    # Ranking por contribuição
+    _df = pd.DataFrame(_rows).sort_values("Renda anual (R$)", ascending=False)
+    _df_show = _df.copy()
+    _df_show["Provento 12m/cota"] = _df_show["Provento 12m/cota"].map(lambda v: f"R$ {v:.4f}".rstrip("0").rstrip("."))
+    _df_show["Renda anual (R$)"] = _df_show["Renda anual (R$)"].map(lambda v: f"R$ {v:,.0f}".replace(",", "."))
+    _df_show["YoC"] = _df_show["YoC"].map(lambda v: f"{v:.1f}%" if v is not None else "—")
+    st.markdown("#### Quem paga mais")
+    st.dataframe(_df_show, width="stretch", hide_index=True)
+
+    # Próximos pagamentos
+    if _prox:
+        st.markdown("#### Próximos pagamentos anunciados")
+        _pdf = pd.DataFrame(sorted(_prox, key=lambda d: d["Pagamento"]))
+        _pdf["Valor/cota"] = _pdf["Valor/cota"].map(lambda v: f"R$ {v:.4f}".rstrip("0").rstrip("."))
+        _pdf["Renda (R$)"] = _pdf["Renda (R$)"].map(lambda v: f"R$ {v:,.0f}".replace(",", "."))
+        st.dataframe(_pdf, width="stretch", hide_index=True)
+    else:
+        st.caption("Nenhum pagamento futuro anunciado encontrado nos dados.")
+
+
+# ────────────────────────────────────────────────────────────────
 # App principal
 # ────────────────────────────────────────────────────────────────
 
@@ -6274,6 +6483,9 @@ footer {visibility: hidden;}
         return
     if _area == "🌐 Ciclo":
         _show_ciclo_tab()
+        return
+    if _area == "💰 Proventos":
+        _show_proventos_area()
         return
     if _area == "🔔 Alertas":
         _show_alertas_tab()
