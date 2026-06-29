@@ -603,6 +603,7 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         "qtd":                    _prev.get("qtd", 0),
         "preco_medio":            _prev.get("preco_medio", 0.0),
         "data_compra":            _prev.get("data_compra", ""),
+        "compras":                _prev.get("compras", []),
         "notas":                  _prev.get("notas", ""),
         "notas_updated_at":       _prev.get("notas_updated_at", ""),
         "notas_mudancas":         _prev.get("notas_mudancas", ""),
@@ -4196,7 +4197,8 @@ def _sidebar_atualizacao() -> None:
                     _fiis_atual_sb[_tt] = {**_nd,
                                            "qtd": _old.get("qtd", 0),
                                            "preco_medio": _old.get("preco_medio", 0.0),
-                                           "data_compra": _old.get("data_compra", "")}
+                                           "data_compra": _old.get("data_compra", ""),
+                                           "compras": _old.get("compras", [])}
             if save:
                 _save_all()
 
@@ -5384,6 +5386,42 @@ def _lotes_editor(tickers: list[str], store: dict, *, key: str,
         except (ValueError, TypeError):
             return None
 
+    if not tickers:
+        st.caption("Adicione ativos à carteira primeiro (no menu lateral) para lançar compras.")
+        return
+
+    st.caption("Lance **cada compra** que você fez. Para o mesmo ativo comprado em datas/preços "
+               "diferentes, é só adicionar **mais de uma** — o app calcula o preço médio e a "
+               "quantidade total automaticamente.")
+
+    # ── Formulário: adicionar UMA compra (caminho principal, explícito) ──
+    with st.form(f"{key}_add", clear_on_submit=True):
+        st.markdown("**➕ Adicionar uma compra**")
+        fc = st.columns([2, 2, 1.4, 1.7])
+        f_t = fc[0].selectbox("Ativo", tickers, key=f"{key}_a_t")
+        f_d = fc[1].date_input("Data da compra", value=None, format="DD/MM/YYYY",
+                               key=f"{key}_a_d")
+        f_q = fc[2].number_input("Quantidade", min_value=0, step=1, key=f"{key}_a_q")
+        f_p = fc[3].number_input(f"{unidade} (R$)", min_value=0.0, step=0.01,
+                                 format="%.2f", key=f"{key}_a_p")
+        _ok = st.form_submit_button("➕ Adicionar compra", width="stretch")
+    if _ok:
+        if not f_t or f_q <= 0:
+            st.warning("Escolha o ativo e informe uma quantidade maior que zero.")
+        else:
+            _ent = store.setdefault(f_t, {})
+            _lots = _migra_lotes(_ent)   # posição legada vira o 1º lote, se for o caso
+            _lots.append({"data": f_d.isoformat() if f_d else "",
+                          "qtd": int(f_q), "preco": float(f_p)})
+            _cc = _consolida_lotes(_lots)
+            _ent["compras"] = _lots
+            _ent["qtd"], _ent["preco_medio"], _ent["data_compra"] = (
+                _cc["qtd"], _cc["preco_medio"], _cc["data_compra"])
+            _save_all()
+            st.success(f"Compra adicionada em **{f_t}**: {int(f_q)} × {_brl(f_p)}"
+                       + (f" · {f_d.strftime('%d/%m/%Y')}" if f_d else ""))
+            st.rerun()
+
     rows = []
     for t in tickers:
         for c in _migra_lotes(store.get(t, {})):
@@ -5392,8 +5430,8 @@ def _lotes_editor(tickers: list[str], store: dict, *, key: str,
                          "Preço (R$)": float(c.get("preco", 0) or 0)})
     lot_df = pd.DataFrame(rows, columns=["Ticker", "Data", "Quantidade", "Preço (R$)"])
 
-    st.caption("Cada linha é **uma compra**. Use ➕ para adicionar lotes da mesma ação "
-               "em datas/preços diferentes — o consolidado é calculado automaticamente.")
+    st.markdown("**Compras lançadas** — clique numa célula para **corrigir**, ou selecione a "
+                "linha e use a 🗑 para **remover**; depois clique **Salvar**.")
     edited = st.data_editor(
         lot_df,
         column_config={
@@ -7148,7 +7186,8 @@ def _auto_refresh_stale() -> None:
                     _old = _fiis[_t]
                     _fiis[_t] = {**_nd, "qtd": _old.get("qtd", 0),
                                  "preco_medio": _old.get("preco_medio", 0.0),
-                                 "data_compra": _old.get("data_compra", "")}
+                                 "data_compra": _old.get("data_compra", ""),
+                                 "compras": _old.get("compras", [])}
         _fetch_macro.clear()   # também o painel Contexto de Mercado
         _save_all()
 
