@@ -5234,6 +5234,127 @@ def _weighted_avg_portfolio(positions: list[dict], field: str) -> Optional[float
     return sum(w * v for w, v in valid) / total_w
 
 
+def _show_portfolio_performance(positions: list[dict]) -> None:
+    """Métricas de risco/retorno da carteira (Sharpe, Sortino, vol., max drawdown,
+    Calmar). Monta o valor diário mantendo as QUANTIDADES ATUAIS constantes ao longo
+    do período, sobre preço AJUSTADO (inclui proventos = retorno total). Risk-free =
+    Selic anualizada do painel macro."""
+    st.markdown("#### Risco & Retorno (histórico)")
+
+    periods = {"6M": 126, "1A": 252, "2A": 504, "5A": 1260, "Máx": 10_000}
+    sel = st.radio("Período", list(periods.keys()), index=1, horizontal=True,
+                   key="perf_period", label_visibility="collapsed")
+    look = periods[sel]
+
+    # Série de valor por ticker (adjusted_close × qtd), interseção de datas
+    with st.spinner("Calculando risco e retorno…"):
+        series: dict[str, pd.Series] = {}
+        lens: dict[str, int] = {}
+        for p in positions:
+            _df = _fetch_price_history(p["ticker"])
+            if _df is not None and not _df.empty and "adjusted_close" in _df:
+                _s = _df.set_index("trade_date")["adjusted_close"].astype(float)
+                _s = _s[~_s.index.duplicated(keep="last")]
+                series[p["ticker"]] = _s * p["qtd"]
+                lens[p["ticker"]] = len(_s)
+
+    if not series:
+        st.caption("Histórico de preços indisponível para calcular as métricas.")
+        return
+
+    mat = pd.concat(series, axis=1).dropna()   # só datas com TODOS os ativos
+    if len(mat) < 30:
+        _curto = min(lens, key=lens.get) if lens else "—"
+        st.caption(
+            f"Histórico em comum insuficiente (~{len(mat)} pregões) — limitado pelo "
+            f"ativo de série mais curta (**{_curto}**). Métricas exigem ≥ 30 pregões.")
+        return
+
+    nav = mat.sum(axis=1)                       # valor da carteira por dia
+    nav = nav.iloc[-min(look, len(nav)):]       # recorta ao período escolhido
+    rets = nav.pct_change().dropna()
+    if len(rets) < 20:
+        st.caption("Período muito curto para métricas confiáveis. Escolha um intervalo maior.")
+        return
+
+    # Risk-free diário a partir da Selic anualizada (fallback 10%)
+    _selic = (_fetch_macro().get("selic") or 10.0) / 100.0
+    rf_d = (1 + _selic) ** (1 / 252) - 1
+
+    n      = len(rets)
+    anos   = n / 252
+    tot    = nav.iloc[-1] / nav.iloc[0] - 1
+    cagr   = (1 + tot) ** (1 / anos) - 1 if anos > 0 else tot
+    sd     = rets.std()                          # desvio diário (amostral)
+    vol    = sd * (252 ** 0.5)
+    exc    = rets - rf_d
+    sharpe = (exc.mean() / sd * (252 ** 0.5)) if sd > 0 else None
+    dd_dev = ((exc.clip(upper=0) ** 2).mean()) ** 0.5   # downside deviation (MAR=rf)
+    sortino = (exc.mean() / dd_dev * (252 ** 0.5)) if dd_dev > 0 else None
+    under  = nav / nav.cummax() - 1              # série underwater
+    max_dd = under.min()
+    calmar = (cagr / abs(max_dd)) if max_dd < 0 else None
+
+    def _ratio(v):  # cor por faixa (Sharpe/Sortino/Calmar)
+        if v is None:
+            return "N/D", "#9ea3b0"
+        c = "#34d399" if v >= 1 else ("#fbbf24" if v >= 0 else "#f87171")
+        return f"{v:.2f}", c
+
+    s_txt, s_c = _ratio(sharpe)
+    so_txt, so_c = _ratio(sortino)
+    ca_txt, ca_c = _ratio(calmar)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(
+        f"<div style='font-size:0.8rem;color:#9ea3b0'>Sharpe</div>"
+        f"<div style='font-size:1.6rem;font-weight:700;color:{s_c}'>{s_txt}</div>",
+        unsafe_allow_html=True)
+    c1.caption("Retorno por unidade de risco total. >1 bom.")
+    c2.markdown(
+        f"<div style='font-size:0.8rem;color:#9ea3b0'>Sortino</div>"
+        f"<div style='font-size:1.6rem;font-weight:700;color:{so_c}'>{so_txt}</div>",
+        unsafe_allow_html=True)
+    c2.caption("Como o Sharpe, mas só pune a volatilidade de queda.")
+    c3.markdown(
+        f"<div style='font-size:0.8rem;color:#9ea3b0'>Volatilidade (a.a.)</div>"
+        f"<div style='font-size:1.6rem;font-weight:700;color:#e8ecf4'>{vol*100:.1f}%</div>",
+        unsafe_allow_html=True)
+    c3.caption("Oscilação anualizada dos retornos.")
+    c4.markdown(
+        f"<div style='font-size:0.8rem;color:#9ea3b0'>Max Drawdown</div>"
+        f"<div style='font-size:1.6rem;font-weight:700;color:#f87171'>{max_dd*100:.1f}%</div>",
+        unsafe_allow_html=True)
+    c4.caption("Maior queda do topo ao fundo no período.")
+
+    d1, d2, d3 = st.columns(3)
+    d1.metric("Retorno no período", f"{tot*100:+.1f}%")
+    d2.metric("Retorno anualizado", f"{cagr*100:+.1f}%")
+    d3.metric("Calmar", ca_txt, help="Retorno anualizado ÷ |max drawdown|.")
+
+    # Gráfico underwater (drawdown ao longo do tempo)
+    figu = go.Figure()
+    figu.add_trace(go.Scatter(
+        x=under.index, y=under.values * 100, fill="tozeroy", mode="lines",
+        line=dict(color="#f87171", width=1),
+        fillcolor="rgba(248,113,113,0.18)",
+        hovertemplate="%{x|%d/%m/%y}: %{y:.1f}%<extra></extra>"))
+    figu.update_layout(
+        height=200, margin=dict(l=0, r=0, t=24, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        title=dict(text="Drawdown (distância do topo)", font=dict(color="#c8cce0", size=13),
+                   x=0, xanchor="left"),
+        xaxis=dict(color="#9e9e9e"),
+        yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)", ticksuffix="%"))
+    st.plotly_chart(figu, width="stretch", config={"displayModeBar": False})
+
+    st.caption(
+        f"Base: **{n} pregões** (~{anos*12:.0f} meses) · risk-free **Selic {_selic*100:.1f}% a.a.** · "
+        "preço **ajustado** (inclui proventos). Simula manter as **quantidades atuais** ao longo "
+        "do período — não considera aportes/vendas. Ativos recém-listados encurtam a janela "
+        "(usa só datas com todos em negociação).")
+
+
 def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     """Seção 📊 Análise da Carteira — visível apenas quando ⭐ Carteira com posições > 0."""
     # Preço ao vivo (yfinance) — carteira reflete o intraday; valuation segue Bolsai.
@@ -5416,6 +5537,9 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
             unsafe_allow_html=True,
         )
         st.markdown("")
+
+    # ── Risco & Retorno (histórico) ───────────────────────────────
+    _show_portfolio_performance(positions)
 
     # ── Tabela de posições ────────────────────────────────────────
     st.markdown("#### Posições")
