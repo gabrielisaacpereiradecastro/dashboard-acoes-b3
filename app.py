@@ -5545,6 +5545,210 @@ def _show_portfolio_performance(positions: list[dict]) -> None:
         "entender. Métricas **históricas**, educacionais — **não são recomendação de investimento.**")
 
 
+def _xirr(flows: list[tuple]) -> Optional[float]:
+    """Retorno anualizado ponderado por dinheiro (XIRR). flows = [(date, valor)],
+    aportes negativos e valor final positivo. Bisseção robusta; None se não converge."""
+    if len(flows) < 2:
+        return None
+    if not (any(a < 0 for _, a in flows) and any(a > 0 for _, a in flows)):
+        return None
+    t0 = min(d for d, _ in flows)
+
+    def _npv(r: float) -> float:
+        return sum(a / (1 + r) ** ((d - t0).days / 365.0) for d, a in flows)
+
+    lo, hi = -0.9999, 10.0
+    flo, fhi = _npv(lo), _npv(hi)
+    if flo * fhi > 0:
+        return None
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        fm = _npv(mid)
+        if abs(fm) < 1e-7:
+            return mid
+        if flo * fm < 0:
+            hi = mid
+        else:
+            lo, flo = mid, fm
+    return (lo + hi) / 2
+
+
+def _show_portfolio_backtest(acoes: dict, tickers: list[str]) -> None:
+    """Backtest da carteira real (usa as datas/preços dos lotes): patrimônio ao longo
+    do tempo, drawdown real, retorno (XIRR) e comparação com IBOV (BOVA11) e CDI —
+    mesmos aportes, mesmas datas. Preço ajustado (retorno total) nas ações e no IBOV."""
+    st.markdown("#### Backtest — sua carteira vs IBOV e CDI")
+
+    lots, sem_data = [], 0
+    for t in tickers:
+        for c in _migra_lotes(acoes.get(t, {})):
+            d = c.get("data")
+            if not d:
+                sem_data += 1
+                continue
+            try:
+                dd = pd.Timestamp(d).normalize()
+            except (ValueError, TypeError):
+                sem_data += 1
+                continue
+            lots.append((t, dd, int(c.get("qtd", 0) or 0), float(c.get("preco", 0) or 0)))
+
+    if not lots:
+        st.caption("Preencha **data e preço das compras** (em *Compras e Posições*) para rodar "
+                   "o backtest — ele reconstrói a carteira a partir de cada aporte.")
+        return
+
+    if not st.button("▶️ Rodar backtest", key="run_backtest"):
+        st.caption(f"{len(lots)} compra(s) com data cadastrada"
+                   + (f" · {sem_data} sem data (ficam de fora)" if sem_data else "")
+                   + ". Clique para reconstruir a evolução da carteira.")
+        return
+
+    start = min(l[1] for l in lots)
+    hoje = pd.Timestamp.today().normalize()
+
+    with st.spinner("Reconstruindo a carteira no histórico…"):
+        # Preço ajustado por ticker
+        px: dict[str, pd.Series] = {}
+        for t in {l[0] for l in lots}:
+            _df = _fetch_price_history(t)
+            if _df is not None and not _df.empty and "adjusted_close" in _df:
+                s = _df.set_index("trade_date")["adjusted_close"].astype(float)
+                px[t] = s[~s.index.duplicated(keep="last")]
+        if not px:
+            st.warning("Histórico de preços indisponível para as ações da carteira.")
+            return
+
+        anos = max(1, (hoje - start).days // 365 + 1)
+        _bdf = _fetch_ibov_vs_small(min(anos, 10))
+        bench = _bdf["Ibov"] if _bdf is not None else None
+
+        idx = pd.bdate_range(start, hoje)
+        pxm = pd.DataFrame(index=idx)
+        for t, s in px.items():
+            pxm[t] = s.reindex(idx, method="ffill")
+        pxm = pxm.ffill()
+
+        units = pd.DataFrame(0.0, index=idx, columns=list(px.keys()))
+        invest = pd.Series(0.0, index=idx)
+        for t, d, q, p in lots:
+            if t not in px or q <= 0:
+                continue
+            m = idx >= d
+            units.loc[m, t] += q
+            invest.loc[m] += q * p
+
+        E = (units * pxm).sum(axis=1).dropna()
+        if E.empty or len(E) < 5:
+            st.warning("Histórico insuficiente para o backtest (datas muito recentes ou "
+                       "sem cobertura de preço).")
+            return
+        idx = E.index
+        invest = invest.reindex(idx).ffill()
+
+        # IBOV — mesmos aportes (R$ reais), mesmas datas
+        B = None
+        if bench is not None:
+            bs = bench.reindex(idx, method="ffill").ffill()
+            B = pd.Series(0.0, index=idx)
+            for t, d, q, p in lots:
+                bd = bs.asof(d)
+                if pd.isna(bd) or bd <= 0:
+                    continue
+                m = idx >= d
+                B.loc[m] += (q * p) * (bs[m] / bd)
+
+        # CDI — aportes compostos à Selic atual (aprox. constante)
+        _selic = (_fetch_macro().get("selic") or 10.0) / 100.0
+        C = pd.Series(0.0, index=idx)
+        for t, d, q, p in lots:
+            m = idx >= d
+            yrs = pd.Series((idx[m] - d).days / 365.0, index=idx[m])
+            C.loc[m] += (q * p) * (1 + _selic) ** yrs
+
+    V = float(E.iloc[-1])
+    inv = float(invest.iloc[-1])
+    res = V - inv
+    flows = [(d, -(q * p)) for t, d, q, p in lots] + [(hoje, V)]
+    xirr = _xirr(flows)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Investido", _brl(inv, 0))
+    c2.metric("Valor atual", _brl(V, 0))
+    c3.metric("Resultado", _brl(res, 0),
+              f"{(res/inv*100):+.1f}%" if inv > 0 else None)
+    c4.metric("Retorno anualizado (XIRR)",
+              f"{xirr*100:+.1f}%" if xirr is not None else "N/D",
+              help="Retorno real ponderado pelo dinheiro e pelas datas dos aportes.")
+
+    # Comparação final (mesmos aportes/datas)
+    _bf = float(B.iloc[-1]) if B is not None else None
+    _cf = float(C.iloc[-1])
+    _linhas = [("Sua carteira", V, "#34d399")]
+    if _bf is not None:
+        _linhas.append(("IBOV (BOVA11)", _bf, "#7dd3fc"))
+    _linhas.append(("CDI", _cf, "#fbbf24"))
+    _best = max(v for _, v, _ in _linhas)
+    cmp_html = "<div style='display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 4px'>"
+    for nome, val, cor in _linhas:
+        _crown = " 👑" if abs(val - _best) < 1e-6 else ""
+        cmp_html += (
+            f"<div style='flex:1;min-width:150px;background:#151b26;border:1px solid #232b3a;"
+            f"border-left:4px solid {cor};border-radius:10px;padding:10px 14px'>"
+            f"<div style='color:#8b94a7;font-size:0.8rem'>{nome}{_crown}</div>"
+            f"<div style='color:{cor};font-size:1.3rem;font-weight:700'>{_brl(val,0)}</div></div>")
+    cmp_html += "</div>"
+    st.markdown("**Mesmos aportes, nas mesmas datas:**", unsafe_allow_html=True)
+    st.markdown(cmp_html, unsafe_allow_html=True)
+
+    # Curva de patrimônio
+    figc = go.Figure()
+    figc.add_trace(go.Scatter(x=E.index, y=E.values, name="Sua carteira",
+                              line=dict(color="#34d399", width=2),
+                              hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>Carteira</extra>"))
+    if B is not None:
+        figc.add_trace(go.Scatter(x=B.index, y=B.values, name="IBOV",
+                                  line=dict(color="#7dd3fc", width=1.5),
+                                  hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>IBOV</extra>"))
+    figc.add_trace(go.Scatter(x=C.index, y=C.values, name="CDI",
+                              line=dict(color="#fbbf24", width=1.2, dash="dot"),
+                              hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>CDI</extra>"))
+    figc.add_trace(go.Scatter(x=invest.index, y=invest.values, name="Investido (custo)",
+                              line=dict(color="#6b7280", width=1, dash="dash"),
+                              hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>Investido</extra>"))
+    figc.update_layout(
+        height=320, margin=dict(l=0, r=0, t=10, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(color="#9e9e9e"),
+        yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)", tickprefix="R$ "),
+        legend=dict(orientation="h", y=1.08, x=0, font=dict(color="#c8cce0"),
+                    bgcolor="rgba(0,0,0,0)"))
+    st.plotly_chart(figc, width="stretch", config={"displayModeBar": False})
+
+    # Drawdown real da carteira
+    under = (E / E.cummax() - 1) * 100
+    figd = go.Figure(go.Scatter(
+        x=under.index, y=under.values, fill="tozeroy", mode="lines",
+        line=dict(color="#f87171", width=1), fillcolor="rgba(248,113,113,0.18)",
+        hovertemplate="%{x|%d/%m/%y}: %{y:.1f}%<extra></extra>"))
+    figd.update_layout(
+        height=170, margin=dict(l=0, r=0, t=24, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        title=dict(text=f"Drawdown real · pior queda {under.min():.1f}%",
+                   font=dict(color="#c8cce0", size=13), x=0, xanchor="left"),
+        xaxis=dict(color="#9e9e9e"),
+        yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)", ticksuffix="%"))
+    st.plotly_chart(figd, width="stretch", config={"displayModeBar": False})
+
+    st.caption(
+        "Reconstrói a carteira lote a lote a partir de cada aporte. Preço **ajustado** "
+        "(retorno total) nas ações e no IBOV (BOVA11 como proxy); **CDI** composto à Selic "
+        "atual (aprox.). O IBOV/CDI recebem os **mesmos R$**, nas **mesmas datas**. "
+        "Os **proventos** que você sacou entram à parte (veja 💰 Proventos) — o benchmark "
+        "assume reinvestimento. Precisão depende das datas/preços dos lotes."
+        + (f"  ⚠️ {sem_data} compra(s) sem data ficaram de fora." if sem_data else ""))
+
+
 def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
     """Seção 📊 Análise da Carteira — visível apenas quando ⭐ Carteira com posições > 0."""
     # Preço ao vivo (yfinance) — carteira reflete o intraday; valuation segue Bolsai.
@@ -5730,6 +5934,9 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
 
     # ── Risco & Retorno (histórico) ───────────────────────────────
     _show_portfolio_performance(positions)
+
+    # ── Backtest (carteira real vs IBOV/CDI usando datas dos lotes) ──
+    _show_portfolio_backtest(acoes, [p["ticker"] for p in positions])
 
     # ── Tabela de posições ────────────────────────────────────────
     st.markdown("#### Posições")
