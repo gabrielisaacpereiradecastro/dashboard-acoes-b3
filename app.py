@@ -5486,54 +5486,53 @@ def _show_portfolio_performance(positions: list[dict]) -> None:
     max_dd = under.min()
     calmar = (cagr / abs(max_dd)) if max_dd < 0 else None
 
-    def _ratio(v):  # cor por faixa (Sharpe/Sortino/Calmar)
+    def _faixa(v: Optional[float], escala: str = "ratio"):
+        """(rótulo, cor) por faixa. Sharpe/Sortino e Calmar têm escalas diferentes."""
         if v is None:
-            return "N/D", "#9ea3b0"
-        c = "#34d399" if v >= 1 else ("#fbbf24" if v >= 0 else "#f87171")
-        return f"{v:.2f}", c
+            return None
+        if escala == "calmar":
+            return (("excelente", "#34d399") if v >= 3 else ("bom", "#34d399") if v >= 1
+                    else ("ok", "#fbbf24") if v >= 0.5 else ("fraco", "#f87171"))
+        return (("excelente", "#34d399") if v >= 2 else ("bom", "#34d399") if v >= 1
+                else ("modesto", "#fbbf24") if v >= 0 else ("ruim", "#f87171"))
 
-    s_txt, s_c = _ratio(sharpe)
-    so_txt, so_c = _ratio(sortino)
-    ca_txt, ca_c = _ratio(calmar)
+    def _tag(col, faixa) -> None:
+        if faixa:
+            col.markdown(
+                f"<div style='font-size:0.78rem;color:{faixa[1]};margin-top:-10px'>"
+                f"● {faixa[0]}</div>", unsafe_allow_html=True)
+
+    _f = lambda v: f"{v:.2f}" if v is not None else "N/D"
 
     _TIPS = {
         "sharpe":  "Retorno acima da Selic ÷ volatilidade TOTAL — quanto retorno extra por unidade "
-                   "de risco. Referência: <0 ruim (não bateu o risk-free), 0–1 modesto, 1–2 bom, >2 excelente.",
-        "sortino": "Como o Sharpe, mas no denominador usa só a volatilidade de QUEDA (ignora as "
-                   "oscilações para cima, que não incomodam). Costuma ser maior que o Sharpe.",
-        "vol":     "O quanto os retornos diários oscilam, anualizado. Não é bom nem ruim por si só — "
+                   "de risco. Faixa: <0 ruim (não bateu o CDI) · 0–1 modesto · 1–2 bom · >2 excelente.",
+        "sortino": "Como o Sharpe, mas no denominador usa só a volatilidade de QUEDA (ignora as altas, "
+                   "que não incomodam). Mesma escala do Sharpe; costuma ser maior que ele.",
+        "vol":     "O quanto os retornos diários oscilam, anualizado. Não é boa nem ruim isolada — "
                    "é o 'tamanho do balanço' da carteira. Ações brasileiras costumam ficar em 20–30%.",
         "dd":      "Maior queda do topo até o fundo no período — 'qual o pior tombo que eu teria "
-                   "aguentado?'. O gráfico underwater abaixo mostra essa distância do topo ao longo do tempo.",
-        "ret":     "Ganho total da carteira na janela, já incluindo proventos (preço ajustado).",
-        "cagr":    "Retorno equivalente ao ano (CAGR) do período.",
-        "calmar":  "Retorno anualizado ÷ |max drawdown|. Recompensa quem entrega retorno sem sustos "
-                   "grandes; quanto maior, melhor.",
+                   "aguentado?'. Quanto menos negativo, melhor. O gráfico abaixo mostra ao longo do tempo.",
+        "ret":     "Ganho TOTAL acumulado na janela escolhida (tudo que a carteira rendeu no período, "
+                   "ex.: em ~1 ano). Já inclui proventos (preço ajustado).",
+        "cagr":    "O MESMO ganho, mas como taxa POR ANO (CAGR). Em janela de ~1 ano fica quase igual "
+                   "ao retorno do período; em 2A/5A eles divergem — o anualizado é a média anual, "
+                   "o do período é o acumulado total.",
+        "calmar":  "Retorno anualizado ÷ |Max Drawdown| — retorno por unidade de tombo. Sem teto fixo; "
+                   "faixa usual: <0,5 fraco · 0,5–1 ok · 1–3 bom · >3 excelente. Fica negativo se o "
+                   "retorno do período for negativo.",
     }
 
-    def _ilbl(label: str, tip: str) -> str:
-        _t = tip.replace('"', "&quot;")
-        return (f"<div style='font-size:0.8rem;color:#9ea3b0'>{label} "
-                f"<span title=\"{_t}\" style='cursor:help;opacity:0.55'>ⓘ</span></div>")
-
     c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(_ilbl("Sharpe", _TIPS["sharpe"])
-                + f"<div style='font-size:1.6rem;font-weight:700;color:{s_c}'>{s_txt}</div>",
-                unsafe_allow_html=True)
-    c2.markdown(_ilbl("Sortino", _TIPS["sortino"])
-                + f"<div style='font-size:1.6rem;font-weight:700;color:{so_c}'>{so_txt}</div>",
-                unsafe_allow_html=True)
-    c3.markdown(_ilbl("Volatilidade (a.a.)", _TIPS["vol"])
-                + f"<div style='font-size:1.6rem;font-weight:700;color:#e8ecf4'>{vol*100:.1f}%</div>",
-                unsafe_allow_html=True)
-    c4.markdown(_ilbl("Max Drawdown", _TIPS["dd"])
-                + f"<div style='font-size:1.6rem;font-weight:700;color:#f87171'>{max_dd*100:.1f}%</div>",
-                unsafe_allow_html=True)
+    c1.metric("Sharpe", _f(sharpe), help=_TIPS["sharpe"]);   _tag(c1, _faixa(sharpe))
+    c2.metric("Sortino", _f(sortino), help=_TIPS["sortino"]); _tag(c2, _faixa(sortino))
+    c3.metric("Volatilidade (a.a.)", f"{vol*100:.1f}%", help=_TIPS["vol"])
+    c4.metric("Max Drawdown", f"{max_dd*100:.1f}%", help=_TIPS["dd"])
 
     d1, d2, d3 = st.columns(3)
     d1.metric("Retorno no período", f"{tot*100:+.1f}%", help=_TIPS["ret"])
     d2.metric("Retorno anualizado", f"{cagr*100:+.1f}%", help=_TIPS["cagr"])
-    d3.metric("Calmar", ca_txt, help=_TIPS["calmar"])
+    d3.metric("Calmar", _f(calmar), help=_TIPS["calmar"]); _tag(d3, _faixa(calmar, "calmar"))
 
     # Gráfico underwater (drawdown ao longo do tempo)
     figu = go.Figure()
@@ -5555,7 +5554,7 @@ def _show_portfolio_performance(positions: list[dict]) -> None:
         f"Base: **{n} pregões** (~{anos*12:.0f} meses) · risk-free **Selic {_selic*100:.1f}% a.a.** · "
         "preço **ajustado** (inclui proventos). Simula manter as **quantidades atuais** ao longo "
         "do período — não considera aportes/vendas. Ativos recém-listados encurtam a janela "
-        "(usa só datas com todos em negociação). Passe o mouse no **ⓘ** de cada índice para "
+        "(usa só datas com todos em negociação). Passe o mouse no **?** de cada índice para "
         "entender. Métricas **históricas**, educacionais — **não são recomendação de investimento.**")
 
 
