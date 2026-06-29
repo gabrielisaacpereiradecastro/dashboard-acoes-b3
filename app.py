@@ -6356,7 +6356,7 @@ def _show_proventos_ativo(ticker: str, preco_medio: float = 0.0, qtd: int = 0,
     # Histórico de pagamentos
     if pays:
         _df = pd.DataFrame([{
-            "Tipo": it["type"] or "—",
+            "Tipo": it["type"] or ("Rendimento" if is_fii else "—"),
             "Data-com": it["ex"] or "—",
             "Pagamento": it["pay"] or "—",
             "Valor/cota": f"R$ {it['value']:.4f}".rstrip("0").rstrip("."),
@@ -6430,7 +6430,7 @@ def _show_proventos_area() -> None:
                 _dt = _it["pay"] or _it["ex"]   # FII não tem payment_date → usa data-com
                 if _dt and _dt >= _hoje:
                     _prox.append({"Ticker": _t, "Pagamento": _dt,
-                                  "Tipo": _it["type"] or "—",
+                                  "Tipo": _it["type"] or ("Rendimento" if _cls == "FII" else "—"),
                                   "Valor/cota": _it["value"], "Renda (R$)": _it["value"] * _q})
                 _mk = (_dt or "")[:7]   # YYYY-MM (pagamento ou data-com)
                 if _mk in _mensal:
