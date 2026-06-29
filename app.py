@@ -5244,7 +5244,8 @@ def _show_fii_carteira(fiis_atuais: dict) -> None:
                 "Preço Médio (R$)": st.column_config.NumberColumn(
                     "Preço Médio (R$)", min_value=0.0, format="%.2f", width="medium",
                     help="Opcional — para calcular lucro/prejuízo"),
-                "Data de Compra": st.column_config.DateColumn("Data de Compra", width="medium"),
+                "Data de Compra": st.column_config.DateColumn(
+                    "Data de Compra", width="medium", format="DD/MM/YYYY"),
             },
             hide_index=True, width="stretch", key="fii_qty_data_editor",
         )
@@ -5254,8 +5255,7 @@ def _show_fii_carteira(fiis_atuais: dict) -> None:
                 _t = str(_row["Ticker"])
                 _nq = int(_row["Quantidade"] or 0)
                 _npm = float(_row["Preço Médio (R$)"] or 0)
-                _dco = _row["Data de Compra"]
-                _ndc = _dco.isoformat() if _dco is not None else ""
+                _ndc = _date_cell_to_iso(_row["Data de Compra"])
                 if _t in fiis_atuais:
                     _o = fiis_atuais[_t]
                     if (_o.get("qtd", 0) != _nq or _o.get("preco_medio", 0) != _npm
@@ -5322,6 +5322,17 @@ _PORTFOLIO_COLORS = [
 ]
 
 
+def _date_cell_to_iso(cell) -> str:
+    """Converte a célula 'Data de Compra' do data_editor em ISO (YYYY-MM-DD) ou ''.
+    Trata None, NaT, NaN (float), datetime.date/datetime e pd.Timestamp."""
+    try:
+        if cell is None or pd.isna(cell):
+            return ""
+        return pd.Timestamp(cell).date().isoformat()
+    except (ValueError, TypeError):
+        return ""
+
+
 def _qty_editor(enriched: list[dict], acoes: dict) -> None:
     """Exibe editor de quantidades, preço médio e data de compra para a Carteira."""
     from datetime import date as _date
@@ -5354,7 +5365,7 @@ def _qty_editor(enriched: list[dict], acoes: dict) -> None:
                     help="Opcional — preço médio de compra para calcular lucro/prejuízo",
                 ),
                 "Data de Compra": st.column_config.DateColumn(
-                    "Data de Compra", width="medium",
+                    "Data de Compra", width="medium", format="DD/MM/YYYY",
                     help="Opcional — data de compra ou início da posição",
                 ),
             },
@@ -5368,8 +5379,7 @@ def _qty_editor(enriched: list[dict], acoes: dict) -> None:
                 t       = str(row["Ticker"])
                 new_qty = int(row["Quantidade"] or 0)
                 new_pm  = float(row["Preço Médio (R$)"] or 0)
-                dc_obj  = row["Data de Compra"]
-                new_dc  = dc_obj.isoformat() if dc_obj is not None else ""
+                new_dc  = _date_cell_to_iso(row["Data de Compra"])
                 if t in acoes:
                     old = acoes[t]
                     if (old.get("qtd", 0) != new_qty or
@@ -5470,32 +5480,44 @@ def _show_portfolio_performance(positions: list[dict]) -> None:
     so_txt, so_c = _ratio(sortino)
     ca_txt, ca_c = _ratio(calmar)
 
+    _TIPS = {
+        "sharpe":  "Retorno acima da Selic ÷ volatilidade TOTAL — quanto retorno extra por unidade "
+                   "de risco. Referência: <0 ruim (não bateu o risk-free), 0–1 modesto, 1–2 bom, >2 excelente.",
+        "sortino": "Como o Sharpe, mas no denominador usa só a volatilidade de QUEDA (ignora as "
+                   "oscilações para cima, que não incomodam). Costuma ser maior que o Sharpe.",
+        "vol":     "O quanto os retornos diários oscilam, anualizado. Não é bom nem ruim por si só — "
+                   "é o 'tamanho do balanço' da carteira. Ações brasileiras costumam ficar em 20–30%.",
+        "dd":      "Maior queda do topo até o fundo no período — 'qual o pior tombo que eu teria "
+                   "aguentado?'. O gráfico underwater abaixo mostra essa distância do topo ao longo do tempo.",
+        "ret":     "Ganho total da carteira na janela, já incluindo proventos (preço ajustado).",
+        "cagr":    "Retorno equivalente ao ano (CAGR) do período.",
+        "calmar":  "Retorno anualizado ÷ |max drawdown|. Recompensa quem entrega retorno sem sustos "
+                   "grandes; quanto maior, melhor.",
+    }
+
+    def _ilbl(label: str, tip: str) -> str:
+        _t = tip.replace('"', "&quot;")
+        return (f"<div style='font-size:0.8rem;color:#9ea3b0'>{label} "
+                f"<span title=\"{_t}\" style='cursor:help;opacity:0.55'>ⓘ</span></div>")
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(
-        f"<div style='font-size:0.8rem;color:#9ea3b0'>Sharpe</div>"
-        f"<div style='font-size:1.6rem;font-weight:700;color:{s_c}'>{s_txt}</div>",
-        unsafe_allow_html=True)
-    c1.caption("Retorno por unidade de risco total. >1 bom.")
-    c2.markdown(
-        f"<div style='font-size:0.8rem;color:#9ea3b0'>Sortino</div>"
-        f"<div style='font-size:1.6rem;font-weight:700;color:{so_c}'>{so_txt}</div>",
-        unsafe_allow_html=True)
-    c2.caption("Como o Sharpe, mas só pune a volatilidade de queda.")
-    c3.markdown(
-        f"<div style='font-size:0.8rem;color:#9ea3b0'>Volatilidade (a.a.)</div>"
-        f"<div style='font-size:1.6rem;font-weight:700;color:#e8ecf4'>{vol*100:.1f}%</div>",
-        unsafe_allow_html=True)
-    c3.caption("Oscilação anualizada dos retornos.")
-    c4.markdown(
-        f"<div style='font-size:0.8rem;color:#9ea3b0'>Max Drawdown</div>"
-        f"<div style='font-size:1.6rem;font-weight:700;color:#f87171'>{max_dd*100:.1f}%</div>",
-        unsafe_allow_html=True)
-    c4.caption("Maior queda do topo ao fundo no período.")
+    c1.markdown(_ilbl("Sharpe", _TIPS["sharpe"])
+                + f"<div style='font-size:1.6rem;font-weight:700;color:{s_c}'>{s_txt}</div>",
+                unsafe_allow_html=True)
+    c2.markdown(_ilbl("Sortino", _TIPS["sortino"])
+                + f"<div style='font-size:1.6rem;font-weight:700;color:{so_c}'>{so_txt}</div>",
+                unsafe_allow_html=True)
+    c3.markdown(_ilbl("Volatilidade (a.a.)", _TIPS["vol"])
+                + f"<div style='font-size:1.6rem;font-weight:700;color:#e8ecf4'>{vol*100:.1f}%</div>",
+                unsafe_allow_html=True)
+    c4.markdown(_ilbl("Max Drawdown", _TIPS["dd"])
+                + f"<div style='font-size:1.6rem;font-weight:700;color:#f87171'>{max_dd*100:.1f}%</div>",
+                unsafe_allow_html=True)
 
     d1, d2, d3 = st.columns(3)
-    d1.metric("Retorno no período", f"{tot*100:+.1f}%")
-    d2.metric("Retorno anualizado", f"{cagr*100:+.1f}%")
-    d3.metric("Calmar", ca_txt, help="Retorno anualizado ÷ |max drawdown|.")
+    d1.metric("Retorno no período", f"{tot*100:+.1f}%", help=_TIPS["ret"])
+    d2.metric("Retorno anualizado", f"{cagr*100:+.1f}%", help=_TIPS["cagr"])
+    d3.metric("Calmar", ca_txt, help=_TIPS["calmar"])
 
     # Gráfico underwater (drawdown ao longo do tempo)
     figu = go.Figure()
@@ -5517,30 +5539,8 @@ def _show_portfolio_performance(positions: list[dict]) -> None:
         f"Base: **{n} pregões** (~{anos*12:.0f} meses) · risk-free **Selic {_selic*100:.1f}% a.a.** · "
         "preço **ajustado** (inclui proventos). Simula manter as **quantidades atuais** ao longo "
         "do período — não considera aportes/vendas. Ativos recém-listados encurtam a janela "
-        "(usa só datas com todos em negociação).")
-
-    with st.expander("ℹ️ Como ler estes indicadores (educacional)"):
-        st.markdown(
-            "Todas as métricas são **históricas** — descrevem como a carteira se comportou no "
-            "passado, **não preveem** o futuro. Use como termômetro de risco, não como recomendação.\n\n"
-            "- **Sharpe** — retorno **acima da Selic** dividido pela volatilidade **total**. "
-            "Mede quanto retorno extra você ganhou por unidade de risco. Referência geral: "
-            "**<0** ruim (não bateu o risk-free), **0–1** modesto, **1–2** bom, **>2** excelente.\n"
-            "- **Sortino** — igual ao Sharpe, mas no denominador usa só a volatilidade de **queda** "
-            "(ignora as oscilações para cima, que não incomodam o investidor). Costuma ser **maior** "
-            "que o Sharpe; é uma leitura mais justa para quem só se importa com o risco de perder.\n"
-            "- **Volatilidade (a.a.)** — o quanto os retornos diários oscilam, anualizado. "
-            "Não diz se é bom ou ruim por si só — é o 'tamanho do balanço' da carteira. "
-            "Ações brasileiras costumam ficar na casa de 20–30%.\n"
-            "- **Max Drawdown** — a **maior queda do topo até o fundo** no período. Responde "
-            "'qual o pior tombo que eu teria aguentado?'. O gráfico *underwater* mostra essa "
-            "distância do topo ao longo do tempo (0% = em nova máxima).\n"
-            "- **Calmar** — retorno anualizado dividido pelo |max drawdown|. Recompensa quem "
-            "entrega retorno **sem sustos grandes**; quanto maior, melhor.\n"
-            "- **Retorno no período / anualizado** — ganho total da janela e seu equivalente "
-            "ao ano (CAGR). Inclui proventos (preço ajustado).\n\n"
-            "⚠️ Ferramenta **educacional**. As referências de faixa são convenções de mercado, "
-            "não regras; o risk-free usado é a Selic atual. **Não é recomendação de investimento.**")
+        "(usa só datas com todos em negociação). Passe o mouse no **ⓘ** de cada índice para "
+        "entender. Métricas **históricas**, educacionais — **não são recomendação de investimento.**")
 
 
 def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
