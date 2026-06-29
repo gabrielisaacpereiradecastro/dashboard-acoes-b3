@@ -6341,6 +6341,18 @@ def _show_proventos_area() -> None:
     _prox = []   # próximos pagamentos
     from datetime import date as _date
     _hoje = _date.today().isoformat()
+
+    # Eixo dos últimos 12 meses (cronológico) p/ o gráfico mensal empilhado
+    _today = _date.today()
+    _meses, _yy, _mm = [], _today.year, _today.month
+    for _ in range(12):
+        _meses.append(f"{_yy:04d}-{_mm:02d}")
+        _mm -= 1
+        if _mm == 0:
+            _mm, _yy = 12, _yy - 1
+    _meses = _meses[::-1]
+    _mensal = {_m: {"Ação": 0.0, "FII": 0.0} for _m in _meses}
+
     with st.spinner("Buscando proventos das posições…"):
         for _cls, _t, _q, _pm in _pos:
             _data = _fetch_dividends(_t)
@@ -6360,6 +6372,9 @@ def _show_proventos_area() -> None:
                     _prox.append({"Ticker": _t, "Pagamento": _it["pay"],
                                   "Tipo": _it["type"] or "—",
                                   "Valor/cota": _it["value"], "Renda (R$)": _it["value"] * _q})
+                _mk = (_it["pay"] or "")[:7]   # YYYY-MM do pagamento
+                if _mk in _mensal:
+                    _mensal[_mk][_cls] += _it["value"] * _q
 
     # Métricas de topo
     c1, c2, c3 = st.columns(3)
@@ -6368,6 +6383,35 @@ def _show_proventos_area() -> None:
     if _custo_total > 0:
         c3.metric("Yield on Cost da carteira", f"{_renda_total/_custo_total*100:.1f}%",
                   help="Renda anual estimada ÷ custo total das posições.")
+
+    # Gráfico mensal: barras empilhadas (Ações + FIIs) + linha tracejada da média
+    _acao = [_mensal[_m]["Ação"] for _m in _meses]
+    _fiis = [_mensal[_m]["FII"] for _m in _meses]
+    _tot = [a + f for a, f in zip(_acao, _fiis)]
+    if sum(_tot) > 0:
+        _media = sum(_tot) / len(_tot)
+        _lbl = [f"{_m[5:7]}/{_m[2:4]}" for _m in _meses]   # MM/AA
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=_lbl, y=_acao, name="Ações", marker_color="#34d399",
+                             hovertemplate="Ações: R$ %{y:.0f}<extra></extra>"))
+        fig.add_trace(go.Bar(x=_lbl, y=_fiis, name="FIIs", marker_color="#7dd3fc",
+                             hovertemplate="FIIs: R$ %{y:.0f}<extra></extra>"))
+        fig.add_hline(y=_media, line_dash="dash", line_color="#fbbf24", line_width=2,
+                      annotation_text=f"Média: R$ {_media:,.0f}".replace(",", "."),
+                      annotation_position="top left", annotation_font_color="#fbbf24")
+        fig.update_layout(
+            barmode="stack", height=320, margin=dict(l=0, r=0, t=34, b=0),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            xaxis=dict(color="#9e9e9e"),
+            yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)", tickprefix="R$ "),
+            legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#c8cce0"),
+                        orientation="h", y=1.14, x=0),
+            title=dict(text="Proventos recebidos por mês (últimos 12 meses)",
+                       font=dict(size=13, color="#e8eaf6")))
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        st.caption("Barras empilham **Ações + FIIs** por mês; a linha tracejada é a "
+                   "**média mensal**. Meses acima da linha superaram a média — útil pra ver "
+                   "a sazonalidade (FIIs pagam todo mês; ações concentram em alguns).")
 
     # Ranking por contribuição
     _df = pd.DataFrame(_rows).sort_values("Renda anual (R$)", ascending=False)
