@@ -6492,6 +6492,45 @@ def _show_proventos_area() -> None:
         st.caption("Nenhum pagamento futuro anunciado encontrado nos dados.")
 
 
+def _auto_refresh_stale() -> None:
+    """Atualização inteligente: 1× por sessão, atualiza ações + FIIs + macro se os
+    dados forem de um pregão (BRT) anterior. Flag de sessão evita re-fetch a cada
+    rerun do Streamlit (poupa quota); pula se já foi atualizado hoje."""
+    if st.session_state.get("_auto_refreshed"):
+        return
+    st.session_state["_auto_refreshed"] = True   # marca já (evita repetição/loop)
+
+    _acoes = st.session_state.get("acoes") or {}
+    _fiis = st.session_state.fiis_listas.get(st.session_state.get("lista_fii_atual", ""), {})
+    if not _acoes and not _fiis:
+        return
+
+    # Data (BRT) mais recente entre as ações — datas ISO comparam como string.
+    _today = _now_bsb().date().isoformat()
+    _newest_day = ""
+    for _e in _acoes.values():
+        _d = (_e.get("updated_at") or "")[:10]
+        if _d > _newest_day:
+            _newest_day = _d
+    if _acoes and _newest_day >= _today:
+        return   # já atualizado hoje → não gasta quota
+
+    with st.spinner("Atualizando dados do dia…"):
+        if _acoes:
+            _update_all()
+        if _fiis:
+            _fetch_fii.clear()
+            for _t in list(_fiis.keys()):
+                _nd = _fetch_fii(_t)
+                if not _nd.get("error"):
+                    _old = _fiis[_t]
+                    _fiis[_t] = {**_nd, "qtd": _old.get("qtd", 0),
+                                 "preco_medio": _old.get("preco_medio", 0.0),
+                                 "data_compra": _old.get("data_compra", "")}
+        _fetch_macro.clear()   # também o painel Contexto de Mercado
+        _save_all()
+
+
 # ────────────────────────────────────────────────────────────────
 # App principal
 # ────────────────────────────────────────────────────────────────
@@ -6563,6 +6602,9 @@ footer {visibility: hidden;}
         return
 
     _init_state()
+
+    # Atualização inteligente (1×/sessão, só se dados de pregão anterior)
+    _auto_refresh_stale()
 
     # Avalia alertas antes do sidebar (alimenta o badge); salva se acks mudaram
     _alert_res, _alert_changed = _eval_alerts_global()
