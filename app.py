@@ -3849,6 +3849,124 @@ def _classic_strategy_pick(key: str, cands: list[dict]) -> list[dict]:
     return []
 
 
+def _backtest_basket(tickers: list[str], *, key: str,
+                     price_fn=_fetch_price_history, bench_fn=None,
+                     bench_label: str = "IBOV (BOVA11)") -> None:
+    """Backtest de uma CESTA equal-weight: simula manter a cesta ATUAL no histórico
+    (com rebalanceamento opcional) vs benchmark e CDI. Base 100, preço ajustado.
+    ⚠️ Usa a composição de HOJE → viés de look-ahead/sobrevivência (declarado)."""
+    if bench_fn is None:
+        bench_fn = lambda anos: (_fetch_ibov_vs_small(min(anos, 10))["Ibov"]
+                                 if _fetch_ibov_vs_small(min(anos, 10)) is not None else None)
+    st.markdown("#### 📈 Backtest desta cesta (equal weight)")
+    st.caption("Simula ter mantido **a cesta de hoje** ao longo do período, com pesos iguais. "
+               "⚠️ Tem **viés de look-ahead/sobrevivência** — usa quem passa no filtro HOJE, não "
+               "quem passaria no passado (não temos fundamentos históricos por trimestre). "
+               "Leia como termômetro, não como retorno realizável.")
+
+    pw = {"1A": 252, "2A": 504, "3A": 756, "5A": 1260}
+    rw = {"Anual": 252, "Semestral": 126, "Trimestral": 63, "Sem rebalanceamento": None}
+    _c = st.columns(2)
+    look = pw[_c[0].selectbox("Janela", list(pw), index=2, key=f"{key}_win")]
+    rebal_sel = _c[1].selectbox("Rebalanceamento", list(rw), index=0, key=f"{key}_reb")
+    rebal = rw[rebal_sel]
+
+    if not st.button("▶️ Rodar backtest da estratégia", key=f"{key}_run", width="stretch"):
+        return
+
+    with st.spinner("Simulando a cesta no histórico…"):
+        px: dict[str, pd.Series] = {}
+        for t in tickers:
+            df = price_fn(t)
+            if df is not None and not df.empty and "adjusted_close" in df:
+                s = df.set_index("trade_date")["adjusted_close"].astype(float)
+                px[t] = s[~s.index.duplicated(keep="last")]
+        if len(px) < 2:
+            st.warning("Histórico insuficiente para a cesta.")
+            return
+        mat = pd.concat(px, axis=1).dropna()
+        if len(mat) < 30:
+            st.warning("Pouco histórico em comum entre os ativos da cesta.")
+            return
+        mat = mat.iloc[-look:]
+        n_ativos = mat.shape[1]
+        w = 1.0 / n_ativos
+        rmat = mat.pct_change().fillna(0.0).values
+
+        vals = [w] * n_ativos            # valor por ativo (soma = 1 no início)
+        port, last = [1.0], 0
+        for i in range(1, len(mat.index)):
+            vals = [vals[j] * (1 + rmat[i][j]) for j in range(n_ativos)]
+            p = sum(vals)
+            port.append(p)
+            if rebal and (i - last) >= rebal:
+                vals = [p * w] * n_ativos
+                last = i
+        E = pd.Series(port, index=mat.index) * 100.0
+
+        _anos = max(1, int(len(E) / 252) + 1)
+        bench = bench_fn(_anos)
+        B = None
+        if bench is not None:
+            bs = bench.reindex(mat.index, method="ffill").ffill()
+            if bs.notna().sum() > 5 and bs.iloc[0] > 0:
+                B = bs / bs.iloc[0] * 100.0
+        _selic = (_fetch_macro().get("selic") or 10.0) / 100.0
+        C = pd.Series([100.0 * (1 + _selic) ** ((d.days) / 365.0)
+                       for d in (E.index - E.index[0])], index=E.index)
+
+    tot = E.iloc[-1] / 100 - 1
+    cagr = (E.iloc[-1] / 100) ** (1 / (len(E) / 252)) - 1
+    er = E.pct_change().dropna()
+    vol = er.std() * (252 ** 0.5)
+    mdd = (E / E.cummax() - 1).min()
+
+    m = st.columns(4)
+    m[0].metric("Retorno no período", f"{tot*100:+.1f}%")
+    m[1].metric("Retorno anualizado", f"{cagr*100:+.1f}%")
+    m[2].metric("Volatilidade (a.a.)", f"{vol*100:.1f}%")
+    m[3].metric("Max Drawdown", f"{mdd*100:.1f}%")
+
+    _bn = bench_label.split(" (")[0]
+    linhas = [("Cesta", E.iloc[-1], "#34d399")]
+    if B is not None:
+        linhas.append((_bn, B.iloc[-1], "#7dd3fc"))
+    linhas.append(("CDI", C.iloc[-1], "#fbbf24"))
+    _best = max(v for _, v, _ in linhas)
+    html = "<div style='display:flex;gap:10px;flex-wrap:wrap;margin:6px 0'>"
+    for nome, val, cor in linhas:
+        _cr = " 👑" if abs(val - _best) < 1e-6 else ""
+        html += (f"<div style='flex:1;min-width:130px;background:#151b26;border:1px solid #232b3a;"
+                 f"border-left:4px solid {cor};border-radius:10px;padding:9px 13px'>"
+                 f"<div style='color:#8b94a7;font-size:0.78rem'>{nome}{_cr} (R$100→)</div>"
+                 f"<div style='color:{cor};font-size:1.25rem;font-weight:700'>{_brl(val,0)}</div></div>")
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=E.index, y=E.values, name="Cesta",
+                             line=dict(color="#34d399", width=2),
+                             hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>Cesta</extra>"))
+    if B is not None:
+        fig.add_trace(go.Scatter(x=B.index, y=B.values, name=_bn,
+                                 line=dict(color="#7dd3fc", width=1.5),
+                                 hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>" + _bn + "</extra>"))
+    fig.add_trace(go.Scatter(x=C.index, y=C.values, name="CDI",
+                             line=dict(color="#fbbf24", width=1.2, dash="dot"),
+                             hovertemplate="%{x|%d/%m/%y}: R$ %{y:,.0f}<extra>CDI</extra>"))
+    fig.update_layout(
+        height=320, margin=dict(l=0, r=0, t=10, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(color="#9e9e9e"),
+        yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)", tickprefix="R$ "),
+        legend=dict(orientation="h", y=1.08, x=0, font=dict(color="#c8cce0"),
+                    bgcolor="rgba(0,0,0,0)"))
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+    st.caption(f"Base **R$ 100** no início · **equal weight** ({n_ativos} ativos com histórico em "
+               f"comum) · rebalanceamento **{rebal_sel.lower()}** · preço ajustado (retorno total). "
+               "Benchmark e CDI partem do mesmo R$ 100.")
+
+
 def _render_classic_strategy(key: str) -> None:
     """Renderiza uma estratégia clássica: busca universo amplo, filtra/ranqueia local."""
     meta = _CLASSIC_STRATEGIES[key]
@@ -3894,6 +4012,9 @@ def _render_classic_strategy(key: str) -> None:
             f"Adicionadas à {st.session_state.lista_atual}: {', '.join(added)}" if added else "")
         st.session_state.flash_errors = erros
         st.rerun()
+
+    st.divider()
+    _backtest_basket([e["ticker"] for e in enriched_scr], key=f"strat_bt_{key}")
 
 
 def _show_screener():
