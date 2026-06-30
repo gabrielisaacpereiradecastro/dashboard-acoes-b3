@@ -3851,18 +3851,18 @@ def _classic_strategy_pick(key: str, cands: list[dict]) -> list[dict]:
 
 def _backtest_basket(tickers: list[str], *, key: str,
                      price_fn=_fetch_price_history, bench_fn=None,
-                     bench_label: str = "IBOV (BOVA11)") -> None:
-    """Backtest de uma CESTA equal-weight: simula manter a cesta ATUAL no histórico
-    (com rebalanceamento opcional) vs benchmark e CDI. Base 100, preço ajustado.
-    ⚠️ Usa a composição de HOJE → viés de look-ahead/sobrevivência (declarado)."""
+                     bench_label: str = "IBOV (BOVA11)",
+                     weights: Optional[dict] = None, aviso: Optional[str] = None) -> None:
+    """Backtest de uma CESTA no histórico (com rebalanceamento opcional) vs benchmark
+    e CDI. Base 100, preço ajustado. `weights` (ticker→peso) opcional — None = equal
+    weight. `aviso` = caption de ressalva específico (ex.: look-ahead em estratégia)."""
     if bench_fn is None:
         bench_fn = lambda anos: (_fetch_ibov_vs_small(min(anos, 10))["Ibov"]
                                  if _fetch_ibov_vs_small(min(anos, 10)) is not None else None)
-    st.markdown("#### 📈 Backtest desta cesta (equal weight)")
-    st.caption("Simula ter mantido **a cesta de hoje** ao longo do período, com pesos iguais. "
-               "⚠️ Tem **viés de look-ahead/sobrevivência** — usa quem passa no filtro HOJE, não "
-               "quem passaria no passado (não temos fundamentos históricos por trimestre). "
-               "Leia como termômetro, não como retorno realizável.")
+    _peso_label = "pesos personalizados" if weights else "equal weight"
+    st.markdown(f"#### 📈 Backtest da cesta ({_peso_label})")
+    if aviso:
+        st.caption(aviso)
 
     pw = {"1A": 252, "2A": 504, "3A": 756, "5A": 1260}
     rw = {"Anual": 252, "Semestral": 126, "Trimestral": 63, "Sem rebalanceamento": None}
@@ -3890,17 +3890,22 @@ def _backtest_basket(tickers: list[str], *, key: str,
             return
         mat = mat.iloc[-look:]
         n_ativos = mat.shape[1]
-        w = 1.0 / n_ativos
+        if weights:   # pesos alinhados às colunas com histórico, normalizados
+            _raw = [max(0.0, float(weights.get(c, 0))) for c in mat.columns]
+            _tw = sum(_raw) or 1.0
+            wlist = [x / _tw for x in _raw]
+        else:
+            wlist = [1.0 / n_ativos] * n_ativos
         rmat = mat.pct_change().fillna(0.0).values
 
-        vals = [w] * n_ativos            # valor por ativo (soma = 1 no início)
+        vals = list(wlist)               # valor por ativo (soma = 1 no início)
         port, last = [1.0], 0
         for i in range(1, len(mat.index)):
             vals = [vals[j] * (1 + rmat[i][j]) for j in range(n_ativos)]
             p = sum(vals)
             port.append(p)
             if rebal and (i - last) >= rebal:
-                vals = [p * w] * n_ativos
+                vals = [p * wlist[j] for j in range(n_ativos)]
                 last = i
         E = pd.Series(port, index=mat.index) * 100.0
 
@@ -3962,7 +3967,7 @@ def _backtest_basket(tickers: list[str], *, key: str,
         legend=dict(orientation="h", y=1.08, x=0, font=dict(color="#c8cce0"),
                     bgcolor="rgba(0,0,0,0)"))
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-    st.caption(f"Base **R$ 100** no início · **equal weight** ({n_ativos} ativos com histórico em "
+    st.caption(f"Base **R$ 100** no início · **{_peso_label}** ({n_ativos} ativos com histórico em "
                f"comum) · rebalanceamento **{rebal_sel.lower()}** · preço ajustado (retorno total). "
                "Benchmark e CDI partem do mesmo R$ 100.")
 
@@ -4014,7 +4019,52 @@ def _render_classic_strategy(key: str) -> None:
         st.rerun()
 
     st.divider()
-    _backtest_basket([e["ticker"] for e in enriched_scr], key=f"strat_bt_{key}")
+    _backtest_basket(
+        [e["ticker"] for e in enriched_scr], key=f"strat_bt_{key}",
+        aviso="Simula manter **a cesta de hoje** ao longo do período. ⚠️ Tem **viés de "
+              "look-ahead/sobrevivência** — usa quem passa no filtro HOJE, não quem passaria "
+              "no passado (não temos fundamentos históricos por trimestre). Termômetro, não "
+              "retorno realizável.")
+
+
+def _show_manual_basket() -> None:
+    """Backtest de uma cesta MANUAL (tickers + pesos digitados pelo usuário)."""
+    with st.expander("🧺 Backtest de cesta manual", expanded=False):
+        st.caption("Monte uma cesta própria: digite os tickers, escolha pesos iguais ou "
+                   "personalizados, e veja como teria performado vs IBOV e CDI.")
+        _txt = st.text_input(
+            "Tickers (separados por vírgula ou espaço)",
+            key="mb_tickers", placeholder="ex: PETR4, VALE3, ITUB4, WEGE3")
+        tickers = [t.strip().upper() for t in _txt.replace(",", " ").split() if t.strip()]
+        # dedup preservando ordem
+        tickers = list(dict.fromkeys(tickers))
+        if not tickers:
+            st.caption("Informe ao menos 2 tickers para montar a cesta.")
+            return
+
+        modo = st.radio("Pesos", ["Iguais", "Personalizados"], horizontal=True,
+                        key="mb_modo")
+        weights = None
+        if modo == "Personalizados":
+            _wdf = pd.DataFrame({"Ticker": tickers,
+                                 "Peso (%)": [round(100 / len(tickers), 2)] * len(tickers)})
+            _wed = st.data_editor(
+                _wdf, hide_index=True, width="stretch", key="mb_weights",
+                column_config={
+                    "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
+                    "Peso (%)": st.column_config.NumberColumn(
+                        "Peso (%)", min_value=0.0, step=1.0, format="%.1f")})
+            weights = {str(r["Ticker"]): float(r["Peso (%)"] or 0)
+                       for _, r in _wed.iterrows()}
+            _soma = sum(weights.values())
+            st.caption(f"Soma dos pesos: **{_soma:.1f}%** (normalizo automaticamente para 100%).")
+
+        if len(tickers) < 2:
+            st.warning("Use ao menos 2 tickers.")
+            return
+        _backtest_basket(tickers, key="manual_bt", weights=weights,
+                         aviso="Cesta montada por você, mantida ao longo do período. O resultado "
+                               "depende dos tickers e pesos escolhidos; é histórico, não promessa.")
 
 
 def _show_screener():
@@ -4063,6 +4113,9 @@ def _show_screener():
     if st.session_state.get("scr_strategy") in _CLASSIC_STRATEGIES:
         _render_classic_strategy(st.session_state["scr_strategy"])
         return
+
+    # Backtest de cesta manual (tickers + pesos do usuário)
+    _show_manual_basket()
 
     # ── Painel de filtros ──────────────────────────────────────
     with st.expander("⚙️ Ajustar filtros", expanded=True):
