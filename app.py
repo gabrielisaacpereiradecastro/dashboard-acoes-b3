@@ -538,8 +538,9 @@ def _init_state():
 # Fetch e persistência de uma ação
 # ────────────────────────────────────────────────────────────────
 
-def _fetch_ticker(ticker: str) -> Optional[str]:
+def _fetch_ticker(ticker: str, target: Optional[dict] = None) -> Optional[str]:
     t = ticker.strip().upper()
+    _store = target if target is not None else st.session_state.acoes
     log = st.session_state.debug_log
 
     api_key = api._get_api_key()
@@ -580,7 +581,7 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
     # usar esse valor causaria exibição errada na lista.
     data["ticker"] = t
 
-    _prev = st.session_state.acoes.get(t, {})
+    _prev = _store.get(t, {})
 
     # Detecta mudanças de classificação em relação à versão anterior
     _cls_changes: list[dict] = []
@@ -597,7 +598,7 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
                     "para": _new_c,
                 })
 
-    st.session_state.acoes[t] = {
+    _store[t] = {
         "data":                   data,
         "updated_at":             _now_bsb().isoformat(),
         "qtd":                    _prev.get("qtd", 0),
@@ -610,7 +611,8 @@ def _fetch_ticker(ticker: str) -> Optional[str]:
         "notas_historico":        _prev.get("notas_historico", []),
         "classification_changes": _cls_changes,
     }
-    st.session_state.todas_listas[st.session_state.lista_atual] = st.session_state.acoes
+    if target is None:
+        st.session_state.todas_listas[st.session_state.lista_atual] = st.session_state.acoes
     _save_all()
     return None
 
@@ -6460,11 +6462,161 @@ def _fetch_price_any(ticker: str) -> Optional[pd.DataFrame]:
     return _fetch_fii_history(ticker)
 
 
+# ── Import de nota de corretagem (PDF) ──────────────────────────
+def _parse_nota_corretagem(text: str) -> tuple[str, list[dict]]:
+    """Extrai (data_pregão_iso, [operações]) de uma nota de corretagem.
+    Layout testado: BTG/Necton. Cada operação: {data, tipo, ticker, qtd, preco}."""
+    import re
+    m = re.search(r'(\d{2}/\d{2}/\d{4})\s*\n\s*Data preg', text) or re.search(
+        r'(\d{2}/\d{2}/\d{4})', text)
+    iso = ""
+    if m:
+        d, mo, y = m.group(1).split("/")
+        iso = f"{y}-{mo}-{d}"
+
+    def _num(s: str) -> float:
+        return float(s.replace(".", "").replace(",", "."))
+
+    pat = re.compile(
+        r'BOVESPA\s+([CV])\s+\S+\s+([A-Z]{4}\d{1,2})\b.*?\s(\d+)\s+'
+        r'([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([DC])')
+    trades = []
+    for cv, tk, q, pr, _val, _dc in pat.findall(text):
+        trades.append({"data": iso, "tipo": "Venda" if cv == "V" else "Compra",
+                       "ticker": tk, "qtd": int(q), "preco": _num(pr)})
+    return iso, trades
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _ticker_is_fii_api(t: str) -> bool:
+    """Consulta o Bolsai: o ticker é um FII? (usado só p/ tickers terminados em 11,
+    que podem ser FII ou unit de ação como SANB11/TAEE11)."""
+    try:
+        d = api.get_fii(t)
+        return isinstance(d, dict) and not d.get("error")
+    except Exception:
+        return False
+
+
+def _classify_ticker(t: str) -> str:
+    """'fii' ou 'acao'. Usa as listas já existentes; senão, sufixo (só 11 é ambíguo)
+    e, no caso ambíguo, a API."""
+    t = t.upper()
+    if any(t in lst for lst in st.session_state.fiis_listas.values()):
+        return "fii"
+    if any(t in lst for lst in st.session_state.todas_listas.values()):
+        return "acao"
+    if not t.endswith("11"):
+        return "acao"
+    return "fii" if _ticker_is_fii_api(t) else "acao"
+
+
+def _import_trades(trades: list[dict]) -> None:
+    """Importa operações para a ⭐ Carteira (ações e FIIs), classificando cada ticker."""
+    acoes_cart = st.session_state.todas_listas.setdefault(LISTAS_PADRAO[0], {})
+    fiis_cart = st.session_state.fiis_listas.setdefault(LISTAS_PADRAO[0], {})
+    n_ok, erros = 0, []
+    with st.spinner("Importando operações…"):
+        for tr in trades:
+            t = str(tr["ticker"]).upper()
+            if int(tr.get("qtd", 0) or 0) <= 0:
+                continue
+            cls = _classify_ticker(t)
+            if cls == "fii":
+                store = fiis_cart
+                if t not in store:
+                    d = _fetch_fii(t)
+                    if not isinstance(d, dict) or d.get("error"):
+                        erros.append(t); continue
+                    store[t] = {**d, "qtd": 0, "preco_medio": 0.0,
+                                "data_compra": "", "compras": []}
+            else:
+                store = acoes_cart
+                if t not in store:
+                    if _fetch_ticker(t, target=store):
+                        erros.append(t); continue
+            ent = store[t]
+            if not ent.get("compras"):
+                ent["compras"] = _migra_lotes(ent)
+            ent["compras"].append({
+                "tipo": "venda" if tr["tipo"] == "Venda" else "compra",
+                "data": tr.get("data", ""), "qtd": int(tr["qtd"]),
+                "preco": float(tr["preco"])})
+            cc = _consolida_lotes(ent["compras"])
+            ent["qtd"], ent["preco_medio"], ent["data_compra"] = (
+                cc["qtd"], cc["preco_medio"], cc["data_compra"])
+            n_ok += 1
+    _save_all()
+    st.session_state["_import_flash"] = (
+        f"✅ {n_ok} operação(ões) importada(s) para a ⭐ Carteira."
+        + (f"  ⚠️ Não consegui adicionar: {', '.join(sorted(set(erros)))}." if erros else ""))
+
+
+def _show_import_nota() -> None:
+    """UI de import de nota de corretagem em PDF (com conferência antes de gravar)."""
+    with st.expander("📥 Importar nota de corretagem (PDF)", expanded=False):
+        if st.session_state.get("_import_flash"):
+            st.success(st.session_state.pop("_import_flash"))
+        st.caption("Suba a(s) nota(s) — o app lê os negócios (data · C/V · ticker · qtd · preço) e "
+                   "importa como operações na sua ⭐ Carteira. **Você confere antes.** Layout "
+                   "testado: **BTG/Necton**. Os custos (corretagem/emolumentos) não são rateados — "
+                   "usa o preço do negócio.")
+        files = st.file_uploader("Nota(s) em PDF", type=["pdf"],
+                                 accept_multiple_files=True, key="nota_up")
+        if not files:
+            return
+
+        import io
+        from pypdf import PdfReader
+        all_trades: list[dict] = []
+        for f in files:
+            try:
+                txt = "".join((p.extract_text() or "")
+                              for p in PdfReader(io.BytesIO(f.getvalue())).pages)
+                _, trades = _parse_nota_corretagem(txt)
+                for tr in trades:
+                    tr["arquivo"] = f.name
+                all_trades += trades
+            except Exception as e:
+                st.warning(f"Não consegui ler **{f.name}**: {e}")
+
+        if not all_trades:
+            st.warning("Nenhum negócio reconhecido. O layout pode ser diferente do testado "
+                       "(BTG/Necton) — me avise que eu amplio o parser.")
+            return
+
+        df = pd.DataFrame(all_trades)
+        df.insert(0, "Importar", True)
+        edited = st.data_editor(
+            df, hide_index=True, width="stretch", key="nota_preview",
+            column_config={
+                "Importar": st.column_config.CheckboxColumn("✓", width="small"),
+                "tipo": st.column_config.SelectboxColumn("Tipo", options=["Compra", "Venda"]),
+                "ticker": st.column_config.TextColumn("Ticker"),
+                "qtd": st.column_config.NumberColumn("Qtd", min_value=0, step=1),
+                "preco": st.column_config.NumberColumn("Preço", min_value=0.0, format="%.2f"),
+                "data": st.column_config.TextColumn("Data (pregão)", disabled=True),
+                "arquivo": st.column_config.TextColumn("Arquivo", disabled=True),
+            })
+        st.caption(f"**{len(all_trades)}** negócio(s) encontrados. Confira/edite e desmarque o "
+                   "que não quiser antes de importar.")
+        if st.button("✅ Importar operações selecionadas", key="nota_import", width="stretch"):
+            _sel = [r for _, r in edited.iterrows() if bool(r.get("Importar"))]
+            if _sel:
+                _import_trades([dict(r) for r in _sel])
+                st.rerun()
+            else:
+                st.warning("Marque ao menos uma operação para importar.")
+
+
 def _show_carteira_area() -> None:
     """📊 Carteira consolidada — ações + FIIs num só lugar (visão global)."""
     st.markdown("## 📊 Minha Carteira")
     st.caption("Visão consolidada das suas posições — **ações e FIIs juntos**. As listas de "
                "origem são as ⭐ Carteira de Ações e de FIIs.")
+
+    # Import de nota de corretagem (disponível mesmo com a carteira vazia)
+    _show_import_nota()
 
     acoes_cart = st.session_state.todas_listas.get(LISTAS_PADRAO[0], {})
     fiis_cart = st.session_state.fiis_listas.get(LISTAS_PADRAO[0], {})
