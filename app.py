@@ -5738,7 +5738,7 @@ def _lotes_editor(tickers: list[str], store: dict, *, key: str,
 
 def _qty_editor(enriched: list[dict], acoes: dict) -> None:
     """Editor de compras (lotes), quantidade e preço médio da Carteira de ações."""
-    with st.expander("Carteira — Compras e Posições", expanded=False):
+    with st.expander("📈 Ações — Compras e Posições", expanded=False):
         _lotes_editor([e["ticker"] for e in enriched], acoes,
                       key="acoes_lotes", unidade="Preço/ação")
 
@@ -5828,11 +5828,14 @@ def _show_portfolio_performance(positions: list[dict], *,
         return (("excelente", "#34d399") if v >= 2 else ("bom", "#34d399") if v >= 1
                 else ("modesto", "#fbbf24") if v >= 0 else ("ruim", "#f87171"))
 
-    def _tag(col, faixa) -> None:
-        if faixa:
-            col.markdown(
-                f"<div style='font-size:0.78rem;color:{faixa[1]};margin-top:-10px'>"
-                f"● {faixa[0]}</div>", unsafe_allow_html=True)
+    def _lbl(base: str, v: Optional[float], escala: str = "ratio") -> str:
+        """Rótulo do indicador com a faixa embutida (bolinha colorida + palavra),
+        pra deixar claro a qual índice a classificação se refere."""
+        f = _faixa(v, escala)
+        if not f:
+            return base
+        dot = {"#34d399": "🟢", "#fbbf24": "🟡", "#f87171": "🔴"}.get(f[1], "")
+        return f"{base}  {dot} {f[0]}"
 
     _f = lambda v: f"{v:.2f}" if v is not None else "N/D"
 
@@ -5856,15 +5859,15 @@ def _show_portfolio_performance(positions: list[dict], *,
     }
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Sharpe", _f(sharpe), help=_TIPS["sharpe"]);   _tag(c1, _faixa(sharpe))
-    c2.metric("Sortino", _f(sortino), help=_TIPS["sortino"]); _tag(c2, _faixa(sortino))
+    c1.metric(_lbl("Sharpe", sharpe), _f(sharpe), help=_TIPS["sharpe"])
+    c2.metric(_lbl("Sortino", sortino), _f(sortino), help=_TIPS["sortino"])
     c3.metric("Volatilidade (a.a.)", f"{vol*100:.1f}%", help=_TIPS["vol"])
     c4.metric("Max Drawdown", f"{max_dd*100:.1f}%", help=_TIPS["dd"])
 
     d1, d2, d3 = st.columns(3)
     d1.metric("Retorno no período", f"{tot*100:+.1f}%", help=_TIPS["ret"])
     d2.metric("Retorno anualizado", f"{cagr*100:+.1f}%", help=_TIPS["cagr"])
-    d3.metric("Calmar", _f(calmar), help=_TIPS["calmar"]); _tag(d3, _faixa(calmar, "calmar"))
+    d3.metric(_lbl("Calmar", calmar, "calmar"), _f(calmar), help=_TIPS["calmar"])
 
     # Gráfico underwater (drawdown ao longo do tempo)
     figu = go.Figure()
