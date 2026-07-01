@@ -4534,7 +4534,8 @@ def _sidebar():
         st.caption("Análise fundamentalista de ações brasileiras")
 
         # ── Navegação por área ─────────────────────────────────
-        _AREAS = ["📊 Ações", "🏢 FIIs", "💰 Proventos", "🔎 Screener", "🌐 Ciclo", "🔔 Alertas"]
+        _AREAS = ["📊 Carteira", "📈 Ações", "🏢 FIIs", "💰 Proventos", "🔎 Screener",
+                  "🌐 Ciclo", "🔔 Alertas"]
         _cur_area = st.session_state.get("area", _AREAS[0])
         st.session_state.area = st.radio(
             "Navegação", _AREAS,
@@ -4602,13 +4603,13 @@ def _sidebar():
         st.session_state.flash_errors = []
 
         # ── Área FIIs: controles próprios (lista + adicionar) + Atualização ──
-        _area_now = st.session_state.get("area", "📊 Ações")
+        _area_now = st.session_state.get("area", "📊 Carteira")
         if _area_now == "🏢 FIIs":
             _sidebar_fiis_controls()
             _sidebar_atualizacao()
             return
-        # ── Outras áreas (Screener/Ciclo/Alertas): só Atualização ──
-        if _area_now != "📊 Ações":
+        # ── Outras áreas (Carteira/Screener/Ciclo/Alertas): só Atualização ──
+        if _area_now != "📈 Ações":
             _sidebar_atualizacao()
             return
 
@@ -5279,7 +5280,7 @@ def _show_fii_screener(fiis_lista_atual: dict) -> None:
             st.rerun()
 
 
-def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
+def _show_fii_portfolio_analysis(fiis_dict: dict, *, show_perf: bool = True) -> None:
     """Análise consolidada da carteira de FIIs (posições com qtd > 0)."""
     _calc = getattr(sf, "calculate_fii_scores", None)
     positions = []
@@ -5365,12 +5366,13 @@ def _show_fii_portfolio_analysis(fiis_dict: dict) -> None:
                        "(sem eixo de qualidade) — veja-os na tabela e nos alertas do Detalhe.")
 
     # ── Risco & Retorno + Backtest (preço via yfinance, benchmark IFIX) ──
-    _show_portfolio_performance(positions, price_fn=_fetch_fii_history,
-                                key="fii_perf_period")
-    _show_portfolio_backtest(fiis_dict, [p["ticker"] for p in positions],
-                             price_fn=_fetch_fii_history,
-                             bench_fn=lambda anos: _fetch_ifix_history(min(anos, 10)),
-                             bench_label="IFIX", key="fii_run_backtest")
+    if show_perf:
+        _show_portfolio_performance(positions, price_fn=_fetch_fii_history,
+                                    key="fii_perf_period")
+        _show_portfolio_backtest(fiis_dict, [p["ticker"] for p in positions],
+                                 price_fn=_fetch_fii_history,
+                                 bench_fn=lambda anos: _fetch_ifix_history(min(anos, 10)),
+                                 bench_label="IFIX", key="fii_run_backtest")
 
 
 def _show_fii_tabela(fiis_atuais: dict) -> None:
@@ -5519,10 +5521,9 @@ def _show_fii_tab() -> None:
     st.markdown("## Análise de FIIs")
     # Lista FII vem do sidebar (Etapa 4); a aba só consome a lista ativa.
     fiis_atuais = st.session_state.fiis_listas.get(st.session_state.lista_fii_atual, {})
-    tab_cart, tab_tab, tab_det, tab_scr = st.tabs(
-        ["📊 Carteira", "📋 Tabela", "🔍 Detalhe", "🔎 Screener"])
-    with tab_cart:
-        _show_fii_carteira(fiis_atuais)
+    st.caption("A consolidação das suas posições (ações + FIIs) está na área **📊 Carteira**.")
+    tab_tab, tab_det, tab_scr = st.tabs(
+        ["📋 Tabela", "🔍 Detalhe", "🔎 Screener"])
     with tab_tab:
         _show_fii_tabela(fiis_atuais)
     with tab_det:
@@ -6106,7 +6107,8 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str], *,
         + (f"  ⚠️ {sem_data} compra(s) sem data ficaram de fora." if sem_data else ""))
 
 
-def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
+def _show_portfolio_analysis(enriched: list[dict], acoes: dict, *,
+                             show_perf: bool = True) -> None:
     """Seção 📊 Análise da Carteira — visível apenas quando ⭐ Carteira com posições > 0."""
     # Preço ao vivo (yfinance) — carteira reflete o intraday; valuation segue Bolsai.
     _tk_pos = tuple(e["ticker"] for e in enriched
@@ -6290,10 +6292,10 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
         st.markdown("")
 
     # ── Risco & Retorno (histórico) ───────────────────────────────
-    _show_portfolio_performance(positions)
-
-    # ── Backtest (carteira real vs IBOV/CDI usando datas dos lotes) ──
-    _show_portfolio_backtest(acoes, [p["ticker"] for p in positions])
+    if show_perf:
+        _show_portfolio_performance(positions)
+        # ── Backtest (carteira real vs IBOV/CDI usando datas dos lotes) ──
+        _show_portfolio_backtest(acoes, [p["ticker"] for p in positions])
 
     # ── Tabela de posições ────────────────────────────────────────
     st.markdown("#### Posições")
@@ -6444,6 +6446,132 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict) -> None:
             height=350,
         )
         st.plotly_chart(fig_set, width="stretch", config={"displayModeBar": False})
+
+
+def _fetch_price_any(ticker: str) -> Optional[pd.DataFrame]:
+    """Histórico ajustado por ticker: ações via Bolsai; se não houver (ex.: FII ou
+    ativo fora da cobertura), cai no yfinance. Usado na carteira consolidada."""
+    df = _fetch_price_history(ticker)
+    if df is not None and not df.empty and "adjusted_close" in df:
+        return df
+    return _fetch_fii_history(ticker)
+
+
+def _show_carteira_area() -> None:
+    """📊 Carteira consolidada — ações + FIIs num só lugar (visão global)."""
+    st.markdown("## 📊 Minha Carteira")
+    st.caption("Visão consolidada das suas posições — **ações e FIIs juntos**. As listas de "
+               "origem são as ⭐ Carteira de Ações e de FIIs.")
+
+    acoes_cart = st.session_state.todas_listas.get(LISTAS_PADRAO[0], {})
+    fiis_cart = st.session_state.fiis_listas.get(LISTAS_PADRAO[0], {})
+
+    enriched: list[dict] = []
+    for _t, _entry in acoes_cart.items():
+        try:
+            enriched.append(_enrich(_entry))
+        except Exception:
+            pass
+
+    # Valor das ações (preço ao vivo) + custo
+    _tk = tuple(t for t in acoes_cart if int(acoes_cart[t].get("qtd", 0) or 0) > 0)
+    _live = _precos_ao_vivo(_tk)
+    val_acoes = custo_acoes = 0.0
+    for e in enriched:
+        t = e.get("ticker", ""); en = acoes_cart.get(t, {})
+        q = int(en.get("qtd", 0) or 0)
+        if q <= 0:
+            continue
+        lv = _live.get(t)
+        price = (lv["price"] if lv else e.get("close_price")) or 0
+        val_acoes += q * price
+        pm = float(en.get("preco_medio", 0) or 0)
+        if pm > 0:
+            custo_acoes += q * pm
+
+    # Valor dos FIIs + custo
+    val_fiis = custo_fiis = 0.0
+    for t, f in fiis_cart.items():
+        q = int(f.get("qtd", 0) or 0); price = f.get("close_price") or 0
+        if q <= 0 or not price:
+            continue
+        val_fiis += q * price
+        pm = float(f.get("preco_medio", 0) or 0)
+        if pm > 0:
+            custo_fiis += q * pm
+
+    total = val_acoes + val_fiis
+    if total <= 0:
+        st.info("Sua ⭐ Carteira está vazia. Adicione posições em **Ações** e **FIIs** (ou importe "
+                "uma nota de corretagem) para ver a análise consolidada.")
+        return
+
+    custo_total = custo_acoes + custo_fiis
+    pnl = (total - custo_total) if custo_total > 0 else None
+    pnl_pct = (total / custo_total - 1) * 100 if custo_total > 0 else None
+
+    # ── Cabeçalho consolidado ─────────────────────────────────────
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Patrimônio total", _brl(total, 0))
+    c2.metric("Ações", _brl(val_acoes, 0),
+              f"{val_acoes / total * 100:.0f}% da carteira")
+    c3.metric("FIIs", _brl(val_fiis, 0),
+              f"{val_fiis / total * 100:.0f}% da carteira")
+
+    if pnl is not None:
+        _cor = "#34d399" if pnl >= 0 else "#f87171"
+        _sig = "+" if pnl >= 0 else "-"
+        st.markdown(
+            f"<div style='margin:6px 0 4px;padding:12px 16px;border-radius:12px;background:#151b26;"
+            f"border:1px solid #232b3a;border-left:4px solid {_cor}'>"
+            f"<span style='color:#8b94a7;font-size:0.85rem'>Lucro/Prejuízo não realizado (custo "
+            f"{_brl(custo_total,0)})</span><br>"
+            f"<span style='color:{_cor};font-size:1.5rem;font-weight:700'>{_sig}{_brl(abs(pnl),0)}</span>"
+            f"<span style='color:{_cor};font-size:1rem;margin-left:10px'>"
+            f"{_sig}{abs(pnl_pct):.1f}%</span></div>", unsafe_allow_html=True)
+
+    # Donut de alocação por classe
+    _cc1, _cc2 = st.columns([1, 1])
+    with _cc1:
+        figc = go.Figure(go.Pie(
+            labels=["Ações", "FIIs"], values=[val_acoes, val_fiis], hole=0.5,
+            marker=dict(colors=["#34d399", "#7dd3fc"], line=dict(color="#0e1117", width=1.5)),
+            textinfo="label+percent",
+            hovertemplate="%{label}: R$ %{value:,.0f} (%{percent})<extra></extra>"))
+        figc.update_layout(
+            height=260, margin=dict(t=10, b=10, l=10, r=10), showlegend=False,
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(figc, width="stretch", config={"displayModeBar": False})
+
+    # ── Editores de posições (ações e FIIs) ───────────────────────
+    if enriched:
+        _qty_editor(enriched, acoes_cart)
+    if fiis_cart:
+        with st.expander("🏢 FIIs — Compras e Posições", expanded=False):
+            _lotes_editor(list(fiis_cart.keys()), fiis_cart,
+                          key="fiis_lotes", unidade="Preço/cota")
+
+    # ── Consolidado: risco/retorno + backtest de TUDO (ações + FIIs) ──
+    _pos_all = (
+        [{"ticker": e["ticker"], "qtd": int(acoes_cart.get(e["ticker"], {}).get("qtd", 0) or 0)}
+         for e in enriched if int(acoes_cart.get(e["ticker"], {}).get("qtd", 0) or 0) > 0]
+        + [{"ticker": t, "qtd": int(f.get("qtd", 0) or 0)}
+           for t, f in fiis_cart.items() if int(f.get("qtd", 0) or 0) > 0])
+    _store_all = {**acoes_cart, **fiis_cart}
+    st.divider()
+    st.markdown("### Consolidado — Risco, Retorno & Backtest (ações + FIIs)")
+    _show_portfolio_performance(_pos_all, price_fn=_fetch_price_any, key="cart_perf_period")
+    _show_portfolio_backtest(_store_all, [p["ticker"] for p in _pos_all],
+                             price_fn=_fetch_price_any, bench_label="IBOV (BOVA11)",
+                             key="cart_backtest")
+
+    # ── Detalhe por classe (sem repetir o risco/retorno) ──────────
+    if enriched:
+        st.divider()
+        _show_portfolio_analysis(enriched, acoes_cart, show_perf=False)
+    if any(int(f.get("qtd", 0) or 0) > 0 for f in fiis_cart.values()):
+        st.divider()
+        _show_fii_portfolio_analysis(fiis_cart, show_perf=False)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -7531,7 +7659,10 @@ footer {visibility: hidden;}
         _show_alert_banner(_alert_res)
 
     # ── Navegação por área (FIIs/Screener/Ciclo independem de ações) ──
-    _area = st.session_state.get("area", "📊 Ações")
+    _area = st.session_state.get("area", "📊 Carteira")
+    if _area == "📊 Carteira":
+        _show_carteira_area()
+        return
     if _area == "🏢 FIIs":
         _show_fii_tab()
         return
@@ -7645,23 +7776,9 @@ div[data-testid="stPopover"] button:hover {
 
     enriched = _dedup_enriched(enriched)
 
-    tab_cart, tab_comp, tab_det, tab_cmp = st.tabs(
-        ["📊 Carteira", "📋 Tabela", "🔍 Detalhe", "⚖️ Comparar"]
+    tab_comp, tab_det, tab_cmp = st.tabs(
+        ["📋 Tabela", "🔍 Detalhe", "⚖️ Comparar"]
     )
-
-    # ────────────────────────────────────────────────────────────
-    # Tab — Carteira (consolidada da ⭐ Carteira)
-    # ────────────────────────────────────────────────────────────
-    with tab_cart:
-        if st.session_state.lista_atual == LISTAS_PADRAO[0]:
-            _qty_editor(enriched, st.session_state.acoes)
-            _show_portfolio_analysis(enriched, st.session_state.acoes)
-        else:
-            st.info(
-                f"A análise consolidada é da lista **{LISTAS_PADRAO[0]}**. "
-                f"Selecione-a no menu lateral (você está em "
-                f"**{st.session_state.lista_atual}**)."
-            )
 
     # ────────────────────────────────────────────────────────────
     # Tab 1 — Comparativo (tabela limpa, sem radar)
@@ -7671,7 +7788,7 @@ div[data-testid="stPopover"] button:hover {
         st.caption(
             "Veja cada ação da lista lado a lado, colorida por classificação. "
             "Selecione uma na aba **🔍 Detalhe** para o aprofundamento, ou use "
-            "**⚖️ Comparar** para o radar. A consolidação das suas posições está em **📊 Carteira**."
+            "**⚖️ Comparar** para o radar. A consolidação das suas posições está na área **📊 Carteira**."
         )
 
         # Ordenação confiável (server-side) — clicar no cabeçalho ordena a string
