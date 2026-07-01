@@ -5538,13 +5538,40 @@ def _migra_lotes(entry: dict) -> list[dict]:
 
 
 def _consolida_lotes(lots: list[dict]) -> dict:
-    """Deriva agregados de uma lista de lotes: qtd total, preço médio ponderado,
-    data mais antiga, valor investido."""
-    tq = sum(int(l.get("qtd", 0) or 0) for l in lots)
-    tc = sum(int(l.get("qtd", 0) or 0) * float(l.get("preco", 0) or 0) for l in lots)
-    dts = [l.get("data", "") for l in lots if l.get("data")]
-    return {"qtd": tq, "preco_medio": (tc / tq) if tq > 0 else 0.0,
-            "investido": tc, "data_compra": min(dts) if dts else "", "lotes": len(lots)}
+    """Deriva agregados processando as operações em ORDEM DE DATA (regra BR):
+    - compra: aumenta qtd e recalcula o preço médio ponderado;
+    - venda: reduz a qtd, o preço médio dos remanescentes NÃO muda; acumula o
+      ganho/prejuízo realizado.
+    Retorna qtd atual, preço médio, custo da posição atual, ganho realizado, data
+    da 1ª compra e nº de operações."""
+    # ordena por data (vazias por último, mantendo a ordem de entrada como desempate)
+    ordenadas = sorted(enumerate(lots),
+                       key=lambda x: (x[1].get("data") or "9999-99-99", x[0]))
+    qtd, custo, realizado = 0, 0.0, 0.0
+    dts_compra: list[str] = []
+    n_ops = 0
+    for _, l in ordenadas:
+        q = int(l.get("qtd", 0) or 0)
+        p = float(l.get("preco", 0) or 0)
+        if q <= 0:
+            continue
+        n_ops += 1
+        if l.get("tipo", "compra") == "venda":
+            if qtd <= 0:
+                continue
+            q_vend = min(q, qtd)
+            pm = custo / qtd if qtd > 0 else 0.0
+            realizado += (p - pm) * q_vend
+            qtd -= q_vend
+            custo -= pm * q_vend           # preço médio inalterado
+        else:
+            custo += q * p
+            qtd += q
+            if l.get("data"):
+                dts_compra.append(l["data"])
+    return {"qtd": qtd, "preco_medio": (custo / qtd) if qtd > 0 else 0.0,
+            "investido": custo, "realizado": realizado,
+            "data_compra": min(dts_compra) if dts_compra else "", "lotes": n_ops}
 
 
 def _lotes_editor(tickers: list[str], store: dict, *, key: str,
@@ -5564,60 +5591,66 @@ def _lotes_editor(tickers: list[str], store: dict, *, key: str,
         st.caption("Adicione ativos à carteira primeiro (no menu lateral) para lançar compras.")
         return
 
-    st.caption("Lance **cada compra** que você fez. Para o mesmo ativo comprado em datas/preços "
-               "diferentes, é só adicionar **mais de uma** — o app calcula o preço médio e a "
-               "quantidade total automaticamente.")
+    st.caption("Lance **cada operação** (compra **ou venda**). Para o mesmo ativo em datas/preços "
+               "diferentes, adicione **mais de uma** — o app calcula quantidade, preço médio e "
+               "ganho realizado. Regra BR: a **venda** reduz a quantidade e **não altera** o "
+               "preço médio das ações que sobram. Ativo muito girado? Lance só o **saldo final** "
+               "como 1 compra (sem data, se quiser deixá-lo fora do backtest).")
 
-    # ── Formulário: adicionar UMA compra (caminho principal, explícito) ──
+    # ── Formulário: adicionar UMA operação (caminho principal, explícito) ──
     with st.form(f"{key}_add", clear_on_submit=True):
-        st.markdown("**➕ Adicionar uma compra**")
-        fc = st.columns([2, 2, 1.4, 1.7])
-        f_t = fc[0].selectbox("Ativo", tickers, key=f"{key}_a_t")
-        f_d = fc[1].date_input("Data da compra", value=None, format="DD/MM/YYYY",
-                               key=f"{key}_a_d")
-        f_q = fc[2].number_input("Quantidade", min_value=0, step=1, key=f"{key}_a_q")
-        f_p = fc[3].number_input(f"{unidade} (R$)", min_value=0.0, step=0.01,
+        st.markdown("**➕ Adicionar uma operação**")
+        fc = st.columns([1.2, 1.8, 1.8, 1.3, 1.6])
+        f_tipo = fc[0].selectbox("Tipo", ["Compra", "Venda"], key=f"{key}_a_tp")
+        f_t = fc[1].selectbox("Ativo", tickers, key=f"{key}_a_t")
+        f_d = fc[2].date_input("Data", value=None, format="DD/MM/YYYY", key=f"{key}_a_d")
+        f_q = fc[3].number_input("Quantidade", min_value=0, step=1, key=f"{key}_a_q")
+        f_p = fc[4].number_input(f"{unidade} (R$)", min_value=0.0, step=0.01,
                                  format="%.2f", key=f"{key}_a_p")
-        _ok = st.form_submit_button("➕ Adicionar compra", width="stretch")
+        _ok = st.form_submit_button("➕ Adicionar operação", width="stretch")
     if _ok:
         if not f_t or f_q <= 0:
             st.warning("Escolha o ativo e informe uma quantidade maior que zero.")
         else:
+            _tipo = "venda" if f_tipo == "Venda" else "compra"
             _ent = store.setdefault(f_t, {})
             _lots = _migra_lotes(_ent)   # posição legada vira o 1º lote, se for o caso
-            _lots.append({"data": f_d.isoformat() if f_d else "",
+            _lots.append({"tipo": _tipo, "data": f_d.isoformat() if f_d else "",
                           "qtd": int(f_q), "preco": float(f_p)})
             _cc = _consolida_lotes(_lots)
             _ent["compras"] = _lots
             _ent["qtd"], _ent["preco_medio"], _ent["data_compra"] = (
                 _cc["qtd"], _cc["preco_medio"], _cc["data_compra"])
             _save_all()
-            st.success(f"Compra adicionada em **{f_t}**: {int(f_q)} × {_brl(f_p)}"
+            st.success(f"{f_tipo} registrada em **{f_t}**: {int(f_q)} × {_brl(f_p)}"
                        + (f" · {f_d.strftime('%d/%m/%Y')}" if f_d else ""))
             st.rerun()
 
     rows = []
     for t in tickers:
         for c in _migra_lotes(store.get(t, {})):
-            rows.append({"Ticker": t, "Data": _to_date(c.get("data", "")),
+            rows.append({"Tipo": "Venda" if c.get("tipo") == "venda" else "Compra",
+                         "Ticker": t, "Data": _to_date(c.get("data", "")),
                          "Quantidade": int(c.get("qtd", 0) or 0),
                          "Preço (R$)": float(c.get("preco", 0) or 0)})
-    lot_df = pd.DataFrame(rows, columns=["Ticker", "Data", "Quantidade", "Preço (R$)"])
+    lot_df = pd.DataFrame(rows, columns=["Tipo", "Ticker", "Data", "Quantidade", "Preço (R$)"])
 
-    st.markdown("**Compras lançadas** — clique numa célula para **corrigir**, ou selecione a "
+    st.markdown("**Operações lançadas** — clique numa célula para **corrigir**, ou selecione a "
                 "linha e use a 🗑 para **remover**; depois clique **Salvar**.")
     edited = st.data_editor(
         lot_df,
         column_config={
+            "Tipo": st.column_config.SelectboxColumn(
+                "Tipo", options=["Compra", "Venda"], required=True, width="small"),
             "Ticker": st.column_config.SelectboxColumn(
                 "Ticker", options=tickers, required=True, width="small"),
             "Data": st.column_config.DateColumn(
-                "Data da compra", format="DD/MM/YYYY", width="medium"),
+                "Data", format="DD/MM/YYYY", width="medium"),
             "Quantidade": st.column_config.NumberColumn(
                 "Qtd", min_value=0, step=1, width="small"),
             "Preço (R$)": st.column_config.NumberColumn(
                 unidade + " (R$)", min_value=0.0, format="%.2f", width="medium",
-                help="Preço pago NESSA compra (não o médio)."),
+                help="Preço da operação (não o médio)."),
         },
         num_rows="dynamic", hide_index=True, width="stretch", key=key,
     )
@@ -5632,18 +5665,25 @@ def _lotes_editor(tickers: list[str], store: dict, *, key: str,
         if q <= 0:
             continue
         by_t.setdefault(str(t), []).append(
-            {"data": _date_cell_to_iso(r["Data"]), "qtd": q,
+            {"tipo": "venda" if str(r.get("Tipo")) == "Venda" else "compra",
+             "data": _date_cell_to_iso(r["Data"]), "qtd": q,
              "preco": float(r["Preço (R$)"] or 0)})
 
     if by_t:
-        resumo = []
+        resumo, _tem_venda = [], False
         for t, lots in sorted(by_t.items()):
             cc = _consolida_lotes(lots)
-            resumo.append({"Ticker": t, "Lotes": cc["lotes"], "Qtd total": cc["qtd"],
+            if any(l.get("tipo") == "venda" for l in lots):
+                _tem_venda = True
+            resumo.append({"Ticker": t, "Ops": cc["lotes"], "Qtd atual": cc["qtd"],
                            "Preço médio": _brl(cc["preco_medio"]),
-                           "Investido": _brl(cc["investido"], 0)})
-        st.markdown("**Consolidado (calculado a partir dos lotes):**")
-        st.dataframe(pd.DataFrame(resumo), hide_index=True, width="stretch")
+                           "Custo atual": _brl(cc["investido"], 0),
+                           "Realizado": _brl(cc["realizado"], 0)})
+        st.markdown("**Consolidado (calculado a partir das operações):**")
+        _rdf = pd.DataFrame(resumo)
+        if not _tem_venda:
+            _rdf = _rdf.drop(columns=["Realizado"])   # sem vendas, não polui
+        st.dataframe(_rdf, hide_index=True, width="stretch")
 
     if st.button("Salvar posições", key=f"{key}_save", width="content"):
         for t in tickers:
@@ -5868,15 +5908,17 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str], *,
             except (ValueError, TypeError):
                 sem_data += 1
                 continue
-            lots.append((t, dd, int(c.get("qtd", 0) or 0), float(c.get("preco", 0) or 0)))
+            _sig = -1 if c.get("tipo") == "venda" else 1   # venda entra como caixa
+            lots.append((t, dd, int(c.get("qtd", 0) or 0),
+                         float(c.get("preco", 0) or 0), _sig))
 
     if not lots:
-        st.caption("Preencha **data e preço das compras** (em *Compras e Posições*) para rodar "
-                   "o backtest — ele reconstrói a carteira a partir de cada aporte.")
+        st.caption("Preencha **data e preço das operações** (em *Compras e Posições*) para rodar "
+                   "o backtest — ele reconstrói a carteira a partir de cada aporte/resgate.")
         return
 
     if not st.button("▶️ Rodar backtest", key=key):
-        st.caption(f"{len(lots)} compra(s) com data cadastrada"
+        st.caption(f"{len(lots)} operação(ões) com data cadastrada"
                    + (f" · {sem_data} sem data (ficam de fora)" if sem_data else "")
                    + ". Clique para reconstruir a evolução da carteira.")
         return
@@ -5907,12 +5949,12 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str], *,
 
         units = pd.DataFrame(0.0, index=idx, columns=list(px.keys()))
         invest = pd.Series(0.0, index=idx)
-        for t, d, q, p in lots:
+        for t, d, q, p, sig in lots:
             if t not in px or q <= 0:
                 continue
             m = idx >= d
-            units.loc[m, t] += q
-            invest.loc[m] += q * p
+            units.loc[m, t] += sig * q          # venda reduz as unidades
+            invest.loc[m] += sig * q * p         # venda devolve caixa (custo líquido)
 
         E = (units * pxm).sum(axis=1).dropna()
         if E.empty or len(E) < 5:
@@ -5922,30 +5964,31 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str], *,
         idx = E.index
         invest = invest.reindex(idx).ffill()
 
-        # IBOV — mesmos aportes (R$ reais), mesmas datas
+        # IBOV — mesmos aportes/resgates (R$ reais), mesmas datas
         B = None
         if bench is not None:
             bs = bench.reindex(idx, method="ffill").ffill()
             B = pd.Series(0.0, index=idx)
-            for t, d, q, p in lots:
+            for t, d, q, p, sig in lots:
                 bd = bs.asof(d)
                 if pd.isna(bd) or bd <= 0:
                     continue
                 m = idx >= d
-                B.loc[m] += (q * p) * (bs[m] / bd)
+                B.loc[m] += sig * (q * p) * (bs[m] / bd)
 
-        # CDI — aportes compostos à Selic atual (aprox. constante)
+        # CDI — aportes/resgates compostos à Selic atual (aprox. constante)
         _selic = (_fetch_macro().get("selic") or 10.0) / 100.0
         C = pd.Series(0.0, index=idx)
-        for t, d, q, p in lots:
+        for t, d, q, p, sig in lots:
             m = idx >= d
             yrs = pd.Series((idx[m] - d).days / 365.0, index=idx[m])
-            C.loc[m] += (q * p) * (1 + _selic) ** yrs
+            C.loc[m] += sig * (q * p) * (1 + _selic) ** yrs
 
     V = float(E.iloc[-1])
     inv = float(invest.iloc[-1])
     res = V - inv
-    flows = [(d, -(q * p)) for t, d, q, p in lots] + [(hoje, V)]
+    # XIRR: compra = saída (−), venda = entrada (+), valor atual = entrada final
+    flows = [(d, sig * -(q * p)) for t, d, q, p, sig in lots] + [(hoje, V)]
     xirr = _xirr(flows)
 
     c1, c2, c3, c4 = st.columns(4)
