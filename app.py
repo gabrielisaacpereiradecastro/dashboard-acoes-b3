@@ -4829,11 +4829,46 @@ _FII_TYPE_LABELS = {
 
 
 @st.cache_data(ttl=3600)
-def _fetch_fii(ticker: str) -> dict:
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fii_yf_fallback(ticker: str) -> Optional[dict]:
+    """FII fora da cobertura do Bolsai → dados mínimos via yfinance: preço atual e
+    DY TTM (dividendos 12m ÷ preço). Fundamentos (P/VP, vacância, NAV) ficam None."""
     try:
-        return api.get_all_fii_data(ticker.strip().upper())
+        tk = yf.Ticker(f"{ticker}.SA")
+        h = tk.history(period="1mo", auto_adjust=False)
+        if h is None or h.empty:
+            return None
+        price = float(h["Close"].dropna().iloc[-1])
+        dy = None
+        try:
+            div = tk.dividends
+            if div is not None and not div.empty:
+                _lim = pd.Timestamp.now(tz=div.index.tz) - pd.Timedelta(days=365)
+                soma = float(div[div.index >= _lim].sum())
+                if price > 0 and soma > 0:
+                    dy = soma / price * 100
+        except Exception:
+            pass
+        return {"ticker": ticker.upper(), "name": ticker.upper(),
+                "close_price": price, "dividend_yield": dy,
+                "pvp": None, "vacancy_pct": None, "delinquency_pct": None,
+                "liquidity": None, "fund_type": "", "cobertura_limitada": True}
+    except Exception:
+        return None
+
+
+def _fetch_fii(ticker: str) -> dict:
+    tk = ticker.strip().upper()
+    try:
+        d = api.get_all_fii_data(tk)
     except Exception as e:
-        return {"ticker": ticker.upper(), "error": str(e)}
+        d = {"ticker": tk, "error": str(e)}
+    # Fallback yfinance quando o Bolsai não cobre o FII (erro ou sem preço)
+    if not isinstance(d, dict) or d.get("error") or not d.get("close_price"):
+        fb = _fii_yf_fallback(tk)
+        if fb:
+            return fb
+    return d
 
 
 def _fmt_fii_val(key: str, fii: dict):
