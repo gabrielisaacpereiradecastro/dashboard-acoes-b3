@@ -6615,9 +6615,6 @@ def _show_carteira_area() -> None:
     st.caption("Visão consolidada das suas posições — **ações e FIIs juntos**. As listas de "
                "origem são as ⭐ Carteira de Ações e de FIIs.")
 
-    # Import de nota de corretagem (disponível mesmo com a carteira vazia)
-    _show_import_nota()
-
     acoes_cart = st.session_state.todas_listas.get(LISTAS_PADRAO[0], {})
     fiis_cart = st.session_state.fiis_listas.get(LISTAS_PADRAO[0], {})
 
@@ -6656,38 +6653,31 @@ def _show_carteira_area() -> None:
             custo_fiis += q * pm
 
     total = val_acoes + val_fiis
-    if total <= 0:
-        st.info("Sua ⭐ Carteira está vazia. Adicione posições em **Ações** e **FIIs** (ou importe "
-                "uma nota de corretagem) para ver a análise consolidada.")
-        return
-
     custo_total = custo_acoes + custo_fiis
     pnl = (total - custo_total) if custo_total > 0 else None
     pnl_pct = (total / custo_total - 1) * 100 if custo_total > 0 else None
 
-    # ── Cabeçalho consolidado ─────────────────────────────────────
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Patrimônio total", _brl(total, 0))
-    c2.metric("Ações", _brl(val_acoes, 0),
-              f"{val_acoes / total * 100:.0f}% da carteira")
-    c3.metric("FIIs", _brl(val_fiis, 0),
-              f"{val_fiis / total * 100:.0f}% da carteira")
+    # ── Cabeçalho consolidado (só quando há posições) ─────────────
+    if total > 0:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Patrimônio total", _brl(total, 0))
+        c2.metric("Ações", _brl(val_acoes, 0))
+        c2.caption(f"{val_acoes / total * 100:.0f}% da carteira")
+        c3.metric("FIIs", _brl(val_fiis, 0))
+        c3.caption(f"{val_fiis / total * 100:.0f}% da carteira")
 
-    if pnl is not None:
-        _cor = "#34d399" if pnl >= 0 else "#f87171"
-        _sig = "+" if pnl >= 0 else "-"
-        st.markdown(
-            f"<div style='margin:6px 0 4px;padding:12px 16px;border-radius:12px;background:#151b26;"
-            f"border:1px solid #232b3a;border-left:4px solid {_cor}'>"
-            f"<span style='color:#8b94a7;font-size:0.85rem'>Lucro/Prejuízo não realizado (custo "
-            f"{_brl(custo_total,0)})</span><br>"
-            f"<span style='color:{_cor};font-size:1.5rem;font-weight:700'>{_sig}{_brl(abs(pnl),0)}</span>"
-            f"<span style='color:{_cor};font-size:1rem;margin-left:10px'>"
-            f"{_sig}{abs(pnl_pct):.1f}%</span></div>", unsafe_allow_html=True)
+        if pnl is not None:
+            _cor = "#34d399" if pnl >= 0 else "#f87171"
+            _sig = "+" if pnl >= 0 else "-"
+            st.markdown(
+                f"<div style='margin:6px 0 4px;padding:12px 16px;border-radius:12px;background:#151b26;"
+                f"border:1px solid #232b3a;border-left:4px solid {_cor}'>"
+                f"<span style='color:#8b94a7;font-size:0.85rem'>Lucro/Prejuízo não realizado (custo "
+                f"{_brl(custo_total,0)})</span><br>"
+                f"<span style='color:{_cor};font-size:1.5rem;font-weight:700'>{_sig}{_brl(abs(pnl),0)}</span>"
+                f"<span style='color:{_cor};font-size:1rem;margin-left:10px'>"
+                f"{_sig}{abs(pnl_pct):.1f}%</span></div>", unsafe_allow_html=True)
 
-    # Donut de alocação por classe
-    _cc1, _cc2 = st.columns([1, 1])
-    with _cc1:
         figc = go.Figure(go.Pie(
             labels=["Ações", "FIIs"], values=[val_acoes, val_fiis], hole=0.5,
             marker=dict(colors=["#34d399", "#7dd3fc"], line=dict(color="#0e1117", width=1.5)),
@@ -6696,15 +6686,21 @@ def _show_carteira_area() -> None:
         figc.update_layout(
             height=260, margin=dict(t=10, b=10, l=10, r=10), showlegend=False,
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(figc, width="stretch", config={"displayModeBar": False})
+        _cc1, _cc2 = st.columns([1, 1])
+        _cc1.plotly_chart(figc, width="stretch", config={"displayModeBar": False})
 
-    # ── Editores de posições (ações e FIIs) ───────────────────────
-    if enriched:
-        _qty_editor(enriched, acoes_cart)
-    if fiis_cart:
-        with st.expander("🏢 FIIs — Compras e Posições", expanded=False):
-            _lotes_editor(list(fiis_cart.keys()), fiis_cart,
-                          key="fiis_lotes", unidade="Preço/cota")
+    # ── Posições: lançar/editar + importar nota (sempre visível) ──
+    st.markdown("### Posições e lançamentos")
+    _qty_editor(enriched, acoes_cart)
+    with st.expander("🏢 FIIs — Compras e Posições", expanded=False):
+        _lotes_editor(list(fiis_cart.keys()), fiis_cart,
+                      key="fiis_lotes", unidade="Preço/cota")
+    _show_import_nota()
+
+    if total <= 0:
+        st.info("Sua ⭐ Carteira está vazia. Lance posições nos editores acima ou **importe uma "
+                "nota de corretagem** — a análise consolidada aparece assim que houver posições.")
+        return
 
     # ── Consolidado: risco/retorno + backtest de TUDO (ações + FIIs) ──
     _pos_all = (
