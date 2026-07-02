@@ -5527,7 +5527,7 @@ def _show_fii_carteira(fiis_atuais: dict) -> None:
     """Carteira de FIIs: editor de posições + análise consolidada."""
     with st.expander("✏️ Editar compras e posições", expanded=False):
         _lotes_editor(list(fiis_atuais.keys()), fiis_atuais,
-                      key="fiis_lotes", unidade="Preço/cota")
+                      key="fiis_lotes", unidade="Preço/cota", is_fii=True)
 
         # ── Remover FII da carteira (direto aqui, sem ir na Tabela) ──
         st.divider()
@@ -5648,10 +5648,11 @@ def _consolida_lotes(lots: list[dict]) -> dict:
 
 
 def _lotes_editor(tickers: list[str], store: dict, *, key: str,
-                  unidade: str = "Preço/ação") -> None:
+                  unidade: str = "Preço/ação", is_fii: bool = False) -> None:
     """Editor de COMPRAS (lotes) para ações ou FIIs. store = dict ticker→entry.
     Persiste entry['compras']=[{data,qtd,preco}] e mantém qtd/preco_medio/data_compra
-    derivados (consistência com o resto do app). Cada linha = uma compra."""
+    derivados (consistência com o resto do app). O campo Ativo aceita ticker NOVO —
+    se não estiver na carteira, o app busca (Bolsai/yfinance) e adiciona."""
     from datetime import date as _date
 
     def _to_date(s: str):
@@ -5660,10 +5661,6 @@ def _lotes_editor(tickers: list[str], store: dict, *, key: str,
         except (ValueError, TypeError):
             return None
 
-    if not tickers:
-        st.caption("Adicione ativos à carteira primeiro (no menu lateral) para lançar compras.")
-        return
-
     st.caption("Lance **cada operação** (compra **ou venda**). Para o mesmo ativo em datas/preços "
                "diferentes, adicione **mais de uma** — o app calcula quantidade, preço médio e "
                "ganho realizado. Regra BR: a **venda** reduz a quantidade e **não altera** o "
@@ -5671,33 +5668,52 @@ def _lotes_editor(tickers: list[str], store: dict, *, key: str,
                "como 1 compra (sem data, se quiser deixá-lo fora do backtest).")
 
     # ── Formulário: adicionar UMA operação (caminho principal, explícito) ──
+    _hint = ("ex.: " + ", ".join(tickers[:2])) if tickers else "digite o ticker"
     with st.form(f"{key}_add", clear_on_submit=True):
-        st.markdown("**➕ Adicionar uma operação**")
+        st.markdown("**➕ Adicionar uma operação** — pode digitar um ativo **novo** (será "
+                    "buscado e adicionado à carteira).")
         fc = st.columns([1.2, 1.8, 1.8, 1.3, 1.6])
         f_tipo = fc[0].selectbox("Tipo", ["Compra", "Venda"], key=f"{key}_a_tp")
-        f_t = fc[1].selectbox("Ativo", tickers, key=f"{key}_a_t")
+        f_t = fc[1].text_input("Ativo", key=f"{key}_a_t", placeholder=_hint)
         f_d = fc[2].date_input("Data", value=None, format="DD/MM/YYYY", key=f"{key}_a_d")
         f_q = fc[3].number_input("Quantidade", min_value=0, step=1, key=f"{key}_a_q")
         f_p = fc[4].number_input(f"{unidade} (R$)", min_value=0.0, step=0.01,
                                  format="%.2f", key=f"{key}_a_p")
         _ok = st.form_submit_button("➕ Adicionar operação", width="stretch")
     if _ok:
-        if not f_t or f_q <= 0:
-            st.warning("Escolha o ativo e informe uma quantidade maior que zero.")
+        _tk = (f_t or "").strip().upper()
+        if not _tk or f_q <= 0:
+            st.warning("Informe o ativo e uma quantidade maior que zero.")
         else:
-            _tipo = "venda" if f_tipo == "Venda" else "compra"
-            _ent = store.setdefault(f_t, {})
-            _lots = _migra_lotes(_ent)   # posição legada vira o 1º lote, se for o caso
-            _lots.append({"tipo": _tipo, "data": f_d.isoformat() if f_d else "",
-                          "qtd": int(f_q), "preco": float(f_p)})
-            _cc = _consolida_lotes(_lots)
-            _ent["compras"] = _lots
-            _ent["qtd"], _ent["preco_medio"], _ent["data_compra"] = (
-                _cc["qtd"], _cc["preco_medio"], _cc["data_compra"])
-            _save_all()
-            st.success(f"{f_tipo} registrada em **{f_t}**: {int(f_q)} × {_brl(f_p)}"
-                       + (f" · {f_d.strftime('%d/%m/%Y')}" if f_d else ""))
-            st.rerun()
+            _ok_add = True
+            if _tk not in store:   # ativo novo → busca e adiciona à carteira
+                with st.spinner(f"Buscando {_tk}…"):
+                    if is_fii:
+                        _d = _fetch_fii(_tk)
+                        if isinstance(_d, dict) and not _d.get("error") and _d.get("close_price"):
+                            store[_tk] = {**_d, "qtd": 0, "preco_medio": 0.0,
+                                          "data_compra": "", "compras": []}
+                        else:
+                            _ok_add = False
+                    else:
+                        if _fetch_ticker(_tk, target=store):
+                            _ok_add = False
+            if not _ok_add:
+                st.warning(f"Não encontrei **{_tk}** (Bolsai/yfinance). Confira o ticker.")
+            else:
+                _tipo = "venda" if f_tipo == "Venda" else "compra"
+                _ent = store.setdefault(_tk, {})
+                _lots = _migra_lotes(_ent)   # posição legada vira o 1º lote, se for o caso
+                _lots.append({"tipo": _tipo, "data": f_d.isoformat() if f_d else "",
+                              "qtd": int(f_q), "preco": float(f_p)})
+                _cc = _consolida_lotes(_lots)
+                _ent["compras"] = _lots
+                _ent["qtd"], _ent["preco_medio"], _ent["data_compra"] = (
+                    _cc["qtd"], _cc["preco_medio"], _cc["data_compra"])
+                _save_all()
+                st.success(f"{f_tipo} registrada em **{_tk}**: {int(f_q)} × {_brl(f_p)}"
+                           + (f" · {f_d.strftime('%d/%m/%Y')}" if f_d else ""))
+                st.rerun()
 
     # ── Corrigir saldo (ativos com split/bonificação/reinvestimento) ──
     with st.expander("🔧 Corrigir saldo de um ativo (split/bonificação/reinvestimento)"):
@@ -6951,7 +6967,7 @@ def _show_carteira_area() -> None:
     _qty_editor(enriched, acoes_cart)
     with st.expander("🏢 FIIs — Compras e Posições", expanded=False):
         _lotes_editor(list(fiis_cart.keys()), fiis_cart,
-                      key="fiis_lotes", unidade="Preço/cota")
+                      key="fiis_lotes", unidade="Preço/cota", is_fii=True)
     _show_import_nota()
 
     if total <= 0:
