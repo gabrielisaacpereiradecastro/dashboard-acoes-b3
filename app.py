@@ -4303,8 +4303,11 @@ def _tela_selecao_usuario() -> None:
                 for t in ["Qualidade × Preço", "Valuation por setor", "Carteira & FIIs", "Alertas in-app"])
             + "</div>", unsafe_allow_html=True)
         with st.container(border=True):
-            st.markdown("#### Quem é você?")
-            st.caption("Selecione seu perfil para acessar sua carteira personalizada.")
+            st.markdown("<h4 style='text-align:center;margin:0 0 4px'>Quem é você?</h4>",
+                        unsafe_allow_html=True)
+            st.markdown("<p style='text-align:center;color:#8b94a7;font-size:0.9rem;"
+                        "margin:0 0 10px'>Selecione seu perfil para acessar sua carteira "
+                        "personalizada.</p>", unsafe_allow_html=True)
             usuario = st.selectbox(
                 "Usuário", USUARIOS, key="sel_usuario_login",
                 label_visibility="collapsed",
