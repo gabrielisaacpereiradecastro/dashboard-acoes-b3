@@ -5887,12 +5887,17 @@ def _show_portfolio_performance(positions: list[dict], *,
         yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)", ticksuffix="%"))
     st.plotly_chart(figu, width="stretch", config={"displayModeBar": False})
 
+    _ini = nav.index[0]
+    _lim = min(lens, key=lens.get) if lens else None
     st.caption(
-        f"Base: **{n} pregões** (~{anos*12:.0f} meses) · risk-free **Selic {_selic*100:.1f}% a.a.** · "
-        "preço **ajustado** (inclui proventos). Simula manter as **quantidades atuais** ao longo "
-        "do período — não considera aportes/vendas. Ativos recém-listados encurtam a janela "
-        "(usa só datas com todos em negociação). Passe o mouse no **?** de cada índice para "
-        "entender. Métricas **históricas**, educacionais — **não são recomendação de investimento.**")
+        f"Janela: **{_ini:%d/%m/%Y} → hoje** ({n} pregões, ~{anos*12:.0f} meses) · risk-free "
+        f"**Selic {_selic*100:.1f}% a.a.** · preço **ajustado** (inclui proventos). Usa só datas "
+        f"com **todos os ativos em negociação**"
+        + (f" — a janela está limitada por **{_lim}** (histórico mais curto/mais recente na carteira)."
+           if _lim else ".")
+        + " Simula manter as **quantidades atuais** — não considera aportes/vendas (pra isso, o "
+        "**backtest** abaixo). Passe o mouse no **?** de cada índice. Métricas **históricas**, "
+        "educacionais — **não são recomendação de investimento.**")
 
 
 def _xirr(flows: list[tuple]) -> Optional[float]:
@@ -6156,7 +6161,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict, *,
         return
 
     st.divider()
-    st.markdown("## Análise da Carteira")
+    st.markdown("## Análise da Carteira de Ações")
 
     total_valor = sum(p["value"] for p in positions)
     for p in positions:
@@ -6498,9 +6503,21 @@ def _ticker_is_fii_api(t: str) -> bool:
         return False
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def _ticker_is_stock_api(t: str) -> bool:
+    """Consulta o Bolsai: o ticker é uma ação/unit? (distingue unit de ação de FII
+    entre os terminados em 11)."""
+    try:
+        d = api.get_company_info(t)
+        return isinstance(d, dict) and not d.get("error") and bool(d.get("sector") or d.get("name"))
+    except Exception:
+        return False
+
+
 def _classify_ticker(t: str) -> str:
-    """'fii' ou 'acao'. Usa as listas já existentes; senão, sufixo (só 11 é ambíguo)
-    e, no caso ambíguo, a API."""
+    """'fii' ou 'acao'. Usa as listas existentes; senão o sufixo (só 11 é ambíguo).
+    Para os terminados em 11: FII se o Bolsai reconhecer como FII; unit de ação se
+    reconhecer como ação; senão assume FII (provável fundo fora da cobertura → yfinance)."""
     t = t.upper()
     if any(t in lst for lst in st.session_state.fiis_listas.values()):
         return "fii"
@@ -6508,19 +6525,42 @@ def _classify_ticker(t: str) -> str:
         return "acao"
     if not t.endswith("11"):
         return "acao"
-    return "fii" if _ticker_is_fii_api(t) else "acao"
+    if _ticker_is_fii_api(t):
+        return "fii"
+    if _ticker_is_stock_api(t):
+        return "acao"
+    return "fii"   # 11 sem match no Bolsai → provável FII fora da cobertura (yfinance)
 
 
-def _import_trades(trades: list[dict]) -> None:
-    """Importa operações para a ⭐ Carteira (ações e FIIs), classificando cada ticker."""
+def _import_trades(trades: list[dict], substituir: bool = False) -> None:
+    """Importa operações para a ⭐ Carteira (ações e FIIs), classificando cada ticker.
+    `substituir`=True zera as operações existentes dos ativos importados antes (útil
+    quando já havia lançamento manual do saldo — evita dobrar). Sempre de-duplica
+    operações idênticas (mesmo tipo/data/qtd/preço)."""
     acoes_cart = st.session_state.todas_listas.setdefault(LISTAS_PADRAO[0], {})
     fiis_cart = st.session_state.fiis_listas.setdefault(LISTAS_PADRAO[0], {})
-    n_ok, erros = 0, []
+    trades = [tr for tr in trades if int(tr.get("qtd", 0) or 0) > 0]
+
+    def _store_for(t):
+        return fiis_cart if _classify_ticker(t) == "fii" else acoes_cart
+
+    # Modo substituir: limpa as operações dos tickers importados UMA vez
+    if substituir:
+        for t in {str(tr["ticker"]).upper() for tr in trades}:
+            s = _store_for(t)
+            if t in s:
+                s[t]["compras"] = []
+                s[t]["qtd"], s[t]["preco_medio"], s[t]["data_compra"] = 0, 0.0, ""
+
+    def _same(a, b):
+        return (a["tipo"] == b.get("tipo") and a["data"] == b.get("data")
+                and int(a["qtd"]) == int(b.get("qtd", 0))
+                and abs(float(a["preco"]) - float(b.get("preco", 0))) < 1e-6)
+
+    n_ok, dup, erros = 0, 0, []
     with st.spinner("Importando operações…"):
         for tr in trades:
             t = str(tr["ticker"]).upper()
-            if int(tr.get("qtd", 0) or 0) <= 0:
-                continue
             cls = _classify_ticker(t)
             if cls == "fii":
                 store = fiis_cart
@@ -6538,18 +6578,25 @@ def _import_trades(trades: list[dict]) -> None:
             ent = store[t]
             if not ent.get("compras"):
                 ent["compras"] = _migra_lotes(ent)
-            ent["compras"].append({
-                "tipo": "venda" if tr["tipo"] == "Venda" else "compra",
-                "data": tr.get("data", ""), "qtd": int(tr["qtd"]),
-                "preco": float(tr["preco"])})
+            nova = {"tipo": "venda" if tr["tipo"] == "Venda" else "compra",
+                    "data": tr.get("data", ""), "qtd": int(tr["qtd"]),
+                    "preco": float(tr["preco"])}
+            if any(_same(nova, x) for x in ent["compras"]):
+                dup += 1
+                continue
+            ent["compras"].append(nova)
             cc = _consolida_lotes(ent["compras"])
             ent["qtd"], ent["preco_medio"], ent["data_compra"] = (
                 cc["qtd"], cc["preco_medio"], cc["data_compra"])
             n_ok += 1
     _save_all()
     st.session_state["_import_flash"] = (
-        f"✅ {n_ok} operação(ões) importada(s) para a ⭐ Carteira."
-        + (f"  ⚠️ Não consegui adicionar: {', '.join(sorted(set(erros)))}." if erros else ""))
+        f"✅ {n_ok} operação(ões) importada(s)"
+        + (" (posições substituídas)" if substituir else "")
+        + (f" · {dup} duplicada(s) ignorada(s)" if dup else "")
+        + "."
+        + (f"  ⚠️ Não consegui adicionar: {', '.join(sorted(set(erros)))} "
+           "(fora da cobertura Bolsai e do yfinance)." if erros else ""))
 
 
 def _show_import_nota() -> None:
@@ -6600,10 +6647,17 @@ def _show_import_nota() -> None:
             })
         st.caption(f"**{len(all_trades)}** negócio(s) encontrados. Confira/edite e desmarque o "
                    "que não quiser antes de importar.")
+        _sub = st.checkbox(
+            "Substituir as operações já existentes dos ativos importados",
+            key="nota_substituir",
+            help="Marque se você já tinha lançado essas posições manualmente (ex.: o saldo "
+                 "final) — assim o import não SOMA por cima e dobra a quantidade. Zera as "
+                 "operações dos ativos desta importação e recadastra a partir da nota. "
+                 "Operações idênticas já são ignoradas automaticamente (de-duplicação).")
         if st.button("✅ Importar operações selecionadas", key="nota_import", width="stretch"):
             _sel = [r for _, r in edited.iterrows() if bool(r.get("Importar"))]
             if _sel:
-                _import_trades([dict(r) for r in _sel])
+                _import_trades([dict(r) for r in _sel], substituir=_sub)
                 st.rerun()
             else:
                 st.warning("Marque ao menos uma operação para importar.")
