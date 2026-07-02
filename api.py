@@ -406,8 +406,21 @@ def get_all_stock_data(ticker: str) -> dict:
     stats = get_stock_stats(t)
 
     # ── Preço e identificação ──────────────────────────────────
-    close_price = fund.get("close_price")
+    # /fundamentals CANONICALIZA classes ON/PN (query BMEB3 → dados de BMEB4, preço
+    # 66,18). Já o /stocks/stats traz o `close` da CLASSE consultada (BMEB3 = 50,60).
+    # Então preferimos o preço do /stats; P/L e P/VP são recalculados com ele.
+    _fund_close = fund.get("close_price")
+    _stats_close = (stats or {}).get("close")
+    close_price = _stats_close or _fund_close
     shares      = fund.get("shares_outstanding")
+
+    _pl_out, _pvp_out = fund.get("pl"), fund.get("pvp")
+    if (_stats_close and _fund_close and abs(_stats_close - _fund_close) > 1e-6):
+        _lpa, _vpa = fund.get("lpa"), fund.get("vpa")
+        if _lpa and _lpa > 0:
+            _pl_out = round(_stats_close / _lpa, 2)
+        if _vpa and _vpa > 0:
+            _pvp_out = round(_stats_close / _vpa, 2)
 
     # ── Liquidez: volume médio 52 semanas × preço (proxy R$) ──
     avg_vol_shares = (stats or {}).get("avg_volume_52w")
@@ -575,7 +588,7 @@ def get_all_stock_data(ticker: str) -> dict:
             "net_debt_ebitda":    fund.get("net_debt_ebitda"),
             "roe":                fund.get("roe"),
             "ev_ebitda":          fund.get("ev_ebitda"),
-            "pl":                 fund.get("pl"),
+            "pl":                 _pl_out,
             "ebitda_margin":      fund.get("ebitda_margin"),
             "cagr_earnings_5y":   _cagr_earn,
             "cagr_revenue_5y":    _cagr_rev,
@@ -583,7 +596,7 @@ def get_all_stock_data(ticker: str) -> dict:
             "dividend_yield":     dividend_yield_ttm,
             "liquidity":          liquidity_brl,
             # ── Indicadores informativos (sem score) ───────────
-            "pvp":          fund.get("pvp"),
+            "pvp":          _pvp_out,
             "payout":       payout,
             "net_margin":   fund.get("net_margin"),
             "gross_margin": fund.get("gross_margin"),
