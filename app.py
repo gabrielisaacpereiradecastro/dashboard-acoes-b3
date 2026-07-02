@@ -3854,13 +3854,17 @@ def _classic_strategy_pick(key: str, cands: list[dict]) -> list[dict]:
 def _backtest_basket(tickers: list[str], *, key: str,
                      price_fn=_fetch_price_history, bench_fn=None,
                      bench_label: str = "IBOV (BOVA11)",
-                     weights: Optional[dict] = None, aviso: Optional[str] = None) -> None:
+                     weights: Optional[dict] = None, aviso: Optional[str] = None,
+                     rf_sleeves: Optional[dict] = None,
+                     run_label: str = "Rodar backtest da estratégia") -> None:
     """Backtest de uma CESTA no histórico (com rebalanceamento opcional) vs benchmark
-    e CDI. Base 100, preço ajustado. `weights` (ticker→peso) opcional — None = equal
-    weight. `aviso` = caption de ressalva específico (ex.: look-ahead em estratégia)."""
+    e CDI. Base 100, preço ajustado. `weights` (nome→peso) opcional — None = equal
+    weight. `rf_sleeves` (nome→taxa anual) adiciona faixas de renda fixa (rendimento
+    fixo composto, held-to-maturity). `aviso` = caption de ressalva."""
     if bench_fn is None:
         bench_fn = lambda anos: (_fetch_ibov_vs_small(min(anos, 10))["Ibov"]
                                  if _fetch_ibov_vs_small(min(anos, 10)) is not None else None)
+    rf_sleeves = rf_sleeves or {}
     _peso_label = "pesos personalizados" if weights else "equal weight"
     st.markdown(f"#### 📈 Backtest da cesta ({_peso_label})")
     if aviso:
@@ -3873,24 +3877,38 @@ def _backtest_basket(tickers: list[str], *, key: str,
     rebal_sel = _c[1].selectbox("Rebalanceamento", list(rw), index=0, key=f"{key}_reb")
     rebal = rw[rebal_sel]
 
-    if not st.button("▶️ Rodar backtest da estratégia", key=f"{key}_run", width="stretch"):
+    if not st.button(f"▶️ {run_label}", key=f"{key}_run", width="stretch"):
         return
 
-    with st.spinner("Simulando a cesta no histórico…"):
+    with st.spinner("Simulando no histórico…"):
         px: dict[str, pd.Series] = {}
         for t in tickers:
             df = price_fn(t)
             if df is not None and not df.empty and "adjusted_close" in df:
                 s = df.set_index("trade_date")["adjusted_close"].astype(float)
                 px[t] = s[~s.index.duplicated(keep="last")]
-        if len(px) < 2:
-            st.warning("Histórico insuficiente para a cesta.")
+        if not px and not rf_sleeves:
+            st.warning("Informe ao menos um ativo (ações/FIIs) ou uma faixa de renda fixa.")
             return
-        mat = pd.concat(px, axis=1).dropna()
-        if len(mat) < 30:
-            st.warning("Pouco histórico em comum entre os ativos da cesta.")
+        # Índice base: dos ativos de RV; se só RF, um calendário de pregões da janela
+        if px:
+            base = pd.concat(px, axis=1).dropna()
+            if len(base) < 30:
+                st.warning("Pouco histórico em comum entre os ativos da cesta.")
+                return
+            base = base.iloc[-look:]
+        else:
+            _end = pd.Timestamp.today().normalize()
+            _ix = pd.bdate_range(_end - pd.Timedelta(days=int(look * 1.5) + 40), _end)
+            base = pd.DataFrame(index=(_ix[-look:] if look < 10_000 else _ix))
+        # Faixas de renda fixa — rendimento fixo composto (sem marcação a mercado)
+        _days = (base.index - base.index[0]).days
+        for _nome, _taxa in rf_sleeves.items():
+            base[_nome] = [100.0 * (1 + float(_taxa)) ** (d / 365.0) for d in _days]
+        mat = base
+        if mat.shape[1] == 0 or len(mat) < 20:
+            st.warning("Dados insuficientes para simular.")
             return
-        mat = mat.iloc[-look:]
         n_ativos = mat.shape[1]
         if weights:   # pesos alinhados às colunas com histórico, normalizados
             _raw = [max(0.0, float(weights.get(c, 0))) for c in mat.columns]
@@ -4029,44 +4047,69 @@ def _render_classic_strategy(key: str) -> None:
               "retorno realizável.")
 
 
-def _show_manual_basket() -> None:
-    """Backtest de uma cesta MANUAL (tickers + pesos digitados pelo usuário)."""
-    with st.expander("🧺 Backtest de cesta manual", expanded=False):
-        st.caption("Monte uma cesta própria: digite os tickers, escolha pesos iguais ou "
-                   "personalizados, e veja como teria performado vs IBOV e CDI.")
-        _txt = st.text_input(
-            "Tickers (separados por vírgula ou espaço)",
-            key="mb_tickers", placeholder="ex: PETR4, VALE3, ITUB4, WEGE3")
-        tickers = [t.strip().upper() for t in _txt.replace(",", " ").split() if t.strip()]
-        # dedup preservando ordem
-        tickers = list(dict.fromkeys(tickers))
-        if not tickers:
-            st.caption("Informe ao menos 2 tickers para montar a cesta.")
-            return
+def _show_simulacao() -> None:
+    """🧪 Simulação — carteira hipotética RV (ações/FIIs) + RF (faixas de renda fixa)
+    vs IBOV e CDI. Renda fixa = rendimento fixo composto (held-to-maturity)."""
+    st.markdown("## 🧪 Simulação de Carteira")
+    st.caption("Monte uma carteira **hipotética** — ações/FIIs (renda variável) **+ faixas de "
+               "renda fixa** — e veja como teria performado vs IBOV e CDI. Educacional, não "
+               "é recomendação.")
 
-        modo = st.radio("Pesos", ["Iguais", "Personalizados"], horizontal=True,
-                        key="mb_modo")
-        weights = None
-        if modo == "Personalizados":
-            _wdf = pd.DataFrame({"Ticker": tickers,
-                                 "Peso (%)": [round(100 / len(tickers), 2)] * len(tickers)})
-            _wed = st.data_editor(
-                _wdf, hide_index=True, width="stretch", key="mb_weights",
-                column_config={
-                    "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
-                    "Peso (%)": st.column_config.NumberColumn(
-                        "Peso (%)", min_value=0.0, step=1.0, format="%.1f")})
-            weights = {str(r["Ticker"]): float(r["Peso (%)"] or 0)
-                       for _, r in _wed.iterrows()}
-            _soma = sum(weights.values())
-            st.caption(f"Soma dos pesos: **{_soma:.1f}%** (normalizo automaticamente para 100%).")
+    # ── Renda variável ──────────────────────────────────────────
+    st.markdown("#### 📈 Renda variável (ações/FIIs)")
+    _txt = st.text_input("Tickers (separados por vírgula ou espaço)", key="sim_rv",
+                         placeholder="ex: PETR4, ITUB4, WEGE3, KNCR11")
+    rv = list(dict.fromkeys(t.strip().upper()
+                            for t in _txt.replace(",", " ").split() if t.strip()))
 
-        if len(tickers) < 2:
-            st.warning("Use ao menos 2 tickers.")
-            return
-        _backtest_basket(tickers, key="manual_bt", weights=weights,
-                         aviso="Cesta montada por você, mantida ao longo do período. O resultado "
-                               "depende dos tickers e pesos escolhidos; é histórico, não promessa.")
+    # ── Renda fixa ──────────────────────────────────────────────
+    st.markdown("#### 💵 Renda fixa (faixas)")
+    st.caption("Rendimento **fixo composto** (held-to-maturity, **sem marcação a mercado**). "
+               "Ex.: Tesouro Selic ≈ CDI; Prefixado 13%; IPCA+ ≈ IPCA esperado + juro real.")
+    _selic = (_fetch_macro().get("selic") or 10.0)
+    _rf_df = pd.DataFrame({"Faixa": ["Tesouro Selic / CDI"], "Taxa % a.a.": [round(_selic, 2)]})
+    _rf_ed = st.data_editor(
+        _rf_df, num_rows="dynamic", hide_index=True, width="stretch", key="sim_rf",
+        column_config={
+            "Faixa": st.column_config.TextColumn("Faixa"),
+            "Taxa % a.a.": st.column_config.NumberColumn("Taxa % a.a.", min_value=0.0,
+                                                         format="%.2f")})
+    rf_sleeves: dict = {}
+    for _, r in _rf_ed.iterrows():
+        nome = str(r.get("Faixa") or "").strip()
+        taxa = r.get("Taxa % a.a.")
+        if nome and taxa and float(taxa) > 0 and nome not in rf_sleeves:
+            rf_sleeves[nome] = float(taxa) / 100.0
+
+    componentes = rv + list(rf_sleeves.keys())
+    if len(componentes) < 1:
+        st.info("Adicione ao menos um ativo ou uma faixa de renda fixa para simular.")
+        return
+
+    # ── Pesos ───────────────────────────────────────────────────
+    st.markdown("#### ⚖️ Alocação")
+    modo = st.radio("Pesos", ["Iguais", "Personalizados"], horizontal=True, key="sim_modo")
+    weights = None
+    if modo == "Personalizados":
+        _wdf = pd.DataFrame({"Componente": componentes,
+                             "Peso (%)": [round(100 / len(componentes), 2)] * len(componentes)})
+        _wed = st.data_editor(
+            _wdf, hide_index=True, width="stretch", key="sim_w",
+            column_config={
+                "Componente": st.column_config.TextColumn("Componente", disabled=True),
+                "Peso (%)": st.column_config.NumberColumn("Peso (%)", min_value=0.0, step=1.0,
+                                                          format="%.1f")})
+        weights = {str(r["Componente"]): float(r["Peso (%)"] or 0) for _, r in _wed.iterrows()}
+        _soma = sum(weights.values())
+        _rvw = sum(v for k, v in weights.items() if k in rv)
+        st.caption(f"Soma **{_soma:.1f}%** (normalizo p/ 100%) · RV **{_rvw/_soma*100 if _soma else 0:.0f}%** "
+                   f"/ RF **{100-(_rvw/_soma*100 if _soma else 0):.0f}%**.")
+
+    _backtest_basket(rv, key="sim_bt", weights=weights, rf_sleeves=rf_sleeves,
+                     run_label="Rodar simulação",
+                     aviso="Carteira **hipotética** montada por você. A renda fixa é **rendimento "
+                           "fixo composto** (sem marcação a mercado — prefixado/IPCA+ oscilam se "
+                           "vendidos antes do vencimento). Histórico, educacional — não é promessa.")
 
 
 def _show_screener():
@@ -4116,8 +4159,8 @@ def _show_screener():
         _render_classic_strategy(st.session_state["scr_strategy"])
         return
 
-    # Backtest de cesta manual (tickers + pesos do usuário)
-    _show_manual_basket()
+    st.caption("💡 Para montar e testar carteiras hipotéticas (com renda fixa também), use a "
+               "aba **🧪 Simulação** no menu lateral.")
 
     # ── Painel de filtros ──────────────────────────────────────
     with st.expander("⚙️ Ajustar filtros", expanded=True):
@@ -4572,7 +4615,7 @@ def _sidebar():
 
         # ── Navegação por área ─────────────────────────────────
         _AREAS = ["📊 Carteira", "📈 Ações", "🏢 FIIs", "💰 Proventos", "🔎 Screener",
-                  "🌐 Ciclo", "🔔 Alertas"]
+                  "🧪 Simulação", "🌐 Ciclo", "🔔 Alertas"]
         _cur_area = st.session_state.get("area", _AREAS[0])
         st.session_state.area = st.radio(
             "Navegação", _AREAS,
@@ -8093,6 +8136,9 @@ footer {visibility: hidden;}
         return
     if _area == "🔎 Screener":
         _show_screener()
+        return
+    if _area == "🧪 Simulação":
+        _show_simulacao()
         return
     if _area == "🌐 Ciclo":
         _show_ciclo_tab()
