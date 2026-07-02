@@ -6552,27 +6552,104 @@ def _fetch_price_any(ticker: str) -> Optional[pd.DataFrame]:
 
 
 # ── Import de nota de corretagem (PDF) ──────────────────────────
+# Classe da ação → sufixo do ticker (Itaú traz "PETROBRAS PN", sem o ticker)
+_CLASSE_SUFIXO = {"ON": "3", "PN": "4", "PNA": "5", "PNB": "6", "PNC": "7",
+                  "PND": "8", "UNT": "11", "UN": "11"}
+# Nomes comuns → base do ticker (fallback quando o ativo não está nas suas listas)
+_NOME_BASE_COMUM = {
+    "PETROBRAS": "PETR", "VALE": "VALE", "ITAUUNIBANCO": "ITUB", "ITAU UNIBANCO": "ITUB",
+    "BRADESCO": "BBDC", "AMBEV": "ABEV", "ITAUSA": "ITSA", "BANCO DO BRASIL": "BBAS",
+    "BRASIL": "BBAS", "SANTANDER": "SANB", "B3": "B3SA", "WEG": "WEGE", "GERDAU": "GGBR",
+    "SUZANO": "SUZB", "JBS": "JBSS", "MAGAZINE": "MGLU", "RENNER": "LREN",
+    "ELETROBRAS": "ELET", "ELETROBRÁS": "ELET", "EQUATORIAL": "EQTL", "PRIO": "PRIO",
+    "RAIA": "RADL", "RAIADROGASIL": "RADL", "HAPVIDA": "HAPV", "NATURA": "NTCO",
+    "BB SEGURIDADE": "BBSE", "CEMIG": "CMIG", "SABESP": "SBSP", "TAESA": "TAEE",
+    "COPEL": "CPLE", "KLABIN": "KLBN", "MERCANTIL": "BMEB",
+}
+
+
+def _norm_nome(s: str) -> str:
+    """Normaliza nome (maiúsculas, sem acentos) para casar descrições de nota."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode()
+    return " ".join(s.upper().split())
+
+
+def _known_name_map() -> dict:
+    """Mapa nome_normalizado → base do ticker, a partir dos ativos já nas suas listas."""
+    m: dict = {}
+    for lst in st.session_state.get("todas_listas", {}).values():
+        for tk, e in lst.items():
+            if not isinstance(e, dict):
+                continue
+            d = e.get("data") if isinstance(e.get("data"), dict) else {}
+            for nm in (d.get("trade_name"), d.get("corporate_name")):
+                if nm:
+                    m[_norm_nome(nm)] = tk[:4]
+    return m
+
+
+def _resolve_ticker_from_desc(desc: str, name_map: dict) -> str:
+    """'PETROBRAS PN N2' → 'PETR4'. Usa classe→sufixo + nome (comuns e suas listas).
+    Devolve '' se não resolver (o usuário completa no preview)."""
+    toks = _norm_nome(desc).split()
+    classe = next((tk for tk in toks if tk in _CLASSE_SUFIXO), None)
+    if not classe:
+        return ""
+    nome = " ".join(toks[:toks.index(classe)]).strip()
+    if not nome:
+        return ""
+    suf = _CLASSE_SUFIXO[classe]
+    for frag, base in _NOME_BASE_COMUM.items():
+        if _norm_nome(frag) in nome:
+            return base + suf
+    for nm, base in name_map.items():
+        if nm and (nome in nm or nm in nome):
+            return base + suf
+    return ""
+
+
 def _parse_nota_corretagem(text: str) -> tuple[str, list[dict]]:
     """Extrai (data_pregão_iso, [operações]) de uma nota de corretagem.
-    Layout testado: BTG/Necton. Cada operação: {data, tipo, ticker, qtd, preco}."""
+    Layouts: BTG/Necton (traz o ticker) e Itaú (traz nome+classe → resolvido no import).
+    Operação: {data, tipo, ticker, qtd, preco, desc}."""
     import re
-    m = re.search(r'(\d{2}/\d{2}/\d{4})\s*\n\s*Data preg', text) or re.search(
-        r'(\d{2}/\d{2}/\d{4})', text)
-    iso = ""
-    if m:
-        d, mo, y = m.group(1).split("/")
-        iso = f"{y}-{mo}-{d}"
+    text = text.replace("\xa0", " ")   # Itaú usa espaços não-quebráveis
 
     def _num(s: str) -> float:
         return float(s.replace(".", "").replace(",", "."))
 
+    def _iso(dstr: str) -> str:
+        d, mo, y = dstr.split("/")
+        return f"{y}-{mo}-{d}"
+
+    is_itau = ("ITAU CORRETORA" in text.upper() or "B3 RV LISTADO" in text.upper())
+    if is_itau:
+        m = (re.search(r'Data Pregão\s*\n?\s*\d+\s+\d+\s+(\d{2}/\d{2}/\d{4})', text)
+             or re.search(r'(\d{2}/\d{2}/\d{4})', text))
+        iso = _iso(m.group(1)) if m else ""
+        # B3 RV LISTADO <C|V> VISTA <nome+classe> <qtd> <preço> <valor> <D|C>
+        pat = re.compile(
+            r'LISTADO\s+([CV])\s+\S+\s+(.+?)\s+(\d+)\s+([\d.]+,\d{2})\s+'
+            r'([\d.]+,\d{2})\s+([DC])')
+        trades = []
+        for cv, spec, q, pr, _val, _dc in pat.findall(text):
+            trades.append({"data": iso, "tipo": "Venda" if cv == "V" else "Compra",
+                           "ticker": "", "desc": " ".join(spec.split()),
+                           "qtd": int(q), "preco": _num(pr)})
+        return iso, trades
+
+    # BTG/Necton (traz o ticker direto)
+    m = (re.search(r'(\d{2}/\d{2}/\d{4})\s*\n\s*Data preg', text)
+         or re.search(r'(\d{2}/\d{2}/\d{4})', text))
+    iso = _iso(m.group(1)) if m else ""
     pat = re.compile(
         r'BOVESPA\s+([CV])\s+\S+\s+([A-Z]{4}\d{1,2})\b.*?\s(\d+)\s+'
         r'([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([DC])')
     trades = []
     for cv, tk, q, pr, _val, _dc in pat.findall(text):
         trades.append({"data": iso, "tipo": "Venda" if cv == "V" else "Compra",
-                       "ticker": tk, "qtd": int(q), "preco": _num(pr)})
+                       "ticker": tk, "desc": "", "qtd": int(q), "preco": _num(pr)})
     return iso, trades
 
 
@@ -6641,10 +6718,13 @@ def _import_trades(trades: list[dict], substituir: bool = False) -> None:
                 and int(a["qtd"]) == int(b.get("qtd", 0))
                 and abs(float(a["preco"]) - float(b.get("preco", 0))) < 1e-6)
 
-    n_ok, dup, erros = 0, 0, []
+    n_ok, dup, erros, sem_tk = 0, 0, [], 0
     with st.spinner("Importando operações…"):
         for tr in trades:
-            t = str(tr["ticker"]).upper()
+            t = str(tr.get("ticker") or "").strip().upper()
+            if not t:
+                sem_tk += 1
+                continue
             cls = _classify_ticker(t)
             if cls == "fii":
                 store = fiis_cart
@@ -6678,6 +6758,7 @@ def _import_trades(trades: list[dict], substituir: bool = False) -> None:
         f"✅ {n_ok} operação(ões) importada(s)"
         + (" (posições substituídas)" if substituir else "")
         + (f" · {dup} duplicada(s) ignorada(s)" if dup else "")
+        + (f" · {sem_tk} sem ticker (preencha no preview)" if sem_tk else "")
         + "."
         + (f"  ⚠️ Não consegui adicionar: {', '.join(sorted(set(erros)))} "
            "(fora da cobertura Bolsai e do yfinance)." if erros else ""))
@@ -6732,25 +6813,43 @@ def _show_import_nota() -> None:
                 st.warning(f"Não consegui ler **{f.name}**: {e}")
 
         if not all_trades:
-            st.warning("Nenhum negócio reconhecido. O layout pode ser diferente do testado "
-                       "(BTG/Necton) — me avise que eu amplio o parser.")
+            st.warning("Nenhum negócio reconhecido. O layout pode ser diferente dos testados "
+                       "(BTG/Necton, Itaú) — me avise que eu amplio o parser.")
             return
+
+        # Resolve ticker das notas que trazem só o nome (Itaú: "PETROBRAS PN" → PETR4)
+        _nmap = _known_name_map()
+        _n_desc = 0
+        for tr in all_trades:
+            if not tr.get("ticker") and tr.get("desc"):
+                tr["ticker"] = _resolve_ticker_from_desc(tr["desc"], _nmap)
+                _n_desc += 1
 
         df = pd.DataFrame(all_trades)
         df.insert(0, "Importar", True)
+        _tem_desc = df.get("desc") is not None and df["desc"].astype(bool).any()
+        _cols = ["Importar", "tipo", "ticker"] + (["desc"] if _tem_desc else []) \
+            + ["qtd", "preco", "data", "arquivo"]
+        df = df[[c for c in _cols if c in df.columns]]
         edited = st.data_editor(
             df, hide_index=True, width="stretch", key="nota_preview",
             column_config={
                 "Importar": st.column_config.CheckboxColumn("✓", width="small"),
                 "tipo": st.column_config.SelectboxColumn("Tipo", options=["Compra", "Venda"]),
-                "ticker": st.column_config.TextColumn("Ticker"),
+                "ticker": st.column_config.TextColumn(
+                    "Ticker", help="Confira/preencha — obrigatório para importar."),
+                "desc": st.column_config.TextColumn("Descrição (nota)", disabled=True),
                 "qtd": st.column_config.NumberColumn("Qtd", min_value=0, step=1),
                 "preco": st.column_config.NumberColumn("Preço", min_value=0.0, format="%.2f"),
                 "data": st.column_config.TextColumn("Data (pregão)", disabled=True),
                 "arquivo": st.column_config.TextColumn("Arquivo", disabled=True),
             })
-        st.caption(f"**{len(all_trades)}** negócio(s) encontrados. Confira/edite e desmarque o "
-                   "que não quiser antes de importar.")
+        _cap = f"**{len(all_trades)}** negócio(s) encontrados. Confira/edite e desmarque o que não quiser."
+        if _n_desc:
+            _falta = sum(1 for _, r in edited.iterrows() if not str(r.get("ticker") or "").strip())
+            _cap += (f" · Notas Itaú trazem só o nome — **preencha o Ticker** onde faltar"
+                     + (f" (**{_falta}** sem ticker)" if _falta else " ✅"))
+        st.caption(_cap)
         _sub = st.checkbox(
             "Substituir as operações já existentes dos ativos importados",
             key="nota_substituir",
