@@ -5667,6 +5667,32 @@ def _lotes_editor(tickers: list[str], store: dict, *, key: str,
                        + (f" · {f_d.strftime('%d/%m/%Y')}" if f_d else ""))
             st.rerun()
 
+    # ── Corrigir saldo (ativos com split/bonificação/reinvestimento) ──
+    with st.expander("🔧 Corrigir saldo de um ativo (split/bonificação/reinvestimento)"):
+        st.caption("Para ativos com eventos que a **nota não traz** (bonificação, split, recompra "
+                   "com dividendos), informe o **saldo final** da corretora aqui — ele "
+                   "**substitui** todas as operações desse ativo por **um único lote** (sem data, "
+                   "então fica fora do backtest, mas com quantidade e preço médio corretos).")
+        gc = st.columns([2, 1.5, 1.7, 1.3])
+        g_t = gc[0].selectbox("Ativo", tickers, key=f"{key}_fix_t")
+        g_q = gc[1].number_input("Qtd (saldo)", min_value=0, step=1, key=f"{key}_fix_q")
+        g_p = gc[2].number_input(f"{unidade} médio (R$)", min_value=0.0, step=0.01,
+                                 format="%.2f", key=f"{key}_fix_p")
+        gc[3].markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if gc[3].button("Definir saldo", key=f"{key}_fix_btn", width="stretch"):
+            if g_t and g_q > 0 and g_t in store:
+                store[g_t]["compras"] = [{"tipo": "compra", "data": "",
+                                          "qtd": int(g_q), "preco": float(g_p)}]
+                _cc = _consolida_lotes(store[g_t]["compras"])
+                store[g_t]["qtd"], store[g_t]["preco_medio"], store[g_t]["data_compra"] = (
+                    _cc["qtd"], _cc["preco_medio"], _cc["data_compra"])
+                _save_all()
+                st.success(f"Saldo de **{g_t}** definido: {int(g_q)} × {_brl(g_p)} "
+                           "(operações anteriores substituídas).")
+                st.rerun()
+            else:
+                st.warning("Escolha o ativo e informe uma quantidade maior que zero.")
+
     rows = []
     for t in tickers:
         for c in _migra_lotes(store.get(t, {})):
