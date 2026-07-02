@@ -6608,6 +6608,26 @@ def _show_import_nota() -> None:
                    "importa como operações na sua ⭐ Carteira. **Você confere antes.** Layout "
                    "testado: **BTG/Necton**. Os custos (corretagem/emolumentos) não são rateados — "
                    "usa o preço do negócio.")
+
+        # Zerar operações (mantém os ativos/fundamentos) — reset limpo antes de re-importar
+        _zc = st.checkbox("Confirmo que quero **zerar todas as operações**", key="zerar_confirm")
+        if st.button("🗑 Zerar operações da carteira (mantém os ativos)",
+                     disabled=not _zc, key="zerar_ops"):
+            _n = 0
+            for _lst in (st.session_state.todas_listas.get(LISTAS_PADRAO[0], {}),
+                         st.session_state.fiis_listas.get(LISTAS_PADRAO[0], {})):
+                for _e in _lst.values():
+                    if _e.get("compras") or _e.get("qtd"):
+                        _n += 1
+                    _e["compras"] = []
+                    _e["qtd"], _e["preco_medio"], _e["data_compra"] = 0, 0.0, ""
+            _save_all()
+            st.session_state["_import_flash"] = (
+                f"🗑 Operações zeradas em {_n} ativo(s). Re-importe as notas ou relance "
+                "manualmente — os tickers e fundamentos foram mantidos.")
+            st.rerun()
+        st.divider()
+
         files = st.file_uploader("Nota(s) em PDF", type=["pdf"],
                                  accept_multiple_files=True, key="nota_up")
         if not files:
