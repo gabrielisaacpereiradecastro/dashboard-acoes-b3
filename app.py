@@ -4299,6 +4299,11 @@ def _tela_selecao_usuario() -> None:
         "pointer-events:none;z-index:0;"
         "background:radial-gradient(900px 480px at 50% -10%, rgba(52,211,153,0.13), transparent 62%);"
         "opacity:.6;animation:loginBreathe 3.2s ease-in-out infinite;}"
+        # centraliza o nome do usuário dentro do seletor do login
+        "[data-testid='stSelectbox'] div[data-baseweb='select'] > div:first-child{"
+        "justify-content:center;text-align:center;}"
+        "[data-testid='stSelectbox'] div[data-baseweb='select'] div[value]{text-align:center;"
+        "width:100%;}"
         "</style>", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 2.2, 1])
     with col:
@@ -6051,6 +6056,9 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str], *,
             units.loc[m, t] += sig * q          # venda reduz as unidades
             invest.loc[m] += sig * q * p         # venda devolve caixa (custo líquido)
 
+        # Não deixa unidades negativas (venda cuja compra ficou de fora por não ter
+        # data faria a posição/patrimônio ir a negativo → drawdown > 100%).
+        units = units.clip(lower=0)
         E = (units * pxm).sum(axis=1).dropna()
         if E.empty or len(E) < 5:
             st.warning("Histórico insuficiente para o backtest (datas muito recentes ou "
@@ -6141,7 +6149,7 @@ def _show_portfolio_backtest(acoes: dict, tickers: list[str], *,
     st.plotly_chart(figc, width="stretch", config={"displayModeBar": False})
 
     # Drawdown real da carteira
-    under = (E / E.cummax() - 1) * 100
+    under = ((E / E.cummax() - 1) * 100).clip(lower=-100)
     figd = go.Figure(go.Scatter(
         x=under.index, y=under.values, fill="tozeroy", mode="lines",
         line=dict(color="#f87171", width=1), fillcolor="rgba(248,113,113,0.18)",
