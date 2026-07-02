@@ -576,10 +576,30 @@ def _fetch_ticker(ticker: str, target: Optional[dict] = None) -> Optional[str]:
     )
     log.append(f"📋 Total de campos retornados por /fundamentals: {len(raw_fund)}")
 
-    # Força o ticker armazenado a ser o que o usuário digitou.
-    # A Bolsai pode retornar fund["ticker"] = "ITUB4" mesmo para a query "ITUB3" —
-    # usar esse valor causaria exibição errada na lista.
+    # A Bolsai CANONICALIZA classes ON/PN: query "BMEB3" pode retornar os dados de
+    # "BMEB4" (classe mais líquida). Fundamentos por empresa tudo bem, mas o PREÇO e
+    # os múltiplos ligados a preço ficam da classe errada. Detecta pelo ticker
+    # retornado e corrige preço/variação/P-L/P-VP da classe certa via yfinance.
+    _canon = (data.get("ticker") or "").upper()
     data["ticker"] = t
+    if _canon and _canon != t:
+        try:
+            _ov = _precos_ao_vivo((t,)).get(t)
+        except Exception:
+            _ov = None
+        if _ov and _ov.get("price"):
+            _px = float(_ov["price"])
+            data["close_price"] = _px
+            if _ov.get("prev_close"):
+                data["daily_change_pct"] = (_px / float(_ov["prev_close"]) - 1) * 100
+            _lpa, _vpa = data.get("lpa"), data.get("vpa")
+            if _lpa and _lpa > 0:
+                data["pl"] = _px / _lpa
+            if _vpa and _vpa > 0:
+                data["pvp"] = _px / _vpa
+            data["_preco_classe_corrigido"] = _canon
+            log.append(f"↔ {t}: Bolsai canonicalizou p/ {_canon}; preço corrigido via yfinance "
+                       f"= {_px:.2f}")
 
     _prev = _store.get(t, {})
 
