@@ -4447,6 +4447,33 @@ def _sidebar_atualizacao() -> None:
             else:
                 st.caption("Indisponível (verifique a API Key).")
 
+        with st.expander("🔬 Inspecionar ticker (API bruta)"):
+            st.caption("Mostra o que **cada endpoint** do Bolsai devolve p/ um ticker — "
+                       "útil p/ conferir se ON/PN (ex.: BMEB3 × BMEB4) vêm com preço próprio "
+                       "ou canonicalizado.")
+            _dbg_t = st.text_input("Ticker", key="dbg_ticker",
+                                   placeholder="ex: BMEB3").strip().upper()
+            if _dbg_t and st.button("Inspecionar", key="dbg_go"):
+                try:
+                    _f = api.get_fundamentals(_dbg_t) or {}
+                    _s = api.get_stock_stats(_dbg_t) or {}
+                    _c = api.get_company_info(_dbg_t) or {}
+                    st.markdown(f"**Consultado:** `{_dbg_t}`")
+                    st.markdown(
+                        "**/fundamentals** → ticker=`{}` · close_price=`{}` · pl=`{}` · pvp=`{}`"
+                        .format(_f.get("ticker"), _f.get("close_price"),
+                                _f.get("pl"), _f.get("pvp")))
+                    st.markdown(
+                        "**/stocks/stats** → close=`{}` · price=`{}` · daily_change_pct=`{}`"
+                        .format(_s.get("close"), _s.get("price"), _s.get("daily_change_pct")))
+                    st.markdown("**/companies** → ticker=`{}` · name=`{}`"
+                                .format(_c.get("ticker"), _c.get("name") or _c.get("trade_name")))
+                    st.caption("Se o `ticker` do /fundamentals ≠ do consultado, o Bolsai "
+                               "canonicalizou. Se o /stocks/stats trouxer `close`/`price` "
+                               "próprio da classe, dá pra corrigir por ele (sem yfinance).")
+                except Exception as _e:
+                    st.error(f"Erro: {_e}")
+
 
 def _sidebar_fiis_controls() -> None:
     """Sidebar da área FIIs: seletor de lista + gerenciar + adicionar FII (por
