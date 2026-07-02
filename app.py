@@ -5404,7 +5404,7 @@ def _show_fii_portfolio_analysis(fiis_dict: dict, *, show_perf: bool = True) -> 
 
     # ── Risco & Retorno + Backtest (preço via yfinance, benchmark IFIX) ──
     if show_perf:
-        _show_portfolio_performance(positions, price_fn=_fetch_fii_history,
+        _show_portfolio_performance(positions, fiis_dict, price_fn=_fetch_fii_history,
                                     key="fii_perf_period")
         _show_portfolio_backtest(fiis_dict, [p["ticker"] for p in positions],
                                  price_fn=_fetch_fii_history,
@@ -5818,47 +5818,68 @@ def _weighted_avg_portfolio(positions: list[dict], field: str) -> Optional[float
     return sum(w * v for w, v in valid) / total_w
 
 
-def _show_portfolio_performance(positions: list[dict], *,
+def _twr_daily_returns(store: dict, tickers: list[str], price_fn) -> Optional[pd.Series]:
+    """Retornos diários TWR (time-weighted): a cada dia, média dos retornos dos ativos
+    PONDERADA pelo valor do dia anterior. Reflete a composição mudando no tempo (um
+    ativo passa a pesar a partir da sua data de compra) e NÃO é poluído por aportes
+    (comprar mais muda o peso, não gera retorno falso). Posição sem data entra desde o
+    início da série. Sobre preço ajustado (retorno total). Retorna a série ou None."""
+    px: dict[str, pd.Series] = {}
+    for t in tickers:
+        df = price_fn(t)
+        if df is not None and not df.empty and "adjusted_close" in df:
+            s = df.set_index("trade_date")["adjusted_close"].astype(float)
+            px[t] = s[~s.index.duplicated(keep="last")]
+    if not px:
+        return None
+    idx = pd.DatetimeIndex(sorted(set().union(*[set(s.index) for s in px.values()])))
+    pxm = pd.DataFrame({t: s.reindex(idx) for t, s in px.items()}).ffill()
+
+    units = pd.DataFrame(0.0, index=idx, columns=list(px.keys()))
+    for t in px:
+        for c in _migra_lotes(store.get(t, {})):
+            q = int(c.get("qtd", 0) or 0)
+            if q <= 0:
+                continue
+            sig = -1 if c.get("tipo") == "venda" else 1
+            dd = idx[0]
+            if c.get("data"):
+                try:
+                    dd = pd.Timestamp(c["data"]).normalize()
+                except (ValueError, TypeError):
+                    dd = idx[0]
+            units.loc[units.index >= dd, t] += sig * q
+    units = units.clip(lower=0)
+
+    u_prev = units.shift(1)
+    num = (u_prev * (pxm - pxm.shift(1))).sum(axis=1, min_count=1)
+    den = (u_prev * pxm.shift(1)).sum(axis=1, min_count=1)
+    r = (num / den).where(den > 0)
+    return r.replace([float("inf"), float("-inf")], pd.NA).dropna()
+
+
+def _show_portfolio_performance(positions: list[dict], store: dict, *,
                                 price_fn=_fetch_price_history,
                                 key: str = "perf_period") -> None:
-    """Métricas de risco/retorno da carteira (Sharpe, Sortino, vol., max drawdown,
-    Calmar). Monta o valor diário mantendo as QUANTIDADES ATUAIS constantes ao longo
-    do período, sobre preço AJUSTADO (inclui proventos = retorno total). Risk-free =
-    Selic anualizada do painel macro. `price_fn` permite usar yfinance p/ FIIs."""
-    st.markdown("#### Risco & Retorno (histórico)")
+    """Métricas de risco/retorno TWR (Sharpe, Sortino, vol., max drawdown, Calmar).
+    Usa as DATAS das operações: cada ativo entra na sua data (composição muda no
+    tempo), sem a limitação da interseção. Preço ajustado (retorno total); risk-free =
+    Selic anualizada. `price_fn`/`store` permitem ações+FIIs juntos."""
+    st.markdown("#### Risco & Retorno (ponderado no tempo · TWR)")
 
     periods = {"6M": 126, "1A": 252, "2A": 504, "5A": 1260, "Máx": 10_000}
     sel = st.radio("Período", list(periods.keys()), index=1, horizontal=True,
                    key=key, label_visibility="collapsed")
     look = periods[sel]
 
-    # Série de valor por ticker (adjusted_close × qtd), interseção de datas
     with st.spinner("Calculando risco e retorno…"):
-        series: dict[str, pd.Series] = {}
-        lens: dict[str, int] = {}
-        for p in positions:
-            _df = price_fn(p["ticker"])
-            if _df is not None and not _df.empty and "adjusted_close" in _df:
-                _s = _df.set_index("trade_date")["adjusted_close"].astype(float)
-                _s = _s[~_s.index.duplicated(keep="last")]
-                series[p["ticker"]] = _s * p["qtd"]
-                lens[p["ticker"]] = len(_s)
+        r_all = _twr_daily_returns(store, [p["ticker"] for p in positions], price_fn)
 
-    if not series:
-        st.caption("Histórico de preços indisponível para calcular as métricas.")
+    if r_all is None or len(r_all) < 20:
+        st.caption("Histórico insuficiente para as métricas (mínimo ~20 pregões com posição).")
         return
 
-    mat = pd.concat(series, axis=1).dropna()   # só datas com TODOS os ativos
-    if len(mat) < 30:
-        _curto = min(lens, key=lens.get) if lens else "—"
-        st.caption(
-            f"Histórico em comum insuficiente (~{len(mat)} pregões) — limitado pelo "
-            f"ativo de série mais curta (**{_curto}**). Métricas exigem ≥ 30 pregões.")
-        return
-
-    nav = mat.sum(axis=1)                       # valor da carteira por dia
-    nav = nav.iloc[-min(look, len(nav)):]       # recorta ao período escolhido
-    rets = nav.pct_change().dropna()
+    rets = r_all.iloc[-min(look, len(r_all)):]
     if len(rets) < 20:
         st.caption("Período muito curto para métricas confiáveis. Escolha um intervalo maior.")
         return
@@ -5869,7 +5890,7 @@ def _show_portfolio_performance(positions: list[dict], *,
 
     n      = len(rets)
     anos   = n / 252
-    tot    = nav.iloc[-1] / nav.iloc[0] - 1
+    tot    = float((1 + rets).prod() - 1)
     cagr   = (1 + tot) ** (1 / anos) - 1 if anos > 0 else tot
     sd     = rets.std()                          # desvio diário (amostral)
     vol    = sd * (252 ** 0.5)
@@ -5877,6 +5898,7 @@ def _show_portfolio_performance(positions: list[dict], *,
     sharpe = (exc.mean() / sd * (252 ** 0.5)) if sd > 0 else None
     dd_dev = ((exc.clip(upper=0) ** 2).mean()) ** 0.5   # downside deviation (MAR=rf)
     sortino = (exc.mean() / dd_dev * (252 ** 0.5)) if dd_dev > 0 else None
+    nav    = (1 + rets).cumprod()                # índice de retorno (base 1)
     under  = nav / nav.cummax() - 1              # série underwater
     max_dd = under.min()
     calmar = (cagr / abs(max_dd)) if max_dd < 0 else None
@@ -5948,17 +5970,15 @@ def _show_portfolio_performance(positions: list[dict], *,
         yaxis=dict(color="#9e9e9e", gridcolor="rgba(255,255,255,0.06)", ticksuffix="%"))
     st.plotly_chart(figu, width="stretch", config={"displayModeBar": False})
 
-    _ini = nav.index[0]
-    _lim = min(lens, key=lens.get) if lens else None
+    _ini = rets.index[0]
     st.caption(
         f"Janela: **{_ini:%d/%m/%Y} → hoje** ({n} pregões, ~{anos*12:.0f} meses) · risk-free "
-        f"**Selic {_selic*100:.1f}% a.a.** · preço **ajustado** (inclui proventos). Usa só datas "
-        f"com **todos os ativos em negociação**"
-        + (f" — a janela está limitada por **{_lim}** (histórico mais curto/mais recente na carteira)."
-           if _lim else ".")
-        + " Simula manter as **quantidades atuais** — não considera aportes/vendas (pra isso, o "
-        "**backtest** abaixo). Passe o mouse no **?** de cada índice. Métricas **históricas**, "
-        "educacionais — **não são recomendação de investimento.**")
+        f"**Selic {_selic*100:.1f}% a.a.** · preço **ajustado** (inclui proventos). Método **TWR "
+        f"(time-weighted)**: cada ativo passa a pesar **a partir da sua data de compra** — a "
+        f"composição muda no tempo (não fica presa ao ativo de histórico mais curto) e **aportes "
+        f"não geram retorno falso**. Posições **sem data** entram desde o início. Passe o mouse no "
+        f"**?** de cada índice. Métricas **históricas**, educacionais — **não são recomendação "
+        f"de investimento.**")
 
 
 def _xirr(flows: list[tuple]) -> Optional[float]:
@@ -6367,7 +6387,7 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict, *,
 
     # ── Risco & Retorno (histórico) ───────────────────────────────
     if show_perf:
-        _show_portfolio_performance(positions)
+        _show_portfolio_performance(positions, acoes)
         # ── Backtest (carteira real vs IBOV/CDI usando datas dos lotes) ──
         _show_portfolio_backtest(acoes, [p["ticker"] for p in positions])
 
@@ -6849,7 +6869,8 @@ def _show_carteira_area() -> None:
     _store_all = {**acoes_cart, **fiis_cart}
     st.divider()
     st.markdown("### Consolidado — Risco, Retorno & Backtest (ações + FIIs)")
-    _show_portfolio_performance(_pos_all, price_fn=_fetch_price_any, key="cart_perf_period")
+    _show_portfolio_performance(_pos_all, _store_all, price_fn=_fetch_price_any,
+                                key="cart_perf_period")
     _show_portfolio_backtest(_store_all, [p["ticker"] for p in _pos_all],
                              price_fn=_fetch_price_any, bench_label="IBOV (BOVA11)",
                              key="cart_backtest")
