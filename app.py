@@ -4909,7 +4909,6 @@ _FII_TYPE_LABELS = {
 }
 
 
-@st.cache_data(ttl=3600)
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fii_yf_fallback(ticker: str) -> Optional[dict]:
     """FII fora da cobertura do Bolsai → dados mínimos via yfinance: preço atual e
@@ -4938,6 +4937,7 @@ def _fii_yf_fallback(ticker: str) -> Optional[dict]:
         return None
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_fii(ticker: str) -> dict:
     tk = ticker.strip().upper()
     try:
