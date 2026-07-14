@@ -2861,6 +2861,22 @@ def _show_dcf(s: dict) -> None:
             "regulada e indexada à inflação, justificando prêmio de risco menor que "
             "o de empresas não-reguladas."
         )
+        # O Potencial da TABELA usa múltiplo (reversão à média / teto EV/EBITDA), não
+        # o DCF cru — que estoura quando o capex é intenso e o FCL de 1 ano vem inflado
+        # (capex incompleto na DFC). Ex.: SABESP (~R$20bi/ano de capex).
+        _util_alvo = _utility_base_price(s)
+        _mr = _hist_median_mult(_hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS)
+        if _util_alvo and price:
+            _pot = (_util_alvo / price - 1) * 100
+            _via = (f"reversão à média (EV/EBITDA **{_mr:.1f}×**)" if _mr is not None
+                    else f"teto de **{UTILITY_FAIR_EV_EBITDA:.0f}×** EV/EBITDA")
+            st.warning(
+                "⚠️ **Em utilities com capex intenso (ex.: saneamento), o DCF abaixo "
+                "superestima.** O FCL de um único ano fica **inflado** porque o capital "
+                "pesado (capex) não vem completo na DFC do provedor, e o fluxo descontado "
+                f"estoura. Por isso o **Potencial que aparece na tabela** usa **múltiplo** "
+                f"(via {_via}): **R$ {_util_alvo:.2f}** ({_pot:+.1f}%). Leia os cenários de "
+                "DCF a seguir como **referência educacional**, não como o alvo do app.")
 
     if fcl_k is None or shares is None or shares <= 0:
         st.info(
