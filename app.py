@@ -57,6 +57,9 @@ UTILITY_FAIR_EV_EBITDA = getattr(_cfg, "UTILITY_FAIR_EV_EBITDA", 9.0)
 # (WEGE3 ~22× EV/EBITDA, RADL3 ~25× P/L), senão rejeitariam quem mais importa.
 _MR_MIN_PONTOS      = getattr(_cfg, "MR_MIN_PONTOS", 8)              # mín. trimestres válidos
 _MR_EVEBITDA_BOUNDS = getattr(_cfg, "MR_EVEBITDA_BOUNDS", (2.0, 40.0))
+# Utilities NÃO têm prêmio de múltiplo (reguladas, 4-12×). Bounds mais estreitos
+# rejeitam distorções do histórico (ex.: SABESP com mediana 29× → fallback ao teto).
+_MR_EVEBITDA_BOUNDS_UTIL = getattr(_cfg, "MR_EVEBITDA_BOUNDS_UTIL", (3.0, 14.0))
 _MR_PL_BOUNDS       = getattr(_cfg, "MR_PL_BOUNDS", (3.0, 45.0))
 
 # ────────────────────────────────────────────────────────────────
@@ -2223,8 +2226,9 @@ def _utility_base_price(s: dict) -> Optional[float]:
     Quando o DCF é razoável (abaixo do teto), ele prevalece.
     """
     # 1º: reversão à média do EV/EBITDA histórico da própria utility — separa
-    # naturalmente transmissão (~9×) de distribuição (~5-6×) e geração.
-    mult = _hist_median_mult(_hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS)
+    # naturalmente transmissão (~9×) de distribuição (~5-6×) e geração. Bounds
+    # estreitos (utility não tem prêmio): rejeita distorção do histórico (SABESP 29×).
+    mult = _hist_median_mult(_hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS_UTIL)
     if mult is not None:
         return _ev_ebitda_price(s, mult)
     # fallback (histórico curto): min(DCF, EV/EBITDA setorial) — teto contra estouro
@@ -2797,7 +2801,7 @@ def _mr_caption(s: dict) -> Optional[str]:
         serie, bounds, nome = _hist_serie(s, "pl_historico"), _MR_PL_BOUNDS, "P/L"
         setorial = f"{INSURER_FAIR_PE:.0f}× (referência setorial)"
     elif _is_utility(sector):
-        serie, bounds, nome = _hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS, "EV/EBITDA"
+        serie, bounds, nome = _hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS_UTIL, "EV/EBITDA"
         setorial = f"DCF com teto de {UTILITY_FAIR_EV_EBITDA:.0f}×"
     else:  # geral
         serie, bounds, nome = _hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS, "EV/EBITDA"
@@ -2865,7 +2869,7 @@ def _show_dcf(s: dict) -> None:
         # o DCF cru — que estoura quando o capex é intenso e o FCL de 1 ano vem inflado
         # (capex incompleto na DFC). Ex.: SABESP (~R$20bi/ano de capex).
         _util_alvo = _utility_base_price(s)
-        _mr = _hist_median_mult(_hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS)
+        _mr = _hist_median_mult(_hist_serie(s, "ev_ebitda_historico"), _MR_EVEBITDA_BOUNDS_UTIL)
         if _util_alvo and price:
             _pot = (_util_alvo / price - 1) * 100
             _via = (f"reversão à média (EV/EBITDA **{_mr:.1f}×**)" if _mr is not None
