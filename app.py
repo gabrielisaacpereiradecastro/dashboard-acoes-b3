@@ -333,6 +333,16 @@ def load_data() -> dict:
     return st.session_state.get("acoes", {})
 
 
+def _user_data_empty(d: dict) -> bool:
+    """True se os dados de um usuário não têm NENHUM ticker/FII/alerta — usado para
+    não sobrescrever dados bons com um estado vazio (proteção contra perda)."""
+    if not isinstance(d, dict):
+        return True
+    _tem_acao = any(bool(v) for v in (d.get("listas") or {}).values())
+    _tem_fii = any(bool(v) for v in (d.get("fiis_listas") or {}).values())
+    return not (_tem_acao or _tem_fii or bool(d.get("alertas")))
+
+
 def _save_all() -> None:
     """Persiste dados do usuário atual no JSON (estrutura multi-usuário)."""
     usuario = st.session_state.get("usuario_atual")
@@ -342,12 +352,20 @@ def _save_all() -> None:
     # Migração: se ainda não tem estrutura multi-usuário, cria
     if "usuarios" not in raw:
         raw = {"usuarios": {u: {} for u in USUARIOS}}
-    raw["usuarios"][usuario] = {
+
+    _novo = {
         "listas":           dict(st.session_state.get("todas_listas", {})),
         "screener_filtros": dict(st.session_state.get("screener_filtros", {})),
         "fiis_listas":      dict(st.session_state.get("fiis_listas", {})),
         "alertas":          list(st.session_state.get("alertas", [])),
     }
+    _antigo = raw.get("usuarios", {}).get(usuario, {})
+    # PROTEÇÃO: nunca sobrescrever dados existentes com um estado VAZIO (evita apagar
+    # tudo quando a sessão carregou vazia por falha de load / Supabase indisponível).
+    if _user_data_empty(_novo) and not _user_data_empty(_antigo):
+        return
+
+    raw["usuarios"][usuario] = _novo
     DATA_FILE.write_text(
         json.dumps(raw, ensure_ascii=False, indent=2),
         encoding="utf-8",
