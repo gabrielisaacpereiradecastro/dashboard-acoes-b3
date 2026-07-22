@@ -244,19 +244,65 @@ def _load_file_supabase() -> dict:
     return {}
 
 
+def _supabase_upsert(row_id: int, dados: dict) -> None:
+    """Upsert de uma linha no app_state (id → dados)."""
+    if not _sb_configured():
+        return
+    import requests as _req
+    _req.post(
+        f"{_sb_url()}/rest/v1/app_state",
+        headers={**_sb_headers(), "Prefer": "resolution=merge-duplicates"},
+        json={"id": row_id, "dados": dados}, timeout=10,
+    )
+
+
+_BACKUP_SLOTS = (2, 3, 4)   # ring de 3 versões anteriores (id=1 é o vivo)
+
+
+def _backup_read_slots() -> list:
+    """Lê os slots de histórico: [{id, ts, snap}] mais recentes primeiro."""
+    if not _sb_configured():
+        return []
+    try:
+        import requests as _req
+        ids = ",".join(str(i) for i in _BACKUP_SLOTS)
+        r = _req.get(f"{_sb_url()}/rest/v1/app_state?id=in.({ids})&select=id,dados",
+                     headers=_sb_headers(), timeout=10)
+        if r.status_code == 200:
+            out = [{"id": row["id"], "ts": (row.get("dados") or {}).get("ts", ""),
+                    "snap": (row.get("dados") or {}).get("snap")}
+                   for row in r.json() if (row.get("dados") or {}).get("snap")]
+            return sorted(out, key=lambda s: s["ts"], reverse=True)
+    except Exception:
+        pass
+    return []
+
+
+def _backup_rotate(prev: dict) -> None:
+    """Guarda o estado ANTERIOR (prev) num slot do ring — pula se vazio ou idêntico
+    ao snapshot mais recente (dedup). Sempre sobrescreve o slot mais antigo."""
+    if not _sb_configured() or not (isinstance(prev, dict) and prev.get("usuarios")):
+        return
+    try:
+        slots = _backup_read_slots()
+        if slots and slots[0]["snap"] == prev:
+            return  # dedup: não repete o mesmo estado
+        usados = {s["id"] for s in slots}
+        vazio = next((i for i in _BACKUP_SLOTS if i not in usados), None)
+        target = vazio if vazio is not None else min(slots, key=lambda s: s["ts"])["id"]
+        _supabase_upsert(target, {"ts": _now_bsb().isoformat(), "snap": prev})
+    except Exception:
+        pass
+
+
 def _save_file_supabase(data: dict) -> None:
-    """Salva dados no Supabase (upsert)."""
+    """Salva no Supabase (id=1) e faz snapshot do estado anterior no ring de backup."""
     if not _sb_configured():
         return
     try:
-        import requests as _req
-        headers = {**_sb_headers(), "Prefer": "resolution=merge-duplicates"}
-        _req.post(
-            f"{_sb_url()}/rest/v1/app_state",
-            headers=headers,
-            json={"id": 1, "dados": data},
-            timeout=10,
-        )
+        prev = _load_file_supabase()   # estado atual, antes de sobrescrever
+        _supabase_upsert(1, data)
+        _backup_rotate(prev)
     except Exception:
         pass
 
@@ -4557,6 +4603,32 @@ def _sidebar_atualizacao() -> None:
                                             if isinstance(v, dict) and v)
                         if _det_a:
                             st.caption("Ações — " + _det_a)
+
+            # ── Restaurar versão anterior (mini-histórico / undo) ──
+            st.markdown("**↩️ Restaurar versão anterior:**")
+            _usr = st.session_state.get("usuario_atual")
+            _slots = _backup_read_slots()
+            if not _slots:
+                st.caption("Nenhuma versão de backup salva ainda (aparecem após alterações).")
+            for _s in _slots:
+                _snap = _s.get("snap") or {}
+                _me = (_snap.get("usuarios", {}) or {}).get(_usr, {})
+                _na = sum(len(v) for v in (_me.get("listas") or {}).values() if isinstance(v, dict))
+                _nf = sum(len(v) for v in (_me.get("fiis_listas") or {}).values() if isinstance(v, dict))
+                _ca, _cb = st.columns([3, 1])
+                _ca.caption(f"🕓 {(_s.get('ts') or '')[:16].replace('T',' ')} — "
+                            f"você: **{_na}** ações · **{_nf}** FIIs")
+                if _cb.button("Restaurar", key=f"restore_{_s['id']}"):
+                    _supabase_upsert(1, _snap)   # torna a versão o estado vivo
+                    for _k in ("todas_listas", "lista_atual", "acoes", "fiis_listas",
+                               "lista_fii_atual", "screener_filtros", "alertas"):
+                        st.session_state.pop(_k, None)
+                    try:
+                        DATA_FILE.unlink()       # limpa cache local → recarrega do Supabase
+                    except Exception:
+                        pass
+                    st.success("Versão restaurada. Recarregando…")
+                    st.rerun()
 
 
 def _sidebar_fiis_controls() -> None:
