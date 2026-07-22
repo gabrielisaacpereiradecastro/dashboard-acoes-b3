@@ -6587,42 +6587,57 @@ def _show_portfolio_analysis(enriched: list[dict], acoes: dict, *,
     st.markdown("#### Posições")
     pos_rows = sorted(positions, key=lambda p: p["weight"], reverse=True)
 
-    def _fmt_pnl_r(v: Optional[float]) -> str:
-        if v is None:
-            return "—"
-        sign = "+" if v >= 0 else "-"
-        return f"{sign}R$ {abs(v):,.0f}".replace(",", ".")
+    def _na(v) -> bool:
+        return v is None or (isinstance(v, float) and math.isnan(v))
 
-    def _fmt_pnl_pct(v: Optional[float]) -> str:
-        if v is None:
-            return "—"
-        return f"{'+' if v >= 0 else ''}{v:.1f}%"
+    def _brl2(v) -> str:   # R$ com 2 casas no padrão BR
+        return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+    def _fmt_pnl_r(v) -> str:
+        return "—" if _na(v) else f"{'+' if v >= 0 else '-'}R$ {abs(v):,.0f}".replace(",", ".")
+
+    def _fmt_pnl_pct(v) -> str:
+        return "—" if _na(v) else f"{'+' if v >= 0 else ''}{v:.1f}%"
+
+    # Valores NUMÉRICOS por baixo (a ordenação por clique no cabeçalho usa o número);
+    # a formatação bonita vai só na exibição via Styler.format.
     pos_data = [
         {
-            "Ticker":              p["ticker"],
-            "Qtd":                 f"{p['qtd']:,}".replace(",", "."),
-            "Preço Atual":         f"R$ {p['price']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-            "Preço Médio":         f"R$ {p['preco_medio']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if p.get("preco_medio") else "—",
-            "Lucro/Prej. (R$)":    _fmt_pnl_r(p.get("pnl_reais")),
-            "Lucro/Prej. (%)":     _fmt_pnl_pct(p.get("pnl_pct")),
-            "Valor Total":         f"R$ {p['value']:,.0f}".replace(",", "."),
-            "% Carteira":          f"{p['weight'] * 100:.1f}%",
+            "Ticker":           p["ticker"],
+            "Qtd":              int(p["qtd"]),
+            "Preço Atual":      float(p["price"]),
+            "Preço Médio":      (float(p["preco_medio"]) if p.get("preco_medio") else None),
+            "Lucro/Prej. (R$)": (float(p["pnl_reais"]) if p.get("pnl_reais") is not None else None),
+            "Lucro/Prej. (%)":  (float(p["pnl_pct"]) if p.get("pnl_pct") is not None else None),
+            "Valor Total":      float(p["value"]),
+            "% Carteira":       p["weight"] * 100,
         }
         for p in pos_rows
     ]
     pos_df = pd.DataFrame(pos_data)
 
-    # Colore P&L baseando-se no sinal (verde/vermelho via Styler)
-    def _color_pnl(val: str) -> str:
-        if val.startswith("+"):
+    _fmts = {
+        "Qtd":              lambda v: f"{int(v):,}".replace(",", "."),
+        "Preço Atual":      _brl2,
+        "Preço Médio":      lambda v: "—" if _na(v) else _brl2(v),
+        "Lucro/Prej. (R$)": _fmt_pnl_r,
+        "Lucro/Prej. (%)":  _fmt_pnl_pct,
+        "Valor Total":      lambda v: f"R$ {v:,.0f}".replace(",", "."),
+        "% Carteira":       lambda v: f"{v:.1f}%",
+    }
+
+    def _color_pnl_num(v) -> str:
+        if _na(v):
+            return ""
+        if v > 0:
             return "color:#4caf50;font-weight:600"
-        if val.startswith("-"):
+        if v < 0:
             return "color:#ef5350;font-weight:600"
         return ""
 
     try:
-        styled_pos = pos_df.style.map(_color_pnl, subset=["Lucro/Prej. (R$)", "Lucro/Prej. (%)"])
+        styled_pos = (pos_df.style.format(_fmts)
+                      .map(_color_pnl_num, subset=["Lucro/Prej. (R$)", "Lucro/Prej. (%)"]))
     except Exception:
         styled_pos = pos_df
 
