@@ -333,16 +333,6 @@ def load_data() -> dict:
     return st.session_state.get("acoes", {})
 
 
-def _user_data_empty(d: dict) -> bool:
-    """True se os dados de um usuário não têm NENHUM ticker/FII/alerta — usado para
-    não sobrescrever dados bons com um estado vazio (proteção contra perda)."""
-    if not isinstance(d, dict):
-        return True
-    _tem_acao = any(bool(v) for v in (d.get("listas") or {}).values())
-    _tem_fii = any(bool(v) for v in (d.get("fiis_listas") or {}).values())
-    return not (_tem_acao or _tem_fii or bool(d.get("alertas")))
-
-
 def _save_all() -> None:
     """Persiste dados do usuário atual no JSON (estrutura multi-usuário)."""
     usuario = st.session_state.get("usuario_atual")
@@ -360,10 +350,19 @@ def _save_all() -> None:
         "alertas":          list(st.session_state.get("alertas", [])),
     }
     _antigo = raw.get("usuarios", {}).get(usuario, {})
-    # PROTEÇÃO: nunca sobrescrever dados existentes com um estado VAZIO (evita apagar
-    # tudo quando a sessão carregou vazia por falha de load / Supabase indisponível).
-    if _user_data_empty(_novo) and not _user_data_empty(_antigo):
-        return
+
+    # PROTEÇÃO POR SEÇÃO contra perda de dados: se uma seção (ações OU FIIs) veio
+    # VAZIA na sessão mas está PREENCHIDA no salvo, preserva o salvo (evita zerar as
+    # ações quando só elas falharam ao carregar, mantendo os FIIs — caso real).
+    def _sec_vazia(d) -> bool:
+        return not any(bool(v) for v in (d or {}).values())
+
+    if _sec_vazia(_novo["listas"]) and not _sec_vazia(_antigo.get("listas")):
+        _novo["listas"] = _antigo["listas"]
+    if _sec_vazia(_novo["fiis_listas"]) and not _sec_vazia(_antigo.get("fiis_listas")):
+        _novo["fiis_listas"] = _antigo["fiis_listas"]
+    if not _novo["alertas"] and _antigo.get("alertas"):
+        _novo["alertas"] = _antigo["alertas"]
 
     raw["usuarios"][usuario] = _novo
     DATA_FILE.write_text(
