@@ -4534,6 +4534,30 @@ def _sidebar_atualizacao() -> None:
                 except Exception as _e:
                     st.error(f"Erro: {_e}")
 
+        with st.expander("🩺 Diagnóstico de dados (backup)"):
+            st.caption("Mostra o que está salvo no **backup (Supabase)** — quantos ativos por "
+                       "usuário. Útil se algo sumiu: se aparecer aqui, é recuperável.")
+            if st.button("Verificar backup", key="diag_backup"):
+                _raw = _load_file_supabase()
+                if not _raw:
+                    st.warning("Backup do Supabase **vazio ou não configurado**. "
+                               "(Sem persistência entre reinícios do Streamlit Cloud.)")
+                else:
+                    _us = _raw.get("usuarios", {})
+                    if not _us:
+                        st.warning("Backup existe mas sem estrutura de usuários.")
+                    for _u, _d in _us.items():
+                        _la = _d.get("listas", {}) or {}
+                        _lf = _d.get("fiis_listas", {}) or {}
+                        _na = sum(len(v) for v in _la.values() if isinstance(v, dict))
+                        _nf = sum(len(v) for v in _lf.values() if isinstance(v, dict))
+                        _mark = "  👈 você" if _u == st.session_state.get("usuario_atual") else ""
+                        st.markdown(f"**{_u}**: {_na} ação(ões) · {_nf} FII(s){_mark}")
+                        _det_a = " · ".join(f"{k}: {len(v)}" for k, v in _la.items()
+                                            if isinstance(v, dict) and v)
+                        if _det_a:
+                            st.caption("Ações — " + _det_a)
+
 
 def _sidebar_fiis_controls() -> None:
     """Sidebar da área FIIs: seletor de lista + gerenciar + adicionar FII (por
