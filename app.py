@@ -8190,6 +8190,9 @@ button, input, select, textarea, .stMarkdown {
 h1 { font-weight: 700 !important; letter-spacing: -0.02em; }
 h2, h3, h4 { font-weight: 600 !important; letter-spacing: -0.01em; }
 
+/* Esconde o "Press Enter to submit form" que sobrepõe campos estreitos em forms */
+[data-testid="InputInstructions"] { display: none !important; }
+
 /* ── Métricas em card ───────────────────────────────── */
 [data-testid="stMetric"] {
     background: #151b26;
